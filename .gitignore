@@ -1,0 +1,20 @@
+# Local secrets and Vercel CLI state — never commit
+.vercel
+.env
+.env.*
+!.env.example
+
+# Local env-var template (placeholder values; README is the canonical doc)
+Environment
+
+# Dependencies — package-lock.json IS committed (locks versions); node_modules is not
+node_modules/
+
+# OS / editor cruft
+.DS_Store
+*.swp
+.idea/
+.vscode/
+
+# Logs
+*.log
