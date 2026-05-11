@@ -1,0 +1,18 @@
+{
+  "rewrites": [
+    { "source": "/api/auth/config",         "destination": "/api/auth/config" },
+    { "source": "/api/auth/login",          "destination": "/api/auth/login" },
+    { "source": "/api/auth/logout",         "destination": "/api/auth/logout" },
+    { "source": "/api/auth/me",             "destination": "/api/auth/me" },
+    { "source": "/api/users",               "destination": "/api/users/index" },
+    { "source": "/api/users/:id/force-logout", "destination": "/api/users/[id]/force-logout" },
+    { "source": "/api/users/:id",           "destination": "/api/users/[id]" },
+    { "source": "/api/list",                "destination": "/api/list" },
+    { "source": "/api/detail/:uid",         "destination": "/api/detail/[uid]" },
+    { "source": "/api/demand-details/:uid", "destination": "/api/demand-details/[uid]" },
+    { "source": "/api/property-edits/:uid",  "destination": "/api/property-edits/[uid]" },
+    { "source": "/api/remarks-history/:uid", "destination": "/api/remarks-history/[uid]" },
+    { "source": "/login",                   "destination": "/login.html" },
+    { "source": "/(.*)",                    "destination": "/index.html" }
+  ]
+}

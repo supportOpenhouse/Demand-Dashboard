@@ -1,0 +1,284 @@
+const { pool, getPropertiesColumns, hasCol, SUPPLY_READY_STATUSES } = require('./_db');
+const { requireAuth, setCors } = require('./_auth');
+
+// Typed projection list shared by both sides of the UNION ALL. Each tuple is:
+//   [source column on properties, source column on legacy_properties, output alias, postgres type]
+// `type` is required because UNION ALL needs matching types on both sides;
+// missing columns on either side are projected as NULL::<type>.
+//
+// Most columns are identical on both tables; the few that diverge get distinct
+// source-column names (e.g. supply uses owner_broker_name → output alias 'owner_name';
+// legacy_properties has owner_broker_name too, same alias).
+const UNIFIED_COLS = [
+  // [propsCol, legacyCol, alias, type]
+  ['uid',                       'uid',                       'uid',                       'TEXT'],
+  ['society_name',              'society_name',              'society_name',              'TEXT'],
+  ['unit_no',                   'unit_no',                   'unit_no',                   'TEXT'],
+  ['tower_no',                  'tower_no',                  'tower_no',                  'TEXT'],
+  ['floor',                     'floor',                     'floor',                     'INTEGER'],
+  ['city',                      'city',                      'city',                      'TEXT'],
+  ['locality',                  'locality',                  'locality',                  'TEXT'],
+  ['source',                    'source',                    'source',                    'TEXT'],
+  ['assigned_by',               'assigned_by',               'poc',                       'TEXT'],
+
+  ['configuration',             'configuration',             'configuration',             'TEXT'],
+  ['area_sqft',                 'area_sqft',                 'area_sqft',                 'REAL'],
+  ['super_area',                'super_area',                'super_area',                'REAL'],
+  ['carpet_area',               'carpet_area',               'carpet_area',               'REAL'],
+  ['extra_area',                'extra_area',                'extra_area',                'JSONB'],
+  ['bathrooms',                 'bathrooms',                 'bathrooms',                 'INTEGER'],
+  ['balconies',                 'balconies',                 'balconies',                 'INTEGER'],
+  ['balcony_details',           'balcony_details',           'balcony_details',           'JSONB'],
+
+  ['total_lifts',               null,                        'total_lifts',               'INTEGER'],
+  ['total_floors_tower',        'total_floors_tower',        'total_floors_tower',        'INTEGER'],
+  ['total_flats_floor',         'total_flats_floor',         'total_flats_floor',         'INTEGER'],
+  ['society_age_years',         'society_age_years',         'society_age_years',         'REAL'],
+  ['total_units',               'total_units',               'total_units',               'INTEGER'],
+  ['exit_facing',               'exit_facing',               'exit_facing',               'TEXT'],
+  ['exit_compass_image',        'exit_compass_image',        'exit_compass_image',        'TEXT'],
+
+  ['possession_status',         'possession_status',         'possession_status',         'TEXT'],
+  ['occupancy_status',          'occupancy_status',          'occupancy_status',          'TEXT'],
+  ['current_occupancy_pct',     'current_occupancy_pct',     'current_occupancy_pct',     'REAL'],
+  ['key_handover_date',         'key_handover_date',         'key_handover_date',         'DATE'],
+  ['tentative_handover_date',   'tentative_handover_date',   'tentative_handover_date',   'DATE'],
+
+  ['maintenance_charges',       'maintenance_charges',       'maintenance_charges',       'REAL'],
+  ['society_move_in_charges',   'society_move_in_charges',   'society_move_in_charges',   'REAL'],
+  ['electricity_charges',       'electricity_charges',       'electricity_charges',       'REAL'],
+  ['dg_charges',                'dg_charges',                'dg_charges',                'REAL'],
+  ['circle_rate',               'circle_rate',               'circle_rate',               'REAL'],
+  ['alpha_beta',                'alpha_beta',                'alpha_beta',                'TEXT'],
+  ['beta_pct',                  'beta_pct',                  'beta_pct',                  'REAL'],
+  ['guaranteed_sale_price',     'guaranteed_sale_price',     'guaranteed_sale_price',     'REAL'],
+  ['listing_asking_price',      'listing_asking_price',      'listing_asking_price',      'REAL'],
+  ['demand_price',              'demand_price',              'demand_price',              'REAL'],
+
+  ['gas_pipeline',              'gas_pipeline',              'gas_pipeline',              'TEXT'],
+  ['club_facility',             'club_facility',             'club_facility',             'TEXT'],
+  ['parking',                   'parking',                   'parking',                   'TEXT'],
+  ['furnishing',                'furnishing',                'furnishing',                'TEXT'],
+  ['furnishing_details',        'furnishing_details',        'furnishing_details',        'JSONB'],
+
+  ['owner_broker_name',         'owner_broker_name',         'owner_name',                'TEXT'],
+  ['contact_no',                'contact_no',                'contact_no',                'TEXT'],
+  ['co_owner',                  'co_owner',                  'co_owner',                  'TEXT'],
+  ['co_owner_number',           'co_owner_number',           'co_owner_number',           'TEXT'],
+  ['seller_residential_status', 'seller_residential_status', 'seller_residential_status', 'TEXT'],
+  ['seller_location',           'seller_location',           'seller_location',           'TEXT'],
+
+  ['loan_status',               'loan_status',               'loan_status',               'TEXT'],
+  ['outstanding_loan',          'outstanding_loan',          'outstanding_loan',          'REAL'],
+  ['bank_name_loan',            'bank_name_loan',            'bank_name_loan',            'TEXT'],
+
+  ['documents_available',       'documents_available',       'documents_available',       'JSONB'],
+  ['ama_date',                  'ama_date',                  'ama_date',                  'DATE'],
+
+  ['additional_images',         'additional_images',         'additional_images',         'JSONB'],
+  ['video_link',                'video_link',                'video_link',                'TEXT'],
+];
+
+// Build the SELECT projection for the real-properties side of the UNION.
+// Columns that don't exist in the live `properties` table (schema drift) get
+// projected as NULL::<type> — same approach used since launch.
+function buildPropertiesProjection(allCols) {
+  const cols = UNIFIED_COLS.map(([propsCol, _legacyCol, alias, type]) => {
+    if (propsCol && hasCol(allCols, propsCol)) {
+      return `p."${propsCol}"::${type} AS "${alias}"`;
+    }
+    return `NULL::${type} AS "${alias}"`;
+  });
+  // Trailing virtual columns: status (from view), ancillary fields from ap_details, origin tag.
+  cols.push(
+    `vps.derived_status::TEXT AS supply_status`,
+    `apd.parking_number::TEXT AS parking_number`,
+    `apd.property_tax_status::TEXT AS property_tax_status`,
+    `apd.internal_remarks::TEXT AS supply_internal_remarks`,
+    `'real'::TEXT AS origin`,
+  );
+  return cols.join(',\n        ');
+}
+
+// Build the SELECT projection for the legacy-properties side.
+// All columns we declared in legacy_properties exist (we own the schema) so no
+// existence check is needed.
+function buildLegacyProjection() {
+  const cols = UNIFIED_COLS.map(([_propsCol, legacyCol, alias, type]) => {
+    if (legacyCol) {
+      return `lp."${legacyCol}"::${type} AS "${alias}"`;
+    }
+    return `NULL::${type} AS "${alias}"`;
+  });
+  cols.push(
+    `lp.legacy_status::TEXT AS supply_status`,
+    `lp.parking_number::TEXT AS parking_number`,
+    `NULL::TEXT AS property_tax_status`,
+    `NULL::TEXT AS supply_internal_remarks`,
+    `'legacy'::TEXT AS origin`,
+  );
+  return cols.join(',\n        ');
+}
+
+module.exports = async (req, res) => {
+  setCors(res);
+  if (req.method === 'OPTIONS') return res.status(200).end();
+  if (req.method !== 'GET') return res.status(405).json({ error: 'Method not allowed' });
+
+  const user = await requireAuth(req, res);
+  if (!user) return;
+
+  try {
+    const allCols = await getPropertiesColumns();
+
+    const { status, search, city, source, poc, dateField, from, to,
+            page, limit: rawLimit } = req.query;
+
+    const supplyReadyParams = SUPPLY_READY_STATUSES.map((_, i) => `$${i + 1}`).join(',');
+    const baseParams = [...SUPPLY_READY_STATUSES];
+
+    // Filters apply to BOTH sides of the UNION via the outer WHERE on the CTE.
+    // Status comparison uses the unified `supply_status` column (already aliased
+    // identically: vps.derived_status on real side, lp.legacy_status on legacy).
+    const outerConditions = [];
+    const outerParams = [];
+
+    if (status && SUPPLY_READY_STATUSES.includes(status)) {
+      outerParams.push(status);
+      outerConditions.push(`u.supply_status = $${baseParams.length + outerParams.length}`);
+    }
+    if (city) {
+      outerParams.push(city);
+      outerConditions.push(`u.city = $${baseParams.length + outerParams.length}`);
+    }
+    if (source) {
+      outerParams.push(source);
+      outerConditions.push(`u.source = $${baseParams.length + outerParams.length}`);
+    }
+    if (poc) {
+      outerParams.push(poc);
+      outerConditions.push(`u.poc = $${baseParams.length + outerParams.length}`);
+    }
+
+    // Date range filter — `dateField` lets the caller pick which timestamp to filter on.
+    const VALID_DATE_FIELDS = ['ama_date', 'key_handover_date', 'updated_at'];
+    const df = VALID_DATE_FIELDS.includes(dateField) ? dateField : 'ama_date';
+    const dfTable = df === 'updated_at' ? 'dd' : 'u';
+    if (from) {
+      outerParams.push(from);
+      outerConditions.push(`${dfTable}."${df}" >= $${baseParams.length + outerParams.length}`);
+    }
+    if (to) {
+      outerParams.push(to);
+      outerConditions.push(`${dfTable}."${df}" <= $${baseParams.length + outerParams.length}`);
+    }
+
+    if (search) {
+      outerParams.push(`%${search.toLowerCase()}%`);
+      const idx = baseParams.length + outerParams.length;
+      const searchCols = ['uid', 'society_name', 'owner_name', 'unit_no', 'contact_no', 'locality'];
+      const clause = searchCols
+        .map(c => `LOWER(COALESCE(u."${c}"::text, '')) LIKE $${idx}`)
+        .join(' OR ');
+      outerConditions.push(`(${clause})`);
+    }
+
+    const outerWhere = outerConditions.length ? `WHERE ${outerConditions.join(' AND ')}` : '';
+
+    const pageSize = Math.min(Math.max(parseInt(rawLimit) || 100, 1), 500);
+    const pageNum = Math.max(parseInt(page) || 1, 1);
+    const offset = (pageNum - 1) * pageSize;
+
+    const propsProjection = buildPropertiesProjection(allCols);
+    const legacyProjection = buildLegacyProjection();
+
+    // CTE encapsulates the UNION ALL of real + legacy, then outer SELECT applies
+    // demand_details join, filters, ordering and pagination uniformly across both.
+    // legacy_status uses the same string values as v_property_status output, so
+    // the supply_status filter clause works on both halves identically.
+    const baseCte = `
+      WITH unified AS (
+        SELECT
+        ${propsProjection}
+        FROM properties p
+        INNER JOIN v_property_status vps ON vps.uid = p.uid
+        LEFT JOIN ap_details apd ON apd.uid = p.uid
+        WHERE vps.derived_status IN (${supplyReadyParams})
+
+        UNION ALL
+
+        SELECT
+        ${legacyProjection}
+        FROM legacy_properties lp
+        WHERE lp.legacy_status IN (${supplyReadyParams})
+      )`;
+
+    // Total count across both halves, with filters applied.
+    const countSql = `${baseCte}
+      SELECT COUNT(*) FROM unified u
+      LEFT JOIN demand_details dd ON dd.uid = u.uid
+      ${outerWhere}`;
+    const countResult = await pool.query(countSql, [...baseParams, ...outerParams]);
+    const totalCount = parseInt(countResult.rows[0].count);
+
+    const limitParamIdx = baseParams.length + outerParams.length + 1;
+    const offsetParamIdx = baseParams.length + outerParams.length + 2;
+
+    const rowsSql = `${baseCte}
+      SELECT u.*,
+             dd.listing_price          AS listing_price,
+             COALESCE(dd.demand_status, 'Buyer Visit') AS demand_status,
+             dd.buyer_visit_date,
+             dd.buyer_interested_date,
+             dd.buyer_revisit_date,
+             dd.negotiation_meeting_date,
+             dd.booking_done_date,
+             dd.ats_signed_date,
+             dd.registry_done_date,
+             dd.sold_date,
+             dd.internal_remarks,
+             dd.legacy_raw_values,
+             dd.updated_by,
+             dd.updated_at
+      FROM unified u
+      LEFT JOIN demand_details dd ON dd.uid = u.uid
+      ${outerWhere}
+      ORDER BY COALESCE(u.ama_date, u.key_handover_date) DESC NULLS LAST
+      LIMIT $${limitParamIdx} OFFSET $${offsetParamIdx}`;
+
+    const { rows } = await pool.query(rowsSql, [...baseParams, ...outerParams, pageSize, offset]);
+
+    // Distinct values for filter dropdowns — pulled from the FULL supply-ready
+    // pool across both tables (no filter conditions applied here) so picking
+    // one filter never strips options from another.
+    const distinctSql = `${baseCte}
+      SELECT DISTINCT u.city, u.source, u.poc FROM unified u`;
+    const distinctRows = await pool.query(distinctSql, baseParams);
+    const cities = new Set(), sources = new Set(), pocs = new Set();
+    for (const r of distinctRows.rows) {
+      if (r.city) cities.add(r.city);
+      if (r.source) sources.add(r.source);
+      if (r.poc) pocs.add(r.poc);
+    }
+    const distinct = {
+      cities:  [...cities].sort(),
+      sources: [...sources].sort(),
+      pocs:    [...pocs].sort(),
+    };
+
+    res.status(200).json({
+      success: true,
+      count: rows.length,
+      total: totalCount,
+      page: pageNum,
+      pageSize,
+      totalPages: Math.ceil(totalCount / pageSize),
+      distinct,
+      role: user.role,
+      data: rows,
+    });
+  } catch (err) {
+    console.error('[/api/list]', err.message);
+    res.status(500).json({ success: false, error: err.message });
+  }
+};

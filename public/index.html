@@ -1,0 +1,134 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Demand Visibility Dashboard</title>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+
+<div class="sticky-top">
+  <header class="header">
+    <div class="header-left">
+      <div class="header-logo-wrap">D</div>
+      <div class="header-brand">
+        <div class="header-title">Demand Visibility Dashboard</div>
+        <div class="header-sub" id="headerSub">All Cities · Loading…</div>
+      </div>
+    </div>
+    <div class="header-right">
+      <input type="text" class="search-bar" id="searchInput" placeholder="Search society, unit, owner, phone…">
+      <button class="btn-icon" id="csvBtn" title="Export filtered rows to CSV">⬇ CSV</button>
+      <button class="btn-icon btn-refresh" id="refreshBtn" title="Refresh data">⟳</button>
+      <button class="btn-ghost" id="manageUsersBtn" style="display:none">Manage Users</button>
+      <div class="user-menu">
+        <img class="user-avatar" id="userAvatar" src="" alt="">
+        <div class="user-dropdown" id="userDropdown">
+          <div class="user-info">
+            <div class="user-name" id="userName"></div>
+            <div class="user-email" id="userEmail"></div>
+            <span class="user-role-badge" id="userRoleBadge"></span>
+          </div>
+          <button class="dropdown-btn" id="logoutBtn">Sign out</button>
+        </div>
+      </div>
+    </div>
+  </header>
+
+  <!-- Filter bar: city / source / poc / date range / clear -->
+  <div class="filter-bar">
+    <span class="filter-label">Filters:</span>
+    <select class="filter-select" id="filterCity"><option value="">All Cities</option></select>
+    <select class="filter-select" id="filterSource"><option value="">All Sources</option></select>
+    <select class="filter-select" id="filterPoc"><option value="">All POCs</option></select>
+
+    <div class="date-filter-group">
+      <label>Date:</label>
+      <select class="filter-select" id="filterDateField">
+        <option value="ama_date">AMA Date</option>
+        <option value="key_handover_date">Key Handover Date</option>
+        <option value="updated_at">Last Updated</option>
+      </select>
+      <input type="date" class="date-input" id="filterFrom">
+      <span style="color:#9ca3af;font-size:11px;">to</span>
+      <input type="date" class="date-input" id="filterTo">
+      <button class="date-clear-btn" id="clearDateBtn" title="Clear dates">✕</button>
+      <button class="filter-btn" id="clearAllBtn">Clear all</button>
+    </div>
+  </div>
+
+  <div class="count-bar"><span class="count-badge" id="countBadge">—</span></div>
+</div>
+
+<div class="sticky-spacer"></div>
+
+<div class="table-wrap">
+  <table id="propTable">
+    <thead>
+      <tr>
+        <th style="width:24px;"></th>
+        <th data-sort="society_name">Society / Unit</th>
+        <th data-sort="city">City · Locality</th>
+        <th data-sort="configuration">Config</th>
+        <th data-sort="area_sqft">Size (sqft)</th>
+        <th data-sort="listing_price">Listing Price</th>
+        <th data-sort="ama_date" class="col-ama-date">AMA Date</th>
+        <th data-sort="key_handover_date" class="col-key-handover">Key Handover</th>
+        <th data-sort="owner_name">Owner</th>
+        <th data-sort="internal_remarks">Demand Team Remarks</th>
+      </tr>
+    </thead>
+    <tbody id="propBody"></tbody>
+  </table>
+  <div class="loading" id="loadingBox"><div class="spinner"></div> Loading properties…</div>
+  <div class="empty-state" id="emptyBox" style="display:none;">No properties match the current filters.</div>
+</div>
+
+<!-- ── User management modal (admin only) ─────────────────────────────────── -->
+<div class="modal-overlay" id="usersModal">
+  <div class="modal">
+    <div class="modal-head">
+      <h3>Manage Users</h3>
+      <button class="modal-close" data-close="usersModal">×</button>
+    </div>
+    <div class="modal-body">
+      <div class="form-grid" style="grid-template-columns:2fr 1fr auto;align-items:end;">
+        <div class="fg">
+          <label>Email</label>
+          <input type="email" id="newUserEmail" placeholder="user@company.com">
+        </div>
+        <div class="fg">
+          <label>Role</label>
+          <select id="newUserRole">
+            <option value="viewer">Viewer</option>
+            <option value="manager">Manager</option>
+            <option value="admin">Admin</option>
+          </select>
+        </div>
+        <button class="btn btn-primary" id="addUserBtn">Add</button>
+      </div>
+      <div class="add-user-error" id="addUserError"></div>
+      <div class="sec-title">All Users</div>
+      <div class="users-list" id="usersList"></div>
+    </div>
+  </div>
+</div>
+
+<!-- ── Remarks history modal (admin only — opened from row history button) ── -->
+<div class="modal-overlay" id="historyModal">
+  <div class="modal">
+    <div class="modal-head">
+      <h3>Remarks History <span id="historyModalSubtitle" style="font-weight:400;color:#9ca3af;font-size:12px;"></span></h3>
+      <button class="modal-close" data-close="historyModal">×</button>
+    </div>
+    <div class="modal-body" id="historyModalBody"></div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script src="/app.js"></script>
+</body>
+</html>

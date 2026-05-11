@@ -1,0 +1,1163 @@
+// ── State ──────────────────────────────────────────────────────────────
+const state = {
+  user: null,
+  rows: [],
+  total: 0,
+  openUid: null,
+  sortKey: null,
+  sortDir: 'desc',
+  // Distinct filter values from the full supply-ready pool. Populated by /api/list
+  // so the dropdowns stay stable regardless of currently-selected filters.
+  distinct: { cities: [], sources: [], pocs: [] },
+  filters: {
+    search: '',
+    city: '',
+    source: '',
+    poc: '',
+    dateField: 'ama_date',
+    from: '',
+    to: '',
+  },
+};
+
+// ── Helpers ────────────────────────────────────────────────────────────
+const $ = (sel, root = document) => root.querySelector(sel);
+const $$ = (sel, root = document) => Array.from(root.querySelectorAll(sel));
+
+function esc(s) {
+  if (s == null) return '';
+  return String(s)
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+
+function toLakhs(num) {
+  if (num == null || num === '') return '';
+  const n = Number(num);
+  if (isNaN(n)) return '';
+  // Backend stores money as plain numbers in lakhs (matching supply tracker convention).
+  return `₹${n.toLocaleString('en-IN', { maximumFractionDigits: 1 })} L`;
+}
+
+function fmtDate(d) {
+  if (!d) return '';
+  const dt = new Date(d);
+  if (isNaN(dt.getTime())) return String(d);
+  return dt.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
+}
+
+function fmtDateInput(d) {
+  if (!d) return '';
+  const dt = new Date(d);
+  if (isNaN(dt.getTime())) return '';
+  return dt.toISOString().slice(0, 10);
+}
+
+function parseJsonish(v) {
+  if (v == null) return [];
+  if (Array.isArray(v)) return v;
+  if (typeof v === 'object') return v;
+  try { const p = JSON.parse(v); return Array.isArray(p) ? p : []; } catch { return []; }
+}
+
+function dash(v) {
+  return (v == null || v === '') ? '<span class="field-val muted">—</span>' : esc(v);
+}
+
+function showToast(msg, type = '') {
+  const t = $('#toast');
+  t.textContent = msg;
+  t.className = 'toast show ' + type;
+  setTimeout(() => t.className = 'toast', 2500);
+}
+
+function canEdit() { return state.user && (state.user.role === 'admin' || state.user.role === 'manager'); }
+function isAdmin() { return state.user && state.user.role === 'admin'; }
+function isViewer() { return state.user && state.user.role === 'viewer'; }
+
+// Display-only label mapping for the `source` field. Underlying DB values
+// ("Direct", "CP", etc.) stay intact — only the visible label is shortened.
+const SOURCE_LABELS = { 'Direct': 'D', 'CP': 'C' };
+function fmtSource(v) {
+  if (v == null || v === '') return '';
+  return SOURCE_LABELS[v] || v;
+}
+
+// ── Canonical option lists ──────────────────────────────────────────────
+// Mirror of backend-form's routes/config.js. Used by editable dropdowns to
+// keep `properties` field values aligned with what the supply-side forms
+// produce — preventing demand-side edits from polluting the canonical set.
+// If backend-form adds new entries later, update these arrays here.
+const CANONICAL_SOURCES = ['CP', 'Direct'];
+const CANONICAL_POCS = [
+  'Abhishek Rathore', 'Aman Dixit', 'Animesh Singh', 'Arti Ahirwar',
+  'Deepak Mishra', 'Deepak Rana', 'Kavita Rawat', 'Nisha Deewan',
+  'Rahul Sheel', 'Rupali Prasad', 'Sahil Singh', 'Shashank Kumar',
+  'Sushmita Roy', 'Test Sahaj',
+];
+const CANONICAL_BANKS = [
+  'Au Small Finance Bank Ltd.', 'Axis Bank Ltd.', 'Bandhan Bank Ltd.',
+  'Bank of Baroda', 'Bank of India', 'Bank of Maharashtra', 'Canara Bank',
+  'Central Bank of India', 'City Union Bank Ltd.', 'CSB Bank Limited',
+  'DCB Bank Ltd.', 'Dhanlaxmi Bank Ltd.', 'Federal Bank Ltd.',
+  'Godrej Housing Finance', 'HDFC Bank Ltd', 'HSBC India', 'ICICI Bank Ltd.',
+  'IDBI Bank Limited', 'IDFC FIRST Bank Limited', 'Indian Bank',
+  'Indian Overseas Bank', 'IndusInd Bank Ltd', 'Jammu & Kashmir Bank Ltd.',
+  'Karnataka Bank Ltd.', 'Karur Vysya Bank Ltd.', 'Kotak Mahindra Bank Ltd',
+  'Nainital bank Ltd.', 'Punjab & Sind Bank', 'Punjab National Bank',
+  'RBL Bank Ltd.', 'South Indian Bank Ltd.', 'Standard Charted India',
+  'State Bank of India', 'Tamilnad Mercantile Bank Ltd.', 'UCO Bank',
+  'Union Bank of India', 'YES Bank Ltd.',
+];
+
+// ── Bootstrap ──────────────────────────────────────────────────────────
+(async function init() {
+  try {
+    const r = await fetch('/api/auth/me', { credentials: 'include' });
+    if (!r.ok) { window.location.href = '/login'; return; }
+    const data = await r.json();
+    if (!data.success) { window.location.href = '/login'; return; }
+    state.user = data.user;
+    renderUserMenu();
+    bindUI();
+    await loadData();
+  } catch (e) {
+    console.error('init failed', e);
+    window.location.href = '/login';
+  }
+})();
+
+function renderUserMenu() {
+  const u = state.user;
+  $('#userName').textContent = u.name || u.email;
+  $('#userEmail').textContent = u.email;
+  const badge = $('#userRoleBadge');
+  badge.textContent = u.role;
+  badge.className = 'user-role-badge ' + u.role;
+  // Drives role-based CSS rules (e.g. hiding sensitive columns from viewers).
+  document.body.classList.remove('role-admin', 'role-manager', 'role-viewer');
+  document.body.classList.add('role-' + u.role);
+  if (u.picture) {
+    $('#userAvatar').src = u.picture;
+  } else {
+    const initial = (u.name || u.email || '?')[0].toUpperCase();
+    $('#userAvatar').src = `data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='32' height='32' viewBox='0 0 32 32'><circle cx='16' cy='16' r='16' fill='%234f46e5'/><text x='16' y='21' text-anchor='middle' fill='white' font-family='Inter' font-size='14' font-weight='600'>${initial}</text></svg>`;
+  }
+  if (isAdmin()) $('#manageUsersBtn').style.display = 'inline-flex';
+}
+
+// ── UI bindings ────────────────────────────────────────────────────────
+function bindUI() {
+  $('#userAvatar').addEventListener('click', () => $('#userDropdown').classList.toggle('open'));
+  document.addEventListener('click', (e) => {
+    if (!e.target.closest('.user-menu')) $('#userDropdown').classList.remove('open');
+  });
+  $('#logoutBtn').addEventListener('click', async () => {
+    await fetch('/api/auth/logout', { method: 'POST', credentials: 'include' });
+    window.location.href = '/login';
+  });
+
+  let searchTimer;
+  $('#searchInput').addEventListener('input', (e) => {
+    clearTimeout(searchTimer);
+    searchTimer = setTimeout(() => { state.filters.search = e.target.value; loadData(); }, 300);
+  });
+
+  $('#filterCity').addEventListener('change', (e) => { state.filters.city = e.target.value; loadData(); });
+  $('#filterSource').addEventListener('change', (e) => { state.filters.source = e.target.value; loadData(); });
+  $('#filterPoc').addEventListener('change', (e) => { state.filters.poc = e.target.value; loadData(); });
+  $('#filterDateField').addEventListener('change', (e) => { state.filters.dateField = e.target.value; loadData(); });
+  $('#filterFrom').addEventListener('change', (e) => { state.filters.from = e.target.value; loadData(); });
+  $('#filterTo').addEventListener('change', (e) => { state.filters.to = e.target.value; loadData(); });
+
+  $('#clearDateBtn').addEventListener('click', () => {
+    $('#filterFrom').value = ''; $('#filterTo').value = '';
+    state.filters.from = ''; state.filters.to = '';
+    loadData();
+  });
+
+  $('#clearAllBtn').addEventListener('click', () => {
+    state.filters = { search: '', city: '', source: '', poc: '',
+                      dateField: 'ama_date', from: '', to: '' };
+    $('#searchInput').value = '';
+    $('#filterCity').value = '';
+    $('#filterSource').value = '';
+    $('#filterPoc').value = '';
+    $('#filterDateField').value = 'ama_date';
+    $('#filterFrom').value = '';
+    $('#filterTo').value = '';
+    loadData();
+  });
+
+  $('#refreshBtn').addEventListener('click', () => {
+    $('#refreshBtn').classList.add('spinning');
+    loadData().finally(() => setTimeout(() => $('#refreshBtn').classList.remove('spinning'), 600));
+  });
+
+  $('#csvBtn').addEventListener('click', exportCsv);
+
+  $('#manageUsersBtn').addEventListener('click', openUsersModal);
+
+  // Sort handlers
+  $$('thead th[data-sort]').forEach(th => {
+    th.addEventListener('click', () => {
+      const k = th.dataset.sort;
+      if (state.sortKey === k) state.sortDir = state.sortDir === 'asc' ? 'desc' : 'asc';
+      else { state.sortKey = k; state.sortDir = 'asc'; }
+      renderTable();
+    });
+  });
+
+  // Modals
+  $$('[data-close]').forEach(b => b.addEventListener('click', () => {
+    $('#' + b.dataset.close).classList.remove('open');
+  }));
+  $$('.modal-overlay').forEach(o => o.addEventListener('click', (e) => {
+    if (e.target === o) o.classList.remove('open');
+  }));
+  $('#addUserBtn').addEventListener('click', addUser);
+
+  // Sticky-top height variable so sticky thead aligns under it.
+  // ResizeObserver re-fires whenever the filter bar wraps onto more lines.
+  const top = $('.sticky-top');
+  const updateH = () => document.documentElement.style.setProperty('--sticky-top-h', top.offsetHeight + 'px');
+  updateH();
+  new ResizeObserver(updateH).observe(top);
+
+  // Bank autocomplete datalist — referenced by every Bank input via list="bank-list".
+  // Injected once here rather than in renderExpand so it isn't rebuilt on each row open.
+  if (!document.getElementById('bank-list')) {
+    const dl = document.createElement('datalist');
+    dl.id = 'bank-list';
+    dl.innerHTML = CANONICAL_BANKS.map(b => `<option value="${esc(b)}">`).join('');
+    document.body.appendChild(dl);
+  }
+}
+
+// ── Data load ──────────────────────────────────────────────────────────
+async function loadData() {
+  $('#loadingBox').style.display = 'flex';
+  $('#emptyBox').style.display = 'none';
+  $('#propBody').innerHTML = '';
+
+  const f = state.filters;
+  const q = new URLSearchParams();
+  if (f.search) q.set('search', f.search);
+  if (f.city) q.set('city', f.city);
+  if (f.source) q.set('source', f.source);
+  if (f.poc) q.set('poc', f.poc);
+  if (f.dateField) q.set('dateField', f.dateField);
+  if (f.from) q.set('from', f.from);
+  if (f.to) q.set('to', f.to);
+  q.set('limit', '500');
+
+  try {
+    const r = await fetch('/api/list?' + q.toString(), { credentials: 'include' });
+    if (r.status === 401) { window.location.href = '/login'; return; }
+    const data = await r.json();
+    if (!data.success) { showToast(data.error || 'Failed to load', 'error'); return; }
+
+    state.rows = data.data;
+    state.total = data.total;
+    if (data.distinct) state.distinct = data.distinct;
+    populateFilterDropdowns();
+    renderTable();
+    $('#headerSub').textContent =
+      (state.filters.city || 'All Cities') + ' · ' + state.total + ' Properties';
+  } catch (e) {
+    console.error(e);
+    showToast('Network error', 'error');
+  } finally {
+    $('#loadingBox').style.display = 'none';
+  }
+}
+
+function populateFilterDropdowns() {
+  // Pull from state.distinct (full supply-ready pool) — picking one filter
+  // never strips options from the others.
+  fillSelect('#filterCity', state.distinct.cities || [], state.filters.city, 'All Cities');
+  // Sources show short labels (D, C) but the underlying option value stays
+  // raw ("Direct", "CP") so the server-side filter still matches the column.
+  fillSelect('#filterSource', state.distinct.sources || [], state.filters.source, 'All Sources', fmtSource);
+  fillSelect('#filterPoc', state.distinct.pocs || [], state.filters.poc, 'All POCs');
+}
+
+function fillSelect(sel, values, current, allLabel, labelFn) {
+  const el = $(sel);
+  el.innerHTML = `<option value="">${allLabel}</option>` +
+    values.map(v => {
+      const label = labelFn ? labelFn(v) : v;
+      return `<option value="${esc(v)}"${v === current ? ' selected' : ''}>${esc(label)}</option>`;
+    }).join('');
+}
+
+// ── Table render ───────────────────────────────────────────────────────
+function renderTable() {
+  const body = $('#propBody');
+  let rows = [...state.rows];
+
+  if (state.sortKey) {
+    rows.sort((a, b) => {
+      const av = a[state.sortKey], bv = b[state.sortKey];
+      const an = av == null ? '' : av, bn = bv == null ? '' : bv;
+      if (an < bn) return state.sortDir === 'asc' ? -1 : 1;
+      if (an > bn) return state.sortDir === 'asc' ? 1 : -1;
+      return 0;
+    });
+  }
+
+  $$('thead th').forEach(th => {
+    th.classList.remove('sorted');
+    if (th.dataset.sort === state.sortKey) {
+      th.classList.add('sorted');
+      th.dataset.arrow = state.sortDir === 'asc' ? '▲' : '▼';
+    }
+  });
+
+  if (!rows.length) {
+    $('#emptyBox').style.display = 'block';
+    $('#countBadge').textContent = '0 results';
+    return;
+  }
+  $('#emptyBox').style.display = 'none';
+  $('#countBadge').textContent = `${rows.length} of ${state.total} properties`;
+
+  body.innerHTML = rows.map(r => renderRow(r)).join('');
+
+  body.querySelectorAll('tr.data-row').forEach(tr => {
+    tr.addEventListener('click', (e) => {
+      // Clicks on inputs/selects shouldn't toggle the row.
+      if (e.target.closest('input, select, textarea, button, a')) return;
+      toggleRow(tr.dataset.uid);
+    });
+  });
+
+  // Re-attach handlers for inputs in any expanded sections.
+  rows.forEach(r => { if (r.uid === state.openUid) attachExpandHandlers(r.uid); });
+}
+
+function renderRow(r) {
+  const isOpen = r.uid === state.openUid;
+  // Legacy rows (imported from CSV into legacy_properties) get an amber badge
+  // so they're visually distinct from real supply-pipeline properties.
+  // Real rows keep the existing AMA / Keys distinction.
+  let supplyBadge;
+  if (r.origin === 'legacy') {
+    supplyBadge = '<span class="supply-badge legacy" title="Imported from legacy CSV">Legacy</span>';
+  } else if (r.supply_status === 'Key Handover Done') {
+    supplyBadge = '<span class="supply-badge keys">Keys</span>';
+  } else {
+    supplyBadge = '<span class="supply-badge ama">AMA</span>';
+  }
+
+  const listingPriceCell = r.listing_price != null
+    ? `<span class="price-val">${esc(toLakhs(r.listing_price))}</span>`
+    : '<span class="price-empty">— Not set —</span>';
+
+  // Inline-editable remarks for editor + admin; static text for viewer.
+  // Admin gets a 📜 button that opens the full edit history modal.
+  const remarksValue = r.internal_remarks || '';
+  let remarksCell;
+  if (canEdit()) {
+    remarksCell = `
+      <textarea class="inline-textarea inline-remarks"
+                data-uid="${esc(r.uid)}" data-field="internal_remarks"
+                placeholder="Add remarks…"
+                rows="2">${esc(remarksValue)}</textarea>
+      <span class="save-dot" data-dot="internal_remarks-${esc(r.uid)}"></span>`;
+  } else {
+    remarksCell = remarksValue
+      ? `<div class="remarks-readonly">${esc(remarksValue)}</div>`
+      : '<span class="field-val muted">—</span>';
+  }
+  if (isAdmin()) {
+    remarksCell += `
+      <button class="remarks-history-btn" data-history-uid="${esc(r.uid)}"
+              title="View remarks history">📜</button>`;
+  }
+
+  const dataRow = `
+    <tr class="data-row ${isOpen ? 'open' : ''}" data-uid="${esc(r.uid)}">
+      <td><span class="toggle-arrow">▶</span></td>
+      <td>
+        <div class="prop-cell">
+          <div class="prop-name">${esc(r.society_name || '—')} ${supplyBadge}</div>
+          <div class="prop-unit">${esc(r.tower_no || '')} ${esc(r.unit_no ? '· Unit ' + r.unit_no : '')} ${r.floor != null ? '· Floor ' + esc(r.floor) : ''}</div>
+        </div>
+      </td>
+      <td>${esc(r.city || '—')}<div class="prop-unit">${esc(r.locality || '')}</div></td>
+      <td>${esc(r.configuration || '—')}</td>
+      <td>${r.area_sqft ? esc(r.area_sqft) : (r.super_area ? esc(r.super_area) : '—')}</td>
+      <td>${listingPriceCell}</td>
+      <td class="col-ama-date">${esc(fmtDate(r.ama_date)) || '—'}</td>
+      <td class="col-key-handover">${esc(fmtDate(r.key_handover_date)) || '—'}</td>
+      <td>${esc(r.owner_name || '—')}<div class="prop-unit col-contact">${esc(r.contact_no || '')}</div></td>
+      <td class="td-remarks">${remarksCell}</td>
+    </tr>`;
+
+  const expandRow = `
+    <tr class="expand-row ${isOpen ? 'open' : ''}" data-uid-expand="${esc(r.uid)}">
+      <td colspan="10">${isOpen ? renderExpand(r) : ''}</td>
+    </tr>`;
+
+  return dataRow + expandRow;
+}
+
+function toggleRow(uid) {
+  state.openUid = state.openUid === uid ? null : uid;
+  renderTable();
+}
+
+// ── Expand panel ───────────────────────────────────────────────────────
+function renderExpand(r) {
+  const cantEditPrice = !isAdmin();
+
+  // Listing price input — admin-only; editor/viewer see read-only.
+  const listingPriceField = `
+    <div class="field-row">
+      <div class="field-lbl">Listing Price (Lakhs) ${isAdmin() ? '' : '<span class="admin-only-note">— admin only</span>'}</div>
+      <input type="number" step="0.01" class="inline-input"
+             data-uid="${esc(r.uid)}" data-field="listing_price"
+             value="${r.listing_price != null ? esc(r.listing_price) : ''}"
+             placeholder="${cantEditPrice ? '—' : 'e.g. 115'}"
+             ${cantEditPrice ? 'disabled' : ''}>
+      <span class="save-dot" data-dot="listing_price-${esc(r.uid)}"></span>
+    </div>`;
+
+  // legacy_raw_values: { "<col>": "<original raw text>" } — populated by the
+  // legacy importer when a value had to be transformed. Used here to surface
+  // the original via tooltip so admins know the displayed value isn't pristine.
+  const legacy = r.legacy_raw_values || {};
+  const carpetTooltip = legacy.carpet_area ? `Original CSV value: ${legacy.carpet_area}` : '';
+
+  // ── Section: Property
+  const sectionProperty = `
+    <div class="expand-section">
+      <h4>🏠 Property</h4>
+      ${field('Society', r.society_name)}
+      ${field('Unit No', r.unit_no)}
+      ${field('Tower', r.tower_no)}
+      ${field('Floor', r.floor)}
+      ${field('Configuration', r.configuration)}
+      ${field('No. of Bedrooms', extractBedrooms(r.configuration))}
+      ${field('No. of Baths', r.bathrooms)}
+      ${field('No. of Balconies', r.balconies)}
+      ${field('Extra Area', formatExtraArea(r.extra_area))}
+      ${field('Super Area (sqft)', r.super_area || r.area_sqft)}
+      ${field('Carpet Area (sqft)', r.carpet_area, carpetTooltip ? 'tooltipped' : '', carpetTooltip)}
+      ${field('Locality', r.locality)}
+      ${field('City', r.city)}
+      ${field('Origin', r.origin === 'legacy' ? 'Legacy import (CSV)' : 'Supply pipeline', r.origin === 'legacy' ? 'amber' : '')}
+      ${editableSelect('Source', 'source', r.source, { uid: r.uid, options: CANONICAL_SOURCES, labelFn: fmtSource })}
+      ${editableSelect('POC', 'assigned_by', r.poc, { uid: r.uid, options: CANONICAL_POCS })}
+    </div>`;
+
+  // ── Section: Society & Charges
+  // 9 numeric fields are inline-editable for admin/manager (writes go to the
+  // shared `properties` table; every change is audit-logged in activity_logs).
+  const sectionSociety = `
+    <div class="expand-section">
+      <h4>📐 Society & Charges</h4>
+      ${editableNum('Society Age (years)',     'society_age_years',     r.society_age_years,     { uid: r.uid })}
+      ${editableNum('Total Units in Society',  'total_units',           r.total_units,           { uid: r.uid, isInt: true })}
+      ${editableNum('Total Floors in Tower',   'total_floors_tower',    r.total_floors_tower,    { uid: r.uid, isInt: true })}
+      ${editableNum('Total Flats on Floor',    'total_flats_floor',     r.total_flats_floor,     { uid: r.uid, isInt: true })}
+      ${field('Exit Facing', r.exit_facing)}
+      ${field('Balcony Facing', formatBalconyFacing(r.balcony_details), 'multiline')}
+      ${editableNum('Maintenance (per sqft)',  'maintenance_charges',     r.maintenance_charges,     { uid: r.uid })}
+      ${editableNum('Society Move-in Charges', 'society_move_in_charges', r.society_move_in_charges, { uid: r.uid })}
+      ${editableNum('Electricity / unit',      'electricity_charges',     r.electricity_charges,     { uid: r.uid })}
+      ${editableNum('DG Charges / unit',       'dg_charges',              r.dg_charges,              { uid: r.uid })}
+      ${editableNum('Circle Rate',             'circle_rate',             r.circle_rate,             { uid: r.uid })}
+      ${field('Gas Pipeline', r.gas_pipeline)}
+      ${field('Club Facility', r.club_facility)}
+      ${field('Society Occupancy', r.current_occupancy_pct != null ? r.current_occupancy_pct + '%' : '')}
+    </div>`;
+
+  // ── Section: Possession & Listing
+  const sectionPossession = `
+    <div class="expand-section">
+      <h4>🔑 Possession & Listing</h4>
+      ${listingPriceField}
+      ${isViewer() ? '' : field('Date of AMA', fmtDate(r.ama_date))}
+      ${field('Key Handover Status', r.key_handover_date ? 'Done' : 'Pending', r.key_handover_date ? 'green' : 'amber')}
+      ${isViewer()
+        ? ''
+        : editableDate('Key Handover Date', 'key_handover_date', r.key_handover_date, { uid: r.uid })}
+      ${field('Current Occupancy', r.possession_status || r.occupancy_status)}
+      ${field('Furnishing Status', r.furnishing)}
+      ${field('Furnishing Items', formatList(r.furnishing_details))}
+      ${field('Parking', r.parking)}
+      ${field('Parking No.', r.parking_number)}
+      ${field('Property Tax Status', r.property_tax_status)}
+      ${editableText('Payment Structure', 'alpha_beta', r.alpha_beta, { uid: r.uid, placeholder: 'e.g. Alpha 75 / Beta 25' })}
+    </div>`;
+
+  // ── Section: Owner & Loan
+  const sectionOwner = `
+    <div class="expand-section">
+      <h4>👤 Owner & Loan</h4>
+      ${field('Owner Name', r.owner_name)}
+      ${isViewer() ? '' : field('Contact No', r.contact_no)}
+      ${field('Co-Owner', r.co_owner)}
+      ${isViewer() ? '' : field('Co-Owner No', r.co_owner_number)}
+      ${field('Owner Physical Location', r.seller_location)}
+      ${field('Seller Residential Status', r.seller_residential_status)}
+      ${editableText('Loan Status', 'loan_status', r.loan_status, { uid: r.uid, placeholder: 'No Loan / NA / 60 HDFC / etc.' })}
+      ${editableNum('Outstanding Loan', 'outstanding_loan', r.outstanding_loan, { uid: r.uid })}
+      ${editableText('Bank', 'bank_name_loan', r.bank_name_loan, { uid: r.uid, datalistId: 'bank-list', placeholder: 'Type to search…' })}
+      ${field('Documents Available', formatList(r.documents_available))}
+    </div>`;
+
+  // Internal Remarks here are the SUPPLY-side remarks (ap_details.internal_remarks),
+  // mirroring what the Acquired Property Status dashboard displays. Surfaced for
+  // Admin + Manager only — viewers don't see them.
+  const supplyRemarksField = canEdit() && r.supply_internal_remarks
+    ? `<div class="field-row" style="margin-top:14px;">
+         <div class="field-lbl">Internal Remarks (from Acquired Property Status)</div>
+         <div class="supply-remarks-box">${esc(r.supply_internal_remarks)}</div>
+       </div>`
+    : '';
+
+  // ── Section: Media (Property Images card + Balcony Views card + video).
+  // Spans 2 grid columns to fill the space freed up by the removed Demand
+  // Pipeline section.
+  const propImgs = collectPropertyImages(r);
+  const balconyViews = collectBalconyViews(r);
+  const noMediaMsg = (!propImgs.length && !balconyViews.length)
+    ? '<div class="gallery-empty">No images uploaded</div>'
+    : '';
+
+  const sectionMedia = `
+    <div class="expand-section expand-section--wide">
+      <h4>📸 Media</h4>
+      ${renderPropertyImagesCard(propImgs)}
+      ${renderBalconyViewsCard(balconyViews)}
+      ${noMediaMsg}
+      <div class="field-row" style="margin-top:14px;">
+        <div class="field-lbl">Video Link</div>
+        ${r.video_link
+          ? `<a class="video-link-pill" href="${esc(r.video_link)}" target="_blank" rel="noopener">▶ Watch Video</a>`
+          : '<span class="field-val muted">—</span>'}
+      </div>
+      ${supplyRemarksField}
+    </div>`;
+
+  return `
+    <div class="expand-inner">
+      ${sectionProperty}
+      ${sectionSociety}
+      ${sectionPossession}
+      ${sectionOwner}
+      ${sectionMedia}
+    </div>`;
+}
+
+// All editable* helpers below render an inline input for admin/manager and
+// fall back to `field()` (read-only text) for viewers. They post to
+// /api/property-edits/:uid via the delegated change handler — every save is
+// audit-logged server-side.
+
+function editableNum(label, fieldName, value, opts) {
+  const { uid, isInt, tooltip } = opts;
+  if (!canEdit()) return field(label, value, tooltip ? 'tooltipped' : '', tooltip);
+  return `
+    <div class="field-row">
+      <div class="field-lbl">${esc(label)}${tooltip ? ` <span class="info-tip" title="${esc(tooltip)}">ⓘ</span>` : ''}</div>
+      <input type="number" class="inline-input"
+             data-uid="${esc(uid)}" data-field="${esc(fieldName)}" data-endpoint="property-edits"
+             ${isInt ? 'step="1"' : 'step="0.01"'} min="0"
+             value="${value != null ? esc(value) : ''}"
+             placeholder="—">
+      <span class="save-dot" data-dot="${esc(fieldName)}-${esc(uid)}"></span>
+    </div>`;
+}
+
+function editableText(label, fieldName, value, opts) {
+  const { uid, placeholder, datalistId } = opts;
+  if (!canEdit()) return field(label, value);
+  return `
+    <div class="field-row">
+      <div class="field-lbl">${esc(label)}</div>
+      <input type="text" class="inline-input"
+             data-uid="${esc(uid)}" data-field="${esc(fieldName)}" data-endpoint="property-edits"
+             ${datalistId ? `list="${esc(datalistId)}"` : ''}
+             value="${value != null ? esc(value) : ''}"
+             placeholder="${esc(placeholder || '—')}">
+      <span class="save-dot" data-dot="${esc(fieldName)}-${esc(uid)}"></span>
+    </div>`;
+}
+
+function editableDate(label, fieldName, value, opts) {
+  const { uid } = opts;
+  // Normalize value to YYYY-MM-DD for the date input
+  let dateVal = '';
+  if (value) {
+    const d = new Date(value);
+    if (!isNaN(d.getTime())) dateVal = d.toISOString().slice(0, 10);
+  }
+  if (!canEdit()) return field(label, value ? fmtDate(value) : '');
+  return `
+    <div class="field-row">
+      <div class="field-lbl">${esc(label)}</div>
+      <input type="date" class="inline-input"
+             data-uid="${esc(uid)}" data-field="${esc(fieldName)}" data-endpoint="property-edits"
+             value="${esc(dateVal)}">
+      <span class="save-dot" data-dot="${esc(fieldName)}-${esc(uid)}"></span>
+    </div>`;
+}
+
+// Strict select — current value preserved as a "(legacy)" option if it isn't
+// in `options`, so non-canonical historical data is shown but anything saved
+// goes through the canonical list. `labelFn` lets the visible label differ
+// from the option value (e.g. Source shows "D"/"C" but stores "Direct"/"CP").
+function editableSelect(label, fieldName, value, opts) {
+  const { uid, options, emptyLabel = '— Unassigned —', labelFn } = opts;
+  const lbl = (o) => labelFn ? labelFn(o) : o;
+  // Read-only fallback: show the labeled form (e.g. "D" instead of "Direct")
+  // so viewers see the same string the dropdown would display.
+  if (!canEdit()) return field(label, value ? lbl(value) : '');
+  const inOptions = !value || options.includes(value);
+  const legacyOpt = inOptions ? '' :
+    `<option value="${esc(value)}" selected>${esc(value)} (legacy)</option>`;
+  const optsHtml = options.map(o =>
+    `<option value="${esc(o)}"${o === value ? ' selected' : ''}>${esc(lbl(o))}</option>`
+  ).join('');
+  return `
+    <div class="field-row">
+      <div class="field-lbl">${esc(label)}</div>
+      <select class="inline-select"
+              data-uid="${esc(uid)}" data-field="${esc(fieldName)}" data-endpoint="property-edits">
+        <option value=""${!value ? ' selected' : ''}>${esc(emptyLabel)}</option>
+        ${legacyOpt}
+        ${optsHtml}
+      </select>
+      <span class="save-dot" data-dot="${esc(fieldName)}-${esc(uid)}"></span>
+    </div>`;
+}
+
+function field(label, value, cls, tooltip) {
+  const v = (value == null || value === '' || value === 'null') ? '—' : value;
+  const isEmpty = v === '—';
+  const klass = isEmpty ? 'muted' : (cls || '');
+  // Optional ⓘ marker reveals the original raw value on hover (e.g. legacy
+  // carpet_area "1230-1300" stored as 1230 — tooltip shows the full range).
+  const tipHtml = tooltip ? ` <span class="info-tip" title="${esc(tooltip)}">ⓘ</span>` : '';
+  return `
+    <div class="field-row">
+      <div class="field-lbl">${esc(label)}${tipHtml}</div>
+      <div class="field-val ${klass}">${isEmpty ? '—' : esc(v)}</div>
+    </div>`;
+}
+
+function extractBedrooms(config) {
+  if (!config) return '';
+  const m = String(config).match(/(\d+(?:\.\d+)?)/);
+  return m ? m[1] : '';
+}
+
+function formatExtraArea(v) {
+  const arr = parseJsonish(v);
+  return Array.isArray(arr) && arr.length ? arr.join(', ') : '';
+}
+
+function formatList(v) {
+  const arr = parseJsonish(v);
+  return Array.isArray(arr) && arr.length ? arr.join(', ') : '';
+}
+
+function formatBalconyFacing(v) {
+  const arr = parseJsonish(v);
+  if (!Array.isArray(arr) || !arr.length) return '';
+  // Mirrors the captioning of each Balcony Views card: "Room · Facing · View",
+  // one line per balcony. Empty fields are dropped from the join so partial
+  // entries still read cleanly.
+  return arr.map(o => {
+    if (typeof o === 'string') return o;
+    const room   = o.attached_to || o.room   || o.name      || '';
+    const facing = o.facing      || o.direction             || '';
+    const view   = o.view        || o.outlook               || '';
+    return [room, facing, view].filter(Boolean).join(' · ');
+  }).filter(Boolean).join('\n');
+}
+
+// ── Media cards ────────────────────────────────────────────────────────
+// Each "card" is a labelled subsection inside the Media column.
+function renderPropertyImagesCard(propImgs) {
+  if (!propImgs.length) return '';
+  return `
+    <div class="media-card">
+      <div class="media-card-title">Property Images</div>
+      <div class="gallery">
+        ${propImgs.map(img => `
+          <div class="gallery-item" data-img="${esc(img.url)}">
+            <img src="${esc(img.url)}" alt="${esc(img.caption || '')}" loading="lazy">
+            ${img.caption ? `<div class="gallery-caption">${esc(img.caption)}</div>` : ''}
+          </div>`).join('')}
+      </div>
+    </div>`;
+}
+
+function renderBalconyViewsCard(views) {
+  if (!views.length) return '';
+  return `
+    <div class="media-card">
+      <div class="media-card-title">Balcony Views</div>
+      <div class="balcony-grid">
+        ${views.map(v => {
+          const caption = [v.room, v.facing, v.view].filter(Boolean).join(' · ');
+          return `
+          <div class="balcony-card">
+            <div class="balcony-imgs">
+              ${v.viewImg ? `<div class="balcony-img" data-img="${esc(v.viewImg)}" title="View photo">
+                  <img src="${esc(v.viewImg)}" alt="View" loading="lazy">
+                </div>` : ''}
+              ${v.compassImg ? `<div class="balcony-img balcony-img--compass" data-img="${esc(v.compassImg)}" title="Compass">
+                  <img src="${esc(v.compassImg)}" alt="Compass" loading="lazy">
+                </div>` : ''}
+            </div>
+            <div class="balcony-card-meta">
+              <div class="balcony-room">${esc(caption || 'Balcony')}</div>
+            </div>
+          </div>`;
+        }).join('')}
+      </div>
+    </div>`;
+}
+
+// Property images: compass (a single square dial photo) + any extras the supply
+// team uploaded. Rendered as a standalone gallery card.
+function collectPropertyImages(r) {
+  const imgs = [];
+  if (r.exit_compass_image) {
+    imgs.push({ url: r.exit_compass_image, caption: 'Exit Compass' });
+  }
+  const more = parseJsonish(r.additional_images);
+  if (Array.isArray(more)) {
+    for (const item of more) {
+      if (typeof item === 'string') imgs.push({ url: item, caption: '' });
+      else if (item && typeof item === 'object') {
+        const url = item.url || item.image || item.src;
+        if (url) imgs.push({ url, caption: item.caption || item.label || '' });
+      }
+    }
+  }
+  return imgs;
+}
+
+// Balcony views: each entry returns BOTH the actual view photo and the compass
+// dial photo (the supply form captures both per balcony). Field names match
+// backend-form/openhouse-forms (attached_to, facing, view, view_image, compass_image),
+// with fallbacks for older shapes.
+function collectBalconyViews(r) {
+  const views = [];
+  const balconies = parseJsonish(r.balcony_details);
+  if (Array.isArray(balconies)) {
+    for (const b of balconies) {
+      if (!b || typeof b !== 'object') continue;
+      const room       = b.attached_to   || b.room      || b.name      || '';
+      const facing     = b.facing        || b.direction                || '';
+      const view       = b.view          || b.outlook                  || '';
+      const viewImg    = b.view_image    || b.image     || b.image_url || b.url || '';
+      const compassImg = b.compass_image || '';
+      // Drop entries with no images and no metadata at all.
+      if (!viewImg && !compassImg && !room && !facing && !view) continue;
+      views.push({ room, facing, view, viewImg, compassImg });
+    }
+  }
+  return views;
+}
+
+// Combined list — used by the CSV export's "Photo Links" column. Each balcony
+// contributes up to two URLs (view + compass) so neither is dropped.
+function collectImages(r) {
+  const all = [...collectPropertyImages(r)];
+  for (const v of collectBalconyViews(r)) {
+    const base = [v.room, v.facing, v.view].filter(Boolean).join(' · ') || 'Balcony';
+    if (v.viewImg)    all.push({ url: v.viewImg,    caption: base + ' (View)'    });
+    if (v.compassImg) all.push({ url: v.compassImg, caption: base + ' (Compass)' });
+  }
+  return all;
+}
+
+// ── Inline edits ───────────────────────────────────────────────────────
+// All `change` events bubble to the document and are handled by the delegated
+// listener below. attachExpandHandlers only adds bindings that don't bubble
+// reliably (lightbox click on gallery thumbs).
+function attachExpandHandlers(uid) {
+  const expandTr = document.querySelector(`tr.expand-row[data-uid-expand="${cssEscape(uid)}"]`);
+  if (!expandTr) return;
+  // Property Images + Balcony View images all participate in one lightbox
+  // sequence — clicking any one passes the full URL list + the clicked index
+  // so left/right arrows can scrub through every image in the panel.
+  const allThumbs = Array.from(expandTr.querySelectorAll('.gallery-item, .balcony-img'));
+  const allUrls = allThumbs.map(t => t.dataset.img).filter(Boolean);
+  allThumbs.forEach((g, i) => {
+    g.addEventListener('click', () => openLightbox(allUrls, i));
+  });
+}
+
+// Delegated handler — fires once per change regardless of row open/closed state.
+document.addEventListener('change', (e) => {
+  const el = e.target;
+  if (!el.matches) return;
+  const isEditable =
+    el.matches('input.inline-input') ||
+    el.matches('textarea.inline-textarea') ||
+    el.matches('select.inline-select');
+  if (!isEditable) return;
+  const uid = el.dataset.uid;
+  if (!uid) return;
+  saveField(uid, el);
+});
+
+// Remarks history button (admin-only). Live binding via delegation since
+// rows re-render on every loadData / sort / row-toggle.
+document.addEventListener('click', (e) => {
+  const btn = e.target.closest('.remarks-history-btn');
+  if (!btn) return;
+  e.stopPropagation(); // don't toggle the row
+  openRemarksHistory(btn.dataset.historyUid);
+});
+
+function cssEscape(s) {
+  return String(s).replace(/(["\\])/g, '\\$1');
+}
+
+async function saveField(uid, el) {
+  const field = el.dataset.field;
+  if (!field) return;
+  // Inputs tagged data-endpoint="property-edits" write to the supply-side
+  // `properties` table (audit-logged); everything else writes to demand_details.
+  const endpoint = el.dataset.endpoint || 'demand-details';
+  const value = el.value;
+  const dotKey = `${field}-${uid}`;
+  const dot = document.querySelector(`[data-dot="${cssEscape(dotKey)}"]`);
+  if (dot) dot.className = 'save-dot saving';
+
+  try {
+    const r = await fetch('/api/' + endpoint + '/' + encodeURIComponent(uid), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'include',
+      body: JSON.stringify({ [field]: value }),
+    });
+    const data = await r.json();
+    if (!r.ok || !data.success) {
+      if (dot) dot.className = 'save-dot error';
+      showToast(data.error || 'Failed to save', 'error');
+      return;
+    }
+    if (dot) dot.className = 'save-dot saved';
+    setTimeout(() => { if (dot) dot.className = 'save-dot'; }, 1500);
+
+    // Patch local row in place so subsequent renders / sorts / CSV export
+    // reflect the new value without a full /api/list refetch.
+    // demand-details returns full row in `data`; property-edits returns only
+    // the changed columns in `updated`.
+    const row = state.rows.find(r => r.uid === uid);
+    if (row) {
+      if (data.data) Object.assign(row, data.data);
+      if (data.updated) Object.assign(row, data.updated);
+    }
+  } catch (e) {
+    console.error(e);
+    if (dot) dot.className = 'save-dot error';
+    showToast('Network error', 'error');
+  }
+}
+
+// ── Lightbox ───────────────────────────────────────────────────────────
+// Supports both the legacy single-URL call and the new (urls, index) form.
+// Keeps a module-level cursor so the keydown listener (mounted once) can
+// scrub through the gallery without needing closure access.
+const lightbox = { urls: [], index: 0 };
+
+function openLightbox(urlsOrUrl, startIndex) {
+  // Backwards-compat: openLightbox('http://…') still works.
+  if (typeof urlsOrUrl === 'string') {
+    lightbox.urls = [urlsOrUrl];
+    lightbox.index = 0;
+  } else {
+    lightbox.urls = urlsOrUrl || [];
+    lightbox.index = Math.max(0, Math.min(startIndex || 0, lightbox.urls.length - 1));
+  }
+  if (!lightbox.urls.length) return;
+
+  let lb = $('#lightbox');
+  if (!lb) {
+    lb = document.createElement('div');
+    lb.id = 'lightbox';
+    lb.className = 'lightbox';
+    lb.innerHTML = `
+      <button class="lightbox-close" data-lb-action="close" title="Close (Esc)">×</button>
+      <button class="lightbox-nav lightbox-prev" data-lb-action="prev" title="Previous (←)">‹</button>
+      <img src="" alt="">
+      <button class="lightbox-nav lightbox-next" data-lb-action="next" title="Next (→)">›</button>
+      <div class="lightbox-counter"></div>`;
+    document.body.appendChild(lb);
+
+    lb.addEventListener('click', (e) => {
+      const action = e.target.dataset.lbAction;
+      if (action === 'close')      lb.classList.remove('open');
+      else if (action === 'prev')  navLightbox(-1);
+      else if (action === 'next')  navLightbox(1);
+      else if (e.target === lb)    lb.classList.remove('open'); // backdrop
+    });
+
+    // Keyboard nav. Mounted once on document; gated by lightbox open state.
+    document.addEventListener('keydown', (e) => {
+      if (!lb.classList.contains('open')) return;
+      if (e.key === 'ArrowLeft')  { e.preventDefault(); navLightbox(-1); }
+      else if (e.key === 'ArrowRight') { e.preventDefault(); navLightbox(1); }
+      else if (e.key === 'Escape')     { e.preventDefault(); lb.classList.remove('open'); }
+    });
+  }
+
+  updateLightbox();
+  lb.classList.add('open');
+}
+
+function navLightbox(delta) {
+  const n = lightbox.urls.length;
+  if (n < 2) return;
+  // Wrap around so right at the end loops to start (and left at start to end).
+  lightbox.index = (lightbox.index + delta + n) % n;
+  updateLightbox();
+}
+
+function updateLightbox() {
+  const lb = $('#lightbox');
+  if (!lb) return;
+  const { urls, index } = lightbox;
+  lb.querySelector('img').src = urls[index] || '';
+  const counter = lb.querySelector('.lightbox-counter');
+  counter.textContent = urls.length > 1 ? `${index + 1} / ${urls.length}` : '';
+  // Hide nav arrows when there's only one image.
+  const display = urls.length > 1 ? '' : 'none';
+  lb.querySelector('.lightbox-prev').style.display = display;
+  lb.querySelector('.lightbox-next').style.display = display;
+}
+
+// ── CSV export ─────────────────────────────────────────────────────────
+function exportCsv() {
+  const cols = [
+    ['Listing Price (Lacs)', 'listing_price'],
+    ['Demand Team Remarks', 'internal_remarks'],
+    ['Unit No', 'unit_no'],
+    ['Floor', 'floor'],
+    ['Configuration', 'configuration'],
+    ['Extra Area', r => formatExtraArea(r.extra_area)],
+    ['Society Name', 'society_name'],
+    ['Locality', 'locality'],
+    ['City', 'city'],
+    ['Date of AMA', r => fmtDate(r.ama_date)],
+    ['Owner Name', 'owner_name'],
+    ['Owner Physical Location', 'seller_location'],
+    ['Key Handover Status', r => r.key_handover_date ? 'Done' : 'Pending'],
+    ['Key Handover Date', r => fmtDate(r.key_handover_date)],
+    ['Documents Available', r => formatList(r.documents_available)],
+    ['Loan Status', r => r.loan_status || (r.outstanding_loan ? 'Active' : 'No Loan')],
+    ['Loan Amount', 'outstanding_loan'],
+    ['Property Tax Status', 'property_tax_status'],
+    ['Payment Structure', 'alpha_beta'],
+    ['Super Area', r => r.super_area || r.area_sqft],
+    ['Carpet Area', 'carpet_area'],
+    ['No. of Bedrooms', r => extractBedrooms(r.configuration)],
+    ['No. of Baths', 'bathrooms'],
+    ['No. of Balconies', 'balconies'],
+    ['Gas Pipeline', 'gas_pipeline'],
+    ['Society Occupancy', r => r.current_occupancy_pct != null ? r.current_occupancy_pct + '%' : ''],
+    ['Club Facility', 'club_facility'],
+    ['Parking', 'parking'],
+    ['Parking No.', 'parking_number'],
+    ['Furnishing Status', 'furnishing'],
+    ['Furnishing Items', r => formatList(r.furnishing_details)],
+    ['Total Floors in Tower', 'total_floors_tower'],
+    ['Total Flats on Floor', 'total_flats_floor'],
+    ['Exit Facing', 'exit_facing'],
+    ['Balcony Facing', r => formatBalconyFacing(r.balcony_details)],
+    ['Society Age', 'society_age_years'],
+    ['Total Units in Society', 'total_units'],
+    ['Maintenance Charges (per sqft)', 'maintenance_charges'],
+    ['Society Move-in Charges', 'society_move_in_charges'],
+    ['Electricity Charges per unit', 'electricity_charges'],
+    ['DG Charges per unit', 'dg_charges'],
+    ['Current Occupancy', r => r.possession_status || r.occupancy_status],
+    ['Circle Rate', 'circle_rate'],
+    ['Photo Links', r => collectImages(r).map(i => i.url).join(' | ')],
+    ['Video Link', 'video_link'],
+    ['Supply Status', 'supply_status'],
+    ['Origin', r => r.origin === 'legacy' ? 'Legacy (CSV)' : 'Supply pipeline'],
+  ];
+
+  const header = cols.map(c => csvCell(c[0])).join(',');
+  const lines = state.rows.map(r => cols.map(c => {
+    const v = typeof c[1] === 'function' ? c[1](r) : r[c[1]];
+    return csvCell(v);
+  }).join(','));
+
+  const csv = [header, ...lines].join('\r\n');
+  const blob = new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = `demand-dashboard-${new Date().toISOString().slice(0, 10)}.csv`;
+  a.click();
+  URL.revokeObjectURL(a.href);
+}
+
+function csvCell(v) {
+  if (v == null) return '';
+  const s = String(v).replace(/"/g, '""');
+  return /[",\r\n]/.test(s) ? `"${s}"` : s;
+}
+
+// ── User Management ────────────────────────────────────────────────────
+async function openUsersModal() {
+  $('#usersModal').classList.add('open');
+  $('#addUserError').textContent = '';
+  await loadUsers();
+}
+
+async function loadUsers() {
+  const r = await fetch('/api/users', { credentials: 'include' });
+  const data = await r.json();
+  if (!data.success) { showToast(data.error || 'Failed to load users', 'error'); return; }
+
+  const list = $('#usersList');
+  list.innerHTML = data.users.map(u => `
+    <div class="user-row" data-id="${u.id}">
+      <img class="user-row-avatar" src="${u.picture || avatarFallback(u)}" alt="">
+      <div class="user-row-info">
+        <div class="user-row-name">${esc(u.name || u.email)}${u.id === state.user.id ? ' <span class="user-row-you">you</span>' : ''}</div>
+        <div class="user-row-email">${esc(u.email)}</div>
+      </div>
+      <select class="user-row-role" data-id="${u.id}">
+        <option value="admin"${u.role === 'admin' ? ' selected' : ''}>Admin</option>
+        <option value="manager"${u.role === 'manager' ? ' selected' : ''}>Manager</option>
+        <option value="viewer"${u.role === 'viewer' ? ' selected' : ''}>Viewer</option>
+      </select>
+      ${u.id !== state.user.id ? `<button class="user-row-logout" data-id="${u.id}" title="Force logout — invalidates the user's current session">🚪</button>` : ''}
+      <button class="user-row-delete" data-id="${u.id}" title="Remove user">🗑</button>
+    </div>`).join('');
+
+  list.querySelectorAll('.user-row-role').forEach(sel => {
+    sel.addEventListener('change', async () => {
+      const id = sel.dataset.id;
+      const r = await fetch('/api/users/' + id, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ role: sel.value }),
+      });
+      const data = await r.json();
+      if (!data.success) { showToast(data.error || 'Failed to update', 'error'); await loadUsers(); }
+      else showToast('Role updated', 'success');
+    });
+  });
+
+  list.querySelectorAll('.user-row-logout').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      if (!confirm('Force logout this user? Their current session will be invalidated immediately and they will need to sign in again.')) return;
+      const r = await fetch('/api/users/' + btn.dataset.id + '/force-logout', {
+        method: 'POST', credentials: 'include',
+      });
+      const data = await r.json();
+      if (!data.success) showToast(data.error || 'Failed to force logout', 'error');
+      else showToast('User signed out', 'success');
+    });
+  });
+
+  list.querySelectorAll('.user-row-delete').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      if (!confirm('Remove this user?')) return;
+      const r = await fetch('/api/users/' + btn.dataset.id, {
+        method: 'DELETE', credentials: 'include',
+      });
+      const data = await r.json();
+      if (!data.success) showToast(data.error || 'Failed to remove', 'error');
+      else { showToast('User removed', 'success'); await loadUsers(); }
+    });
+  });
+}
+
+function avatarFallback(u) {
+  const initial = (u.name || u.email || '?')[0].toUpperCase();
+  return `data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='32' height='32' viewBox='0 0 32 32'><circle cx='16' cy='16' r='16' fill='%23e4e7ec'/><text x='16' y='21' text-anchor='middle' fill='%236b7280' font-family='Inter' font-size='14' font-weight='600'>${initial}</text></svg>`;
+}
+
+// ── Remarks History (admin only) ───────────────────────────────────────
+async function openRemarksHistory(uid) {
+  const modal = $('#historyModal');
+  const body = $('#historyModalBody');
+  const subtitle = $('#historyModalSubtitle');
+
+  const row = state.rows.find(r => r.uid === uid);
+  subtitle.textContent = row ? `· ${row.society_name || ''} ${row.unit_no ? '· Unit ' + row.unit_no : ''}` : '';
+  body.innerHTML = '<div class="loading"><div class="spinner"></div> Loading history…</div>';
+  modal.classList.add('open');
+
+  try {
+    const r = await fetch('/api/remarks-history/' + encodeURIComponent(uid), { credentials: 'include' });
+    const data = await r.json();
+    if (!data.success) {
+      body.innerHTML = `<div class="empty-state">${esc(data.error || 'Failed to load')}</div>`;
+      return;
+    }
+    if (!data.history.length) {
+      body.innerHTML = '<div class="empty-state">No remark changes recorded yet.</div>';
+      return;
+    }
+
+    body.innerHTML = `
+      <div class="history-list">
+        ${data.history.map(h => `
+          <div class="history-entry">
+            <div class="history-meta">
+              <span class="history-author">${esc(h.actor_name || h.actor_email || 'Unknown')}</span>
+              <span class="history-time">${esc(fmtDateTime(h.created_at))}</span>
+            </div>
+            <div class="history-value ${h.value ? '' : 'history-cleared'}">
+              ${h.value ? esc(h.value) : '— cleared —'}
+            </div>
+          </div>
+        `).join('')}
+      </div>`;
+  } catch (e) {
+    body.innerHTML = `<div class="empty-state">Network error</div>`;
+  }
+}
+
+function fmtDateTime(d) {
+  if (!d) return '';
+  const dt = new Date(d);
+  if (isNaN(dt.getTime())) return String(d);
+  return dt.toLocaleString('en-GB', {
+    day: '2-digit', month: 'short', year: 'numeric',
+    hour: '2-digit', minute: '2-digit', hour12: true,
+  });
+}
+
+async function addUser() {
+  const email = $('#newUserEmail').value.trim();
+  const role = $('#newUserRole').value;
+  const errEl = $('#addUserError');
+  errEl.textContent = '';
+
+  if (!email || !email.includes('@')) {
+    errEl.textContent = 'Please enter a valid email address';
+    return;
+  }
+
+  const r = await fetch('/api/users', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    credentials: 'include',
+    body: JSON.stringify({ email, role }),
+  });
+  const data = await r.json();
+  if (!data.success) { errEl.textContent = data.error || 'Failed to add user'; return; }
+  $('#newUserEmail').value = '';
+  showToast('User added', 'success');
+  await loadUsers();
+}

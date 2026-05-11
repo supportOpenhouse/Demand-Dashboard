@@ -1,0 +1,82 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Sign in – Demand Visibility Dashboard</title>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+body {
+  background: linear-gradient(135deg, #f5f6f8 0%, #eef2ff 100%);
+  font-family: 'Inter', sans-serif;
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.login-container {
+  background: #fff;
+  border-radius: 16px;
+  box-shadow: 0 12px 48px rgba(99,102,241,.12), 0 2px 8px rgba(0,0,0,.04);
+  padding: 48px 40px;
+  width: 100%;
+  max-width: 420px;
+  text-align: center;
+}
+.login-mark {
+  width: 56px; height: 56px; border-radius: 14px;
+  margin: 0 auto 20px; background: #4f46e5;
+  display: flex; align-items: center; justify-content: center;
+  color: #fff; font-size: 24px; font-weight: 700;
+  box-shadow: 0 6px 20px rgba(79,70,229,.25);
+}
+.login-title { font-size: 22px; font-weight: 700; color: #111827; margin-bottom: 6px; }
+.login-sub   { font-size: 13px; color: #9ca3af; margin-bottom: 32px; }
+.google-btn-wrap { display: flex; justify-content: center; margin-bottom: 20px; }
+.login-error {
+  display: none; background: #fee2e2; color: #b91c1c;
+  font-size: 13px; padding: 10px 16px; border-radius: 8px; margin-top: 16px;
+}
+.login-error.show { display: block; }
+.login-loading {
+  display: none; align-items: center; justify-content: center;
+  gap: 8px; padding: 16px; color: #6b7280; font-size: 13px;
+}
+.login-loading.show { display: flex; }
+.spinner {
+  width: 18px; height: 18px; border: 2px solid #e4e7ec;
+  border-top-color: #4f46e5; border-radius: 50%; animation: spin .7s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+.login-footer { margin-top: 32px; font-size: 11px; color: #d1d5db; }
+</style>
+</head>
+<body>
+
+<div class="login-container">
+  <div class="login-mark">D</div>
+  <div class="login-title">Demand Visibility Dashboard</div>
+  <div class="login-sub">Sign in with your Google account to continue</div>
+
+  <!-- Google Sign-In button is injected by login.js once /api/auth/config has
+       returned a non-empty client_id. Rendering the GSI markup statically
+       (with an empty data-client_id) makes Google's auto-init fire and
+       produce a "Missing required parameter: client_id" 400 the moment a
+       user clicks it. Inject-on-success avoids that footgun. -->
+  <div class="google-btn-wrap" id="googleBtnSlot"></div>
+
+  <div class="login-loading" id="loginLoading">
+    <div class="spinner"></div>
+    Signing in...
+  </div>
+
+  <div class="login-error" id="loginError"></div>
+
+  <div class="login-footer">Authorized users only</div>
+</div>
+
+<script src="https://accounts.google.com/gsi/client" async defer></script>
+<script src="/login.js"></script>
+</body>
+</html>
