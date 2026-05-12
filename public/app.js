@@ -494,8 +494,11 @@ function renderExpand(r) {
             uid: r.uid,
             options: ['Flexible', 'Non-Flexible'],
           })}
-          ${editableNum('Beta Min %', 'ama_beta_min_pct', r.ama_beta_min_pct, { uid: r.uid })}
-          ${editableNum('Beta Max %', 'ama_beta_max_pct', r.ama_beta_max_pct, { uid: r.uid })}
+          <div class="payment-flexible-only" data-payment-flexible-for="${esc(r.uid)}"
+               ${r.ama_payment_structure === 'Non-Flexible' ? 'style="display:none"' : ''}>
+            ${editableNum('Min %', 'ama_beta_min_pct', r.ama_beta_min_pct, { uid: r.uid })}
+            ${editableNum('Max %', 'ama_beta_max_pct', r.ama_beta_max_pct, { uid: r.uid })}
+          </div>
         `}
     </div>`;
 
@@ -814,6 +817,16 @@ document.addEventListener('change', (e) => {
   if (!isEditable) return;
   const uid = el.dataset.uid;
   if (!uid) return;
+
+  // Side-effect: when Payment Structure flips to/from Non-Flexible, show/hide
+  // the Min %/Max % wrapper inline (no full re-render so we don't lose focus).
+  if (el.dataset.field === 'ama_payment_structure') {
+    const wrapper = document.querySelector(
+      `.payment-flexible-only[data-payment-flexible-for="${cssEscape(uid)}"]`
+    );
+    if (wrapper) wrapper.style.display = el.value === 'Non-Flexible' ? 'none' : '';
+  }
+
   saveField(uid, el);
 });
 
