@@ -51,6 +51,12 @@ const UNIFIED_COLS = [
   ['circle_rate',               'circle_rate',               'circle_rate',               'REAL'],
   ['alpha_beta',                'alpha_beta',                'alpha_beta',                'TEXT'],
   ['beta_pct',                  'beta_pct',                  'beta_pct',                  'REAL'],
+  // Backend-form's canonical Payment Structure trio. Only present on the
+  // `properties` side; legacy_properties returns NULL since legacy CSVs
+  // pre-date these columns (legacy still uses the alpha_beta TEXT field).
+  ['ama_payment_structure',     null,                        'ama_payment_structure',     'TEXT'],
+  ['ama_beta_min_pct',          null,                        'ama_beta_min_pct',          'REAL'],
+  ['ama_beta_max_pct',          null,                        'ama_beta_max_pct',          'REAL'],
   ['guaranteed_sale_price',     'guaranteed_sale_price',     'guaranteed_sale_price',     'REAL'],
   ['listing_asking_price',      'listing_asking_price',      'listing_asking_price',      'REAL'],
   ['demand_price',              'demand_price',              'demand_price',              'REAL'],

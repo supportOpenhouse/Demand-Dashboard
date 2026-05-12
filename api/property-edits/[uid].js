@@ -33,6 +33,10 @@ const ALLOWED_FIELDS_REAL = [
   'circle_rate',
   'society_age_years',
   'outstanding_loan',
+  // Backend-form's Beta range — only exists on `properties`, not legacy_properties.
+  // Writes to a legacy uid will fail the column-existence check below (intentional).
+  'ama_beta_min_pct',
+  'ama_beta_max_pct',
 ];
 
 const ALLOWED_FIELDS_DATE = [
@@ -40,10 +44,11 @@ const ALLOWED_FIELDS_DATE = [
 ];
 
 const ALLOWED_FIELDS_TEXT = [
-  'alpha_beta',       // "Payment Structure" in UI
+  'alpha_beta',              // Legacy free-text Payment Structure (kept for legacy_properties)
+  'ama_payment_structure',   // Canonical Payment Structure for real properties (Alpha/Beta/etc.)
   'loan_status',
   'bank_name_loan',
-  'assigned_by',      // POC — dropdown UI but stored as text
+  'assigned_by',             // POC — dropdown UI but stored as text
 ];
 
 // Strict-enum fields: only the listed values (or NULL) accepted.

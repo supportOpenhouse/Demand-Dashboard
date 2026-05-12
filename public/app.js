@@ -484,7 +484,19 @@ function renderExpand(r) {
       ${field('Parking', r.parking)}
       ${field('Parking No.', r.parking_number)}
       ${field('Property Tax Status', r.property_tax_status)}
-      ${editableText('Payment Structure', 'alpha_beta', r.alpha_beta, { uid: r.uid, placeholder: 'e.g. Alpha 75 / Beta 25' })}
+      ${r.origin === 'legacy'
+        ? editableSelect('Payment Structure', 'alpha_beta', r.alpha_beta, {
+            uid: r.uid,
+            options: ['Flexible', 'Non-Flexible'],
+          })
+        : `
+          ${editableSelect('Payment Structure', 'ama_payment_structure', r.ama_payment_structure, {
+            uid: r.uid,
+            options: ['Flexible', 'Non-Flexible'],
+          })}
+          ${editableNum('Beta Min %', 'ama_beta_min_pct', r.ama_beta_min_pct, { uid: r.uid })}
+          ${editableNum('Beta Max %', 'ama_beta_max_pct', r.ama_beta_max_pct, { uid: r.uid })}
+        `}
     </div>`;
 
   // ── Section: Owner & Loan
@@ -954,7 +966,13 @@ function exportCsv() {
     ['Loan Status', r => r.loan_status || (r.outstanding_loan ? 'Active' : 'No Loan')],
     ['Loan Amount', 'outstanding_loan'],
     ['Property Tax Status', 'property_tax_status'],
-    ['Payment Structure', 'alpha_beta'],
+    // Payment Structure is "Flexible"/"Non-Flexible" for both origins.
+    // Real properties store it in ama_payment_structure (with the Beta range
+    // in beta min/max). Legacy uses alpha_beta. Single CSV column with a
+    // fallback covers both.
+    ['Payment Structure', r => r.ama_payment_structure || r.alpha_beta || ''],
+    ['Beta Min %',        'ama_beta_min_pct'],
+    ['Beta Max %',        'ama_beta_max_pct'],
     ['Super Area', r => r.super_area || r.area_sqft],
     ['Carpet Area', 'carpet_area'],
     ['No. of Bedrooms', r => extractBedrooms(r.configuration)],
