@@ -30,9 +30,12 @@ body {
 .header-logo-wrap {
   display: flex; align-items: center; justify-content: center;
   width: 36px; height: 36px;
-  background: #4f46e5; color: #fff;
-  border-radius: 8px; flex-shrink: 0;
-  font-weight: 700; font-size: 18px;
+  flex-shrink: 0;
+}
+.header-logo-wrap img {
+  width: 100%; height: 100%;
+  object-fit: contain;
+  display: block;
 }
 .header-brand { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
 .header-title { font-size: 17px; font-weight: 600; color: #111827; }
