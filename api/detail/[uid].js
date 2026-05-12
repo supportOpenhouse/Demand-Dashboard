@@ -1,4 +1,4 @@
-const { pool } = require('../_db');
+const { pool, SUPPLY_READY_STATUSES } = require('../_db');
 const { requireAuth, setCors } = require('../_auth');
 
 // GET /api/detail/:uid
@@ -19,12 +19,13 @@ module.exports = async (req, res) => {
   if (!uid) return res.status(400).json({ success: false, error: 'uid is required' });
 
   try {
+    const supplyReadyParams = SUPPLY_READY_STATUSES.map((_, i) => `$${i + 2}`).join(',');
+
     // Real properties path. SELECT p.* gives us every column for the detail view.
-    // supply_status used to come from v_property_status.derived_status; that view
-    // has been removed and the AMA/Keys distinction is gone, so it's NULL now.
+    // Supply-ready gate uses ap_details.status (replaces the deleted v_property_status view).
     const realRes = await pool.query(`
       SELECT p.*,
-             NULL::TEXT AS supply_status,
+             apd.status AS supply_status,
              apd.parking_number,
              apd.property_tax_status,
              apd.internal_remarks AS supply_internal_remarks,
@@ -36,10 +37,10 @@ module.exports = async (req, res) => {
              dd.updated_by, dd.updated_at,
              'real'::TEXT AS origin
       FROM properties p
-      LEFT JOIN ap_details apd ON apd.uid = p.uid
+      INNER JOIN ap_details apd ON apd.uid = p.uid
       LEFT JOIN demand_details dd ON dd.uid = p.uid
-      WHERE p.uid = $1
-    `, [uid]);
+      WHERE p.uid = $1 AND apd.status IN (${supplyReadyParams})
+    `, [uid, ...SUPPLY_READY_STATUSES]);
 
     if (realRes.rows.length) {
       // owner_broker_name → owner_name alias for frontend consistency with /list.

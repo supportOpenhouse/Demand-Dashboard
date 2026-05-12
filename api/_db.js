@@ -18,6 +18,10 @@ const DEMAND_STATUSES = [
   'Sold',
 ];
 
+// Properties enter the demand pool only after the supply side has reached one of these.
+// Sourced from ap_details.status (replaces the deleted v_property_status view).
+const SUPPLY_READY_STATUSES = ['AMA Signed', 'Key Handover Done'];
+
 // Idempotent — runs on every cold start. Owns demand_users and demand_details only.
 // Reads activity_logs (created by the Acquired dashboard) but does not own its schema.
 const INIT_SQL = `
@@ -219,4 +223,5 @@ module.exports = {
   hasCol,
   projectIfExists,
   DEMAND_STATUSES,
+  SUPPLY_READY_STATUSES,
 };

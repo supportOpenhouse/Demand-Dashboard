@@ -16,7 +16,7 @@
 // names from the request body — even a compromised client can only modify
 // these specific columns.
 
-const { pool, getPropertiesColumns } = require('../_db');
+const { pool, getPropertiesColumns, SUPPLY_READY_STATUSES } = require('../_db');
 const { requireAuth, canEdit, setCors } = require('../_auth');
 
 const ALLOWED_FIELDS_INT = [
@@ -79,12 +79,17 @@ async function getLegacyPropertiesColumns() {
   return _legacyColumnCache;
 }
 
-// Returns 'properties' if uid is in the real supply pool, 'legacy_properties'
-// if in the demand-only legacy pool, null otherwise.
+// Returns 'properties' if uid is in the real supply pool (gated by ap_details.status),
+// 'legacy_properties' if in the demand-only legacy pool, null otherwise. The gate
+// stops URL-hacking from reaching unqualified properties.
 async function findUidTable(uid) {
+  const supplyReadyParams = SUPPLY_READY_STATUSES.map((_, i) => `$${i + 2}`).join(',');
+
   const realRes = await pool.query(
-    `SELECT 1 FROM properties WHERE uid = $1`,
-    [uid]
+    `SELECT 1 FROM properties p
+     INNER JOIN ap_details apd ON apd.uid = p.uid
+     WHERE p.uid = $1 AND apd.status IN (${supplyReadyParams})`,
+    [uid, ...SUPPLY_READY_STATUSES]
   );
   if (realRes.rowCount) return 'properties';
 

@@ -1,4 +1,4 @@
-const { pool, getPropertiesColumns, hasCol } = require('./_db');
+const { pool, getPropertiesColumns, hasCol, SUPPLY_READY_STATUSES } = require('./_db');
 const { requireAuth, setCors } = require('./_auth');
 
 // Typed projection list shared by both sides of the UNION ALL. Each tuple is:
@@ -95,11 +95,9 @@ function buildPropertiesProjection(allCols) {
     }
     return `NULL::${type} AS "${alias}"`;
   });
-  // Trailing virtual columns: ancillary fields from ap_details, origin tag.
-  // `supply_status` is NULL on the real side now that v_property_status is gone;
-  // the AMA/Keys distinction it powered has been removed from the UI.
+  // Trailing virtual columns: status + ancillary fields from ap_details, origin tag.
   cols.push(
-    `NULL::TEXT AS supply_status`,
+    `apd.status::TEXT AS supply_status`,
     `apd.parking_number::TEXT AS parking_number`,
     `apd.property_tax_status::TEXT AS property_tax_status`,
     `apd.internal_remarks::TEXT AS supply_internal_remarks`,
@@ -142,21 +140,26 @@ module.exports = async (req, res) => {
     const { search, city, source, poc, dateField, from, to,
             page, limit: rawLimit } = req.query;
 
+    // Real-side gate: only properties whose ap_details.status is supply-ready.
+    // These params occupy the first N placeholders; outer-WHERE filters follow.
+    const supplyReadyParams = SUPPLY_READY_STATUSES.map((_, i) => `$${i + 1}`).join(',');
+    const baseParams = [...SUPPLY_READY_STATUSES];
+
     // Filters apply to BOTH sides of the UNION via the outer WHERE on the CTE.
     const outerConditions = [];
     const outerParams = [];
 
     if (city) {
       outerParams.push(city);
-      outerConditions.push(`u.city = $${outerParams.length}`);
+      outerConditions.push(`u.city = $${baseParams.length + outerParams.length}`);
     }
     if (source) {
       outerParams.push(source);
-      outerConditions.push(`u.source = $${outerParams.length}`);
+      outerConditions.push(`u.source = $${baseParams.length + outerParams.length}`);
     }
     if (poc) {
       outerParams.push(poc);
-      outerConditions.push(`u.poc = $${outerParams.length}`);
+      outerConditions.push(`u.poc = $${baseParams.length + outerParams.length}`);
     }
 
     // Date range filter — `dateField` lets the caller pick which timestamp to filter on.
@@ -165,16 +168,16 @@ module.exports = async (req, res) => {
     const dfTable = df === 'updated_at' ? 'dd' : 'u';
     if (from) {
       outerParams.push(from);
-      outerConditions.push(`${dfTable}."${df}" >= $${outerParams.length}`);
+      outerConditions.push(`${dfTable}."${df}" >= $${baseParams.length + outerParams.length}`);
     }
     if (to) {
       outerParams.push(to);
-      outerConditions.push(`${dfTable}."${df}" <= $${outerParams.length}`);
+      outerConditions.push(`${dfTable}."${df}" <= $${baseParams.length + outerParams.length}`);
     }
 
     if (search) {
       outerParams.push(`%${search.toLowerCase()}%`);
-      const idx = outerParams.length;
+      const idx = baseParams.length + outerParams.length;
       const searchCols = ['uid', 'society_name', 'owner_name', 'unit_no', 'contact_no', 'locality'];
       const clause = searchCols
         .map(c => `LOWER(COALESCE(u."${c}"::text, '')) LIKE $${idx}`)
@@ -193,12 +196,16 @@ module.exports = async (req, res) => {
 
     // CTE encapsulates the UNION ALL of real + legacy, then outer SELECT applies
     // demand_details join, filters, ordering and pagination uniformly across both.
+    // Real side: INNER JOIN ap_details + status filter — properties without an
+    // ap_details row, or whose status isn't AMA Signed / Key Handover Done, are
+    // excluded. Legacy side: every row in legacy_properties is shown.
     const baseCte = `
       WITH unified AS (
         SELECT
         ${propsProjection}
         FROM properties p
-        LEFT JOIN ap_details apd ON apd.uid = p.uid
+        INNER JOIN ap_details apd ON apd.uid = p.uid
+        WHERE apd.status IN (${supplyReadyParams})
 
         UNION ALL
 
@@ -212,11 +219,11 @@ module.exports = async (req, res) => {
       SELECT COUNT(*) FROM unified u
       LEFT JOIN demand_details dd ON dd.uid = u.uid
       ${outerWhere}`;
-    const countResult = await pool.query(countSql, outerParams);
+    const countResult = await pool.query(countSql, [...baseParams, ...outerParams]);
     const totalCount = parseInt(countResult.rows[0].count);
 
-    const limitParamIdx = outerParams.length + 1;
-    const offsetParamIdx = outerParams.length + 2;
+    const limitParamIdx = baseParams.length + outerParams.length + 1;
+    const offsetParamIdx = baseParams.length + outerParams.length + 2;
 
     const rowsSql = `${baseCte}
       SELECT u.*,
@@ -240,14 +247,14 @@ module.exports = async (req, res) => {
       ORDER BY COALESCE(u.ama_date, u.key_handover_date) DESC NULLS LAST
       LIMIT $${limitParamIdx} OFFSET $${offsetParamIdx}`;
 
-    const { rows } = await pool.query(rowsSql, [...outerParams, pageSize, offset]);
+    const { rows } = await pool.query(rowsSql, [...baseParams, ...outerParams, pageSize, offset]);
 
     // Distinct values for filter dropdowns — pulled from the full unified pool
-    // (no filter conditions applied here) so picking one filter never strips
-    // options from another.
+    // (no outer filter conditions applied here) so picking one filter never
+    // strips options from another. The CTE still applies the supply-ready gate.
     const distinctSql = `${baseCte}
       SELECT DISTINCT u.city, u.source, u.poc FROM unified u`;
-    const distinctRows = await pool.query(distinctSql);
+    const distinctRows = await pool.query(distinctSql, baseParams);
     const cities = new Set(), sources = new Set(), pocs = new Set();
     for (const r of distinctRows.rows) {
       if (r.city) cities.add(r.city);
