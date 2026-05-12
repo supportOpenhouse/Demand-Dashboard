@@ -1,4 +1,4 @@
-const { pool, getPropertiesColumns, hasCol, SUPPLY_READY_STATUSES } = require('./_db');
+const { pool, getPropertiesColumns, hasCol } = require('./_db');
 const { requireAuth, setCors } = require('./_auth');
 
 // Typed projection list shared by both sides of the UNION ALL. Each tuple is:
@@ -89,9 +89,11 @@ function buildPropertiesProjection(allCols) {
     }
     return `NULL::${type} AS "${alias}"`;
   });
-  // Trailing virtual columns: status (from view), ancillary fields from ap_details, origin tag.
+  // Trailing virtual columns: ancillary fields from ap_details, origin tag.
+  // `supply_status` is NULL on the real side now that v_property_status is gone;
+  // the AMA/Keys distinction it powered has been removed from the UI.
   cols.push(
-    `vps.derived_status::TEXT AS supply_status`,
+    `NULL::TEXT AS supply_status`,
     `apd.parking_number::TEXT AS parking_number`,
     `apd.property_tax_status::TEXT AS property_tax_status`,
     `apd.internal_remarks::TEXT AS supply_internal_remarks`,
@@ -131,33 +133,24 @@ module.exports = async (req, res) => {
   try {
     const allCols = await getPropertiesColumns();
 
-    const { status, search, city, source, poc, dateField, from, to,
+    const { search, city, source, poc, dateField, from, to,
             page, limit: rawLimit } = req.query;
 
-    const supplyReadyParams = SUPPLY_READY_STATUSES.map((_, i) => `$${i + 1}`).join(',');
-    const baseParams = [...SUPPLY_READY_STATUSES];
-
     // Filters apply to BOTH sides of the UNION via the outer WHERE on the CTE.
-    // Status comparison uses the unified `supply_status` column (already aliased
-    // identically: vps.derived_status on real side, lp.legacy_status on legacy).
     const outerConditions = [];
     const outerParams = [];
 
-    if (status && SUPPLY_READY_STATUSES.includes(status)) {
-      outerParams.push(status);
-      outerConditions.push(`u.supply_status = $${baseParams.length + outerParams.length}`);
-    }
     if (city) {
       outerParams.push(city);
-      outerConditions.push(`u.city = $${baseParams.length + outerParams.length}`);
+      outerConditions.push(`u.city = $${outerParams.length}`);
     }
     if (source) {
       outerParams.push(source);
-      outerConditions.push(`u.source = $${baseParams.length + outerParams.length}`);
+      outerConditions.push(`u.source = $${outerParams.length}`);
     }
     if (poc) {
       outerParams.push(poc);
-      outerConditions.push(`u.poc = $${baseParams.length + outerParams.length}`);
+      outerConditions.push(`u.poc = $${outerParams.length}`);
     }
 
     // Date range filter — `dateField` lets the caller pick which timestamp to filter on.
@@ -166,16 +159,16 @@ module.exports = async (req, res) => {
     const dfTable = df === 'updated_at' ? 'dd' : 'u';
     if (from) {
       outerParams.push(from);
-      outerConditions.push(`${dfTable}."${df}" >= $${baseParams.length + outerParams.length}`);
+      outerConditions.push(`${dfTable}."${df}" >= $${outerParams.length}`);
     }
     if (to) {
       outerParams.push(to);
-      outerConditions.push(`${dfTable}."${df}" <= $${baseParams.length + outerParams.length}`);
+      outerConditions.push(`${dfTable}."${df}" <= $${outerParams.length}`);
     }
 
     if (search) {
       outerParams.push(`%${search.toLowerCase()}%`);
-      const idx = baseParams.length + outerParams.length;
+      const idx = outerParams.length;
       const searchCols = ['uid', 'society_name', 'owner_name', 'unit_no', 'contact_no', 'locality'];
       const clause = searchCols
         .map(c => `LOWER(COALESCE(u."${c}"::text, '')) LIKE $${idx}`)
@@ -194,23 +187,18 @@ module.exports = async (req, res) => {
 
     // CTE encapsulates the UNION ALL of real + legacy, then outer SELECT applies
     // demand_details join, filters, ordering and pagination uniformly across both.
-    // legacy_status uses the same string values as v_property_status output, so
-    // the supply_status filter clause works on both halves identically.
     const baseCte = `
       WITH unified AS (
         SELECT
         ${propsProjection}
         FROM properties p
-        INNER JOIN v_property_status vps ON vps.uid = p.uid
         LEFT JOIN ap_details apd ON apd.uid = p.uid
-        WHERE vps.derived_status IN (${supplyReadyParams})
 
         UNION ALL
 
         SELECT
         ${legacyProjection}
         FROM legacy_properties lp
-        WHERE lp.legacy_status IN (${supplyReadyParams})
       )`;
 
     // Total count across both halves, with filters applied.
@@ -218,11 +206,11 @@ module.exports = async (req, res) => {
       SELECT COUNT(*) FROM unified u
       LEFT JOIN demand_details dd ON dd.uid = u.uid
       ${outerWhere}`;
-    const countResult = await pool.query(countSql, [...baseParams, ...outerParams]);
+    const countResult = await pool.query(countSql, outerParams);
     const totalCount = parseInt(countResult.rows[0].count);
 
-    const limitParamIdx = baseParams.length + outerParams.length + 1;
-    const offsetParamIdx = baseParams.length + outerParams.length + 2;
+    const limitParamIdx = outerParams.length + 1;
+    const offsetParamIdx = outerParams.length + 2;
 
     const rowsSql = `${baseCte}
       SELECT u.*,
@@ -246,14 +234,14 @@ module.exports = async (req, res) => {
       ORDER BY COALESCE(u.ama_date, u.key_handover_date) DESC NULLS LAST
       LIMIT $${limitParamIdx} OFFSET $${offsetParamIdx}`;
 
-    const { rows } = await pool.query(rowsSql, [...baseParams, ...outerParams, pageSize, offset]);
+    const { rows } = await pool.query(rowsSql, [...outerParams, pageSize, offset]);
 
-    // Distinct values for filter dropdowns — pulled from the FULL supply-ready
-    // pool across both tables (no filter conditions applied here) so picking
-    // one filter never strips options from another.
+    // Distinct values for filter dropdowns — pulled from the full unified pool
+    // (no filter conditions applied here) so picking one filter never strips
+    // options from another.
     const distinctSql = `${baseCte}
       SELECT DISTINCT u.city, u.source, u.poc FROM unified u`;
-    const distinctRows = await pool.query(distinctSql, baseParams);
+    const distinctRows = await pool.query(distinctSql);
     const cities = new Set(), sources = new Set(), pocs = new Set();
     for (const r of distinctRows.rows) {
       if (r.city) cities.add(r.city);

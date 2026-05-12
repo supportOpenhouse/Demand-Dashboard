@@ -18,9 +18,6 @@ const DEMAND_STATUSES = [
   'Sold',
 ];
 
-// Properties enter the demand pool only after the supply side has reached one of these.
-const SUPPLY_READY_STATUSES = ['AMA Signed', 'Key Handover Done'];
-
 // Idempotent — runs on every cold start. Owns demand_users and demand_details only.
 // Reads activity_logs (created by the Acquired dashboard) but does not own its schema.
 const INIT_SQL = `
@@ -56,9 +53,6 @@ const INIT_SQL = `
   -- import (CSV) and do not belong in the supply pipeline. The Supply Closure
   -- Tracker never reads this table, so legacy records cannot pollute it. The
   -- Demand Dashboard reads both via UNION ALL in /api/list and /api/detail.
-  --
-  -- legacy_status mirrors v_property_status output; for now always seeded as
-  -- 'AMA Signed' or 'Key Handover Done' so the row qualifies for the demand pool.
   CREATE TABLE IF NOT EXISTS legacy_properties (
     uid                       TEXT PRIMARY KEY,
     -- Identifiers
@@ -126,7 +120,7 @@ const INIT_SQL = `
     ama_date                  DATE,
     additional_images         JSONB DEFAULT '[]',
     video_link                TEXT,
-    -- Self-contained status (avoids needing v_property_status for legacy rows)
+    -- Retained for historical data; no longer used to gate visibility.
     legacy_status             TEXT NOT NULL DEFAULT 'AMA Signed',
     created_at                TIMESTAMPTZ DEFAULT NOW(),
     updated_at                TIMESTAMPTZ DEFAULT NOW()
@@ -225,5 +219,4 @@ module.exports = {
   hasCol,
   projectIfExists,
   DEMAND_STATUSES,
-  SUPPLY_READY_STATUSES,
 };

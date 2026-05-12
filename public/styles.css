@@ -237,9 +237,7 @@ tbody tr.expand-row td {
   padding: 1px 6px; border-radius: 3px; margin-left: 6px;
   letter-spacing: .3px; text-transform: uppercase;
 }
-.supply-badge.ama    { background: #dcfce7; color: #166534; }
-.supply-badge.keys   { background: #bbf7d0; color: #14532d; }
-/* Amber so legacy-imported rows stand out at a glance from green real ones. */
+/* Amber so legacy-imported rows stand out at a glance from real-pipeline rows. */
 .supply-badge.legacy { background: #fef3c7; color: #92400e; }
 
 /* ── Image Gallery ─────────────────────────────────────────────────────── */

@@ -2,8 +2,8 @@
 //
 // Lets Admin/Manager edit a small allow-list of supply-side fields. The target
 // table is determined at runtime based on which table contains the uid:
-//   - properties        → real, supply-pipeline properties (status from v_property_status)
-//   - legacy_properties → demand-only legacy imports (status from lp.legacy_status)
+//   - properties        → real, supply-pipeline properties
+//   - legacy_properties → demand-only legacy imports
 //
 // Same allow-list applies to both. Same audit-log behavior (action='property_edit',
 // details: {field, from, to, table} so legacy edits are distinguishable in logs).
@@ -16,7 +16,7 @@
 // names from the request body — even a compromised client can only modify
 // these specific columns.
 
-const { pool, getPropertiesColumns, SUPPLY_READY_STATUSES } = require('../_db');
+const { pool, getPropertiesColumns } = require('../_db');
 const { requireAuth, canEdit, setCors } = require('../_auth');
 
 const ALLOWED_FIELDS_INT = [
@@ -75,22 +75,17 @@ async function getLegacyPropertiesColumns() {
 }
 
 // Returns 'properties' if uid is in the real supply pool, 'legacy_properties'
-// if in the demand-only legacy pool, null otherwise. Both checks enforce the
-// supply-ready status gate so URL-hacking can't reach unqualified properties.
+// if in the demand-only legacy pool, null otherwise.
 async function findUidTable(uid) {
-  const supplyReadyParams = SUPPLY_READY_STATUSES.map((_, i) => `$${i + 2}`).join(',');
-
   const realRes = await pool.query(
-    `SELECT 1 FROM properties p
-     INNER JOIN v_property_status vps ON vps.uid = p.uid
-     WHERE p.uid = $1 AND vps.derived_status IN (${supplyReadyParams})`,
-    [uid, ...SUPPLY_READY_STATUSES]
+    `SELECT 1 FROM properties WHERE uid = $1`,
+    [uid]
   );
   if (realRes.rowCount) return 'properties';
 
   const legacyRes = await pool.query(
-    `SELECT 1 FROM legacy_properties WHERE uid = $1 AND legacy_status IN (${supplyReadyParams})`,
-    [uid, ...SUPPLY_READY_STATUSES]
+    `SELECT 1 FROM legacy_properties WHERE uid = $1`,
+    [uid]
   );
   if (legacyRes.rowCount) return 'legacy_properties';
 

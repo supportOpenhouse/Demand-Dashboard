@@ -340,15 +340,9 @@ function renderRow(r) {
   const isOpen = r.uid === state.openUid;
   // Legacy rows (imported from CSV into legacy_properties) get an amber badge
   // so they're visually distinct from real supply-pipeline properties.
-  // Real rows keep the existing AMA / Keys distinction.
-  let supplyBadge;
-  if (r.origin === 'legacy') {
-    supplyBadge = '<span class="supply-badge legacy" title="Imported from legacy CSV">Legacy</span>';
-  } else if (r.supply_status === 'Key Handover Done') {
-    supplyBadge = '<span class="supply-badge keys">Keys</span>';
-  } else {
-    supplyBadge = '<span class="supply-badge ama">AMA</span>';
-  }
+  const supplyBadge = r.origin === 'legacy'
+    ? '<span class="supply-badge legacy" title="Imported from legacy CSV">Legacy</span>'
+    : '';
 
   const listingPriceCell = r.listing_price != null
     ? `<span class="price-val">${esc(toLakhs(r.listing_price))}</span>`
