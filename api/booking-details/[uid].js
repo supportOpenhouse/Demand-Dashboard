@@ -22,7 +22,7 @@
 // All writes wrapped in a transaction; mail send happens AFTER commit so a
 // failed send doesn't leave an orphan unsent row in the DB.
 
-const { pool, ensureTable, logActivity } = require('../_db');
+const { pool, logActivity } = require('../_db');
 const { requireAuth, canEdit, setCors } = require('../_auth');
 const { buildBookingEmail, sendMail } = require('../_email');
 
@@ -141,39 +141,42 @@ module.exports = async (req, res) => {
   const { uid } = req.query;
   if (!uid) return res.status(400).json({ success: false, error: 'uid is required' });
 
-  await ensureTable();
-
   // ── GET: prefill data for the modal ────────────────────────────────────
   if (req.method === 'GET') {
     if (!canEdit(user)) {
       return res.status(403).json({ success: false, error: 'Viewer access is read-only' });
     }
+    // Note: ensureTable() has already run inside requireAuth(), so we skip
+    // the redundant pass here. The three queries below are independent and
+    // fired in parallel to cut latency on cold-starts of this function.
     try {
-      // Latest booking for this uid (could be null — fresh submission)
-      const latest = await pool.query(
-        `SELECT * FROM booking_details WHERE uid = $1 ORDER BY created_at DESC LIMIT 1`,
-        [uid]
-      );
-
-      // Distinct CP-RM-ish emails from past submissions — used to populate
-      // the datalist on page 1. Filter out the standard fixed recipients so
-      // suggestions don't repeat them.
       const FIXED = ['bookings@openhouse.in', 'manish.pal@openhouse.in'];
-      const past = await pool.query(`
-        SELECT DISTINCT TRIM(LOWER(email)) AS email
-        FROM booking_details, jsonb_array_elements_text(recipients) AS email
-        WHERE TRIM(email) <> ''
-      `);
+
+      const [latest, past, teamUsers] = await Promise.all([
+        // Latest booking for this uid (could be null — fresh submission)
+        pool.query(
+          `SELECT * FROM booking_details WHERE uid = $1 ORDER BY created_at DESC LIMIT 1`,
+          [uid]
+        ),
+        // Distinct CP-RM-ish emails from past submissions — used to populate
+        // the datalist on page 1. Filter out the standard fixed recipients
+        // (done in JS below) so suggestions don't repeat them.
+        pool.query(`
+          SELECT DISTINCT TRIM(LOWER(email)) AS email
+          FROM booking_details, jsonb_array_elements_text(recipients) AS email
+          WHERE TRIM(email) <> ''
+        `),
+        // Demand team users — used for the page-1 datalist too (any of them
+        // can be a recipient).
+        pool.query(
+          `SELECT email, name FROM demand_users WHERE role IN ('admin','manager') ORDER BY name NULLS LAST, email`
+        ),
+      ]);
+
       const suggestions = past.rows
         .map(r => r.email)
         .filter(e => e && !FIXED.includes(e))
         .sort();
-
-      // Demand team users — useful for the page-1 datalist too (any of them
-      // can be a recipient).
-      const teamUsers = await pool.query(
-        `SELECT email, name FROM demand_users WHERE role IN ('admin','manager') ORDER BY name NULLS LAST, email`
-      );
 
       return res.status(200).json({
         success: true,

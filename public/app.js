@@ -1312,9 +1312,40 @@ async function openBookingModal(uid) {
   bookingState.step = 1;
   bookingState.form = {};
 
-  // Reset visible form inputs
+  // Reset visible form inputs + transient state
   document.querySelectorAll('#bookingModal [data-bf]').forEach(el => { el.value = ''; });
   $('#bookingNewRecipient').value = '';
+  bookingState.recipients = [];
+  bookingState.fixedRecipients = [];
+  bookingState.paymentMethods = [];
+
+  // Everything we can render from local state (no network) goes FIRST so the
+  // modal pops up instantly. The API call is fired in the background — its
+  // response only fills in things we don't already have (defaults, suggestions,
+  // draft prefill, lockout). Cold-start of the booking-details function used
+  // to make the click feel laggy (1–3s of nothing); this keeps it snappy.
+  const row = state.rows.find(r => r.uid === uid);
+  bookingState.property = row || null;
+
+  const subtitle = row
+    ? `· ${row.society_name || ''} ${row.unit_no ? '· Unit ' + row.unit_no : ''}`
+    : '';
+  $('#bookingModalSubtitle').textContent = subtitle;
+
+  $('#bookingPropertySummary').innerHTML = row ? `
+    <div class="bp-row"><span class="bp-lbl">Property</span><span class="bp-val">${esc(row.society_name || '')}</span></div>
+    <div class="bp-row"><span class="bp-lbl">Unit</span><span class="bp-val">${esc(row.unit_no || '')} ${row.tower_no ? '· ' + esc(row.tower_no) : ''} ${row.floor != null ? '· Floor ' + esc(row.floor) : ''}</span></div>
+    <div class="bp-row"><span class="bp-lbl">Configuration</span><span class="bp-val">${esc(row.configuration || '')} · ${esc(row.super_area || row.area_sqft || '')} sqft</span></div>
+    <div class="bp-row"><span class="bp-lbl">City</span><span class="bp-val">${esc(row.city || '')} · ${esc(row.locality || '')}</span></div>
+  ` : '';
+
+  // Loading state for the recipients list + disable Next until defaults arrive.
+  $('#bookingRecipientsList').innerHTML =
+    '<div class="booking-loading-inline"><div class="spinner"></div> Loading defaults…</div>';
+  $('#bookingNextBtn').disabled = true;
+
+  goToBookingStep(1);
+  $('#bookingModal').classList.add('open');
 
   // Fetch prefill data: latest booking row (if any), team users, past CP RM
   // emails, payment methods, fixed recipients.
@@ -1325,6 +1356,13 @@ async function openBookingModal(uid) {
     if (!data.success) throw new Error(data.error || 'Failed to load booking data');
   } catch (e) {
     showToast(e.message, 'error');
+    $('#bookingModal').classList.remove('open');
+    return;
+  }
+
+  // If the user closed the modal during the fetch, or switched to another uid,
+  // drop the response so we don't write stale prefill into a closed/new modal.
+  if (!$('#bookingModal').classList.contains('open') || bookingState.uid !== uid) {
     return;
   }
 
@@ -1332,8 +1370,6 @@ async function openBookingModal(uid) {
   bookingState.fixedRecipients = data.fixedRecipients || [];
 
   // Build recipients list: fixed + current user (sender) + property POC + suggestions
-  const row = state.rows.find(r => r.uid === uid);
-  bookingState.property = row || null;
   const senderEmail = state.user.email;
   const pocEmail = findPocEmail(row, data.team);
 
@@ -1390,26 +1426,12 @@ async function openBookingModal(uid) {
   // If a prior booking has been mailed and the user isn't admin, block.
   if (data.locked && state.user.role !== 'admin') {
     showToast('Booking already submitted. Only admins can re-submit.', 'error');
+    $('#bookingModal').classList.remove('open');
     return;
   }
 
-  // Modal subtitle
-  const subtitle = row
-    ? `· ${row.society_name || ''} ${row.unit_no ? '· Unit ' + row.unit_no : ''}`
-    : '';
-  $('#bookingModalSubtitle').textContent = subtitle;
-
-  // Property summary on page 2
-  $('#bookingPropertySummary').innerHTML = row ? `
-    <div class="bp-row"><span class="bp-lbl">Property</span><span class="bp-val">${esc(row.society_name || '')}</span></div>
-    <div class="bp-row"><span class="bp-lbl">Unit</span><span class="bp-val">${esc(row.unit_no || '')} ${row.tower_no ? '· ' + esc(row.tower_no) : ''} ${row.floor != null ? '· Floor ' + esc(row.floor) : ''}</span></div>
-    <div class="bp-row"><span class="bp-lbl">Configuration</span><span class="bp-val">${esc(row.configuration || '')} · ${esc(row.super_area || row.area_sqft || '')} sqft</span></div>
-    <div class="bp-row"><span class="bp-lbl">City</span><span class="bp-val">${esc(row.city || '')} · ${esc(row.locality || '')}</span></div>
-  ` : '';
-
   renderBookingRecipients();
-  goToBookingStep(1);
-  $('#bookingModal').classList.add('open');
+  $('#bookingNextBtn').disabled = false;
 }
 
 // Looks up a likely POC email for the property:

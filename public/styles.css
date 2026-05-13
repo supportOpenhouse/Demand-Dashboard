@@ -691,6 +691,12 @@ tbody tr.expand-row td {
 
 .booking-form-grid { grid-template-columns: 1fr 1fr; gap: 12px 16px; }
 .booking-buyer-emails-grid { grid-template-columns: 1fr 1fr; gap: 12px 16px; }
+/* Tighter loading row used inside the modal — global .loading uses 60px
+   padding which is way too tall for the recipients strip. */
+.booking-loading-inline {
+  display: flex; align-items: center; gap: 8px;
+  padding: 8px 0; color: #9ca3af; font-size: 12px;
+}
 .booking-section-divider {
   height: 1px;
   background: #eef2ff;
