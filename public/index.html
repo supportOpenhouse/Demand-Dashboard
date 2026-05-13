@@ -161,6 +161,20 @@
           <datalist id="bookingRecipientSuggestions"></datalist>
           <button type="button" class="btn btn-ghost" id="bookingAddRecipient">+ Add</button>
         </div>
+
+        <div class="booking-section-divider"></div>
+
+        <p class="booking-help">Buyer's email IDs — auto-included as recipients of the booking mail.</p>
+        <div class="form-grid booking-buyer-emails-grid">
+          <div class="fg">
+            <label>Buyer Email <span class="req">*</span></label>
+            <input type="email" class="booking-input" data-bf="buyer_email" required>
+          </div>
+          <div class="fg">
+            <label>Co-buyer Email</label>
+            <input type="email" class="booking-input" data-bf="co_buyer_email">
+          </div>
+        </div>
       </div>
 
       <!-- ── Page 2: Booking details ── -->

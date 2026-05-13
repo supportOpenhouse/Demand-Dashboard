@@ -104,7 +104,9 @@ function buildBookingEmail({ property, booking, submittedBy }) {
       <div style="font-size:11px;color:#6b7280;text-transform:uppercase;letter-spacing:.4px;font-weight:600;margin:20px 0 8px;">Booking Details</div>
       <table style="width:100%;border-collapse:collapse;">
         ${row('Buyer Name', b.buyer_name)}
+        ${row('Buyer Email', b.buyer_email)}
         ${row('Co-buyer Name', b.co_buyer_name)}
+        ${row('Co-buyer Email', b.co_buyer_email)}
         ${row('Consideration Amount', inr(b.consideration_amount))}
         ${row('Booking Amount Received', inr(b.booking_amount_received))}
         ${row('Payment Method', b.booking_amount_method)}

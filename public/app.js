@@ -98,26 +98,35 @@ function renderAvailabilityPill(value) {
 }
 
 // Inline status selector for the Property section header. Posts to
-// /api/demand-details via the delegated change handler. When status is 'Booked',
-// an additional "Submit Details" button is shown — clicking it opens the
-// 2-page booking modal (Phase 2 — currently a stub).
+// /api/demand-details via the delegated change handler.
 function renderAvailabilityHeaderControl(r) {
   const current = r.availability_status || 'Available';
   const cls = AVAILABILITY_CLASS[current] || 'avail-green';
   const opts = AVAILABILITY_OPTIONS.map(o =>
     `<option value="${esc(o)}"${o === current ? ' selected' : ''}>${esc(o)}</option>`
   ).join('');
-  const submitBtn = current === 'Booked'
-    ? `<button type="button" class="btn-submit-details" data-submit-booking-uid="${esc(r.uid)}" title="Capture booking details and email">📨 Submit Details</button>`
-    : '';
   return `
     <span class="avail-header-control">
       <select class="inline-select avail-select ${cls}"
               data-uid="${esc(r.uid)}" data-field="availability_status">
         ${opts}
       </select>
-      ${submitBtn}
     </span>`;
+}
+
+// Submit Details button — rendered on its own row below the section header
+// (instead of next to the dropdown) so it doesn't crowd the header or push the
+// property fields. Present in the DOM for editors; visibility toggled by
+// availability_status === 'Booked'.
+function renderSubmitDetailsRow(r) {
+  const isBooked = (r.availability_status || 'Available') === 'Booked';
+  const hidden = isBooked ? '' : 'style="display:none"';
+  return `
+    <div class="submit-details-row" data-submit-row-for="${esc(r.uid)}" ${hidden}>
+      <button type="button" class="btn-submit-details"
+              data-submit-booking-uid="${esc(r.uid)}"
+              title="Capture booking details and email">📨 Submit Details</button>
+    </div>`;
 }
 
 // ── Canonical option lists ──────────────────────────────────────────────
@@ -463,12 +472,14 @@ function renderExpand(r) {
   const carpetTooltip = legacy.carpet_area ? `Original CSV value: ${legacy.carpet_area}` : '';
 
   // Availability status dropdown — placed in the Property section header (top-right
-  // of the section) for admin/manager. The Submit Details button appears next to
-  // it only when status === 'Booked'. Viewers see neither (the main-row pill is
-  // their read-only view of the value).
+  // of the section) for admin/manager. When status === 'Booked', a Submit Details
+  // button is rendered on its own row directly below the header (not next to the
+  // dropdown — keeps the header tidy and avoids crowding the property fields).
+  // Viewers see neither (the main-row pill is their read-only view of the value).
   const availHeaderControl = canEdit()
     ? renderAvailabilityHeaderControl(r)
     : '';
+  const submitDetailsRow = canEdit() ? renderSubmitDetailsRow(r) : '';
 
   // ── Section: Property
   const sectionProperty = `
@@ -477,6 +488,7 @@ function renderExpand(r) {
         <span>🏠 Property</span>
         ${availHeaderControl}
       </h4>
+      ${submitDetailsRow}
       ${field('Society', r.society_name)}
       ${field('Unit No', r.unit_no)}
       ${field('Tower', r.tower_no)}
@@ -907,22 +919,13 @@ function syncAvailabilityUI(uid, value) {
     if (pill) pill.outerHTML = renderAvailabilityPill(value);
   }
 
-  // Submit Details button toggle (only shown when Booked, only for editors)
-  const headerControl = sel?.closest('.avail-header-control');
-  if (headerControl && canEdit()) {
-    const existingBtn = headerControl.querySelector('.btn-submit-details');
-    if (value === 'Booked' && !existingBtn) {
-      const btn = document.createElement('button');
-      btn.type = 'button';
-      btn.className = 'btn-submit-details';
-      btn.dataset.submitBookingUid = uid;
-      btn.title = 'Capture booking details and email';
-      btn.textContent = '📨 Submit Details';
-      headerControl.appendChild(btn);
-    } else if (value !== 'Booked' && existingBtn) {
-      existingBtn.remove();
-    }
-  }
+  // Submit Details row visibility — rendered on its own line below the section
+  // header. Already present in the DOM for editors (display:none until Booked);
+  // we just toggle visibility on status change rather than creating/removing.
+  const submitRow = document.querySelector(
+    `.submit-details-row[data-submit-row-for="${cssEscape(uid)}"]`
+  );
+  if (submitRow) submitRow.style.display = value === 'Booked' ? '' : 'none';
 }
 
 // Remarks history button (admin-only). Live binding via delegation since
@@ -1368,7 +1371,9 @@ async function openBookingModal(uid) {
   if (data.latest && !data.latest.mail_sent_at) {
     const l = data.latest;
     setBF('buyer_name', l.buyer_name);
+    setBF('buyer_email', l.buyer_email);
     setBF('co_buyer_name', l.co_buyer_name);
+    setBF('co_buyer_email', l.co_buyer_email);
     setBF('consideration_amount', l.consideration_amount);
     setBF('booking_amount_received', l.booking_amount_received);
     setBF('booking_amount_method', l.booking_amount_method);
@@ -1474,14 +1479,18 @@ function collectBookingForm() {
   return form;
 }
 
-// Validate page 2 form before allowing preview/send
+// Validate the booking form before allowing preview/send.
+// buyer_email is collected on Page 1; the rest live on Page 2.
 function validateBookingForm(form) {
-  const required = ['buyer_name', 'consideration_amount', 'booking_amount_received',
-                    'booking_amount_method', 'booking_amount_forfeitable',
-                    'ats_timeline', 'registry_timeline', 'amount_on_ats_pct'];
+  const required = ['buyer_email', 'buyer_name', 'consideration_amount',
+                    'booking_amount_received', 'booking_amount_method',
+                    'booking_amount_forfeitable', 'ats_timeline',
+                    'registry_timeline', 'amount_on_ats_pct'];
   const missing = required.filter(k => !form[k] && form[k] !== 0);
   return missing;
 }
+
+const EMAIL_RE_FE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 // Bind modal buttons (once)
 (function bindBookingModal() {
@@ -1516,6 +1525,20 @@ function validateBookingForm(form) {
       if (bookingState.step === 1) {
         if (!bookingState.recipients.length) {
           showToast('At least one recipient is required', 'error');
+          return;
+        }
+        const buyerEmailEl = document.querySelector('#bookingModal [data-bf="buyer_email"]');
+        const buyerEmail = (buyerEmailEl?.value || '').trim();
+        if (!buyerEmail || !EMAIL_RE_FE.test(buyerEmail)) {
+          showToast('A valid Buyer Email is required', 'error');
+          buyerEmailEl?.focus();
+          return;
+        }
+        const coBuyerEmailEl = document.querySelector('#bookingModal [data-bf="co_buyer_email"]');
+        const coBuyerEmail = (coBuyerEmailEl?.value || '').trim();
+        if (coBuyerEmail && !EMAIL_RE_FE.test(coBuyerEmail)) {
+          showToast('Co-buyer Email is not a valid email', 'error');
+          coBuyerEmailEl?.focus();
           return;
         }
         goToBookingStep(2);

@@ -27,6 +27,7 @@ const { requireAuth, canEdit, setCors } = require('../_auth');
 const { buildBookingEmail, sendMail } = require('../_email');
 
 const PAYMENT_METHODS = ['UPI', 'NEFT', 'IMPS', 'RTGS', 'Cheque', 'Cash', 'Other'];
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 // Strict-list fields. Reject anything not in the allow-list to keep DB clean.
 function validate(body) {
@@ -44,6 +45,15 @@ function validate(body) {
   }
   if (clean.booking_amount_method && !PAYMENT_METHODS.includes(clean.booking_amount_method)) {
     errors.push(`booking_amount_method must be one of: ${PAYMENT_METHODS.join(', ')}`);
+  }
+
+  // Email fields — lowercased, validated as email format. NULL if empty.
+  const emailFields = ['buyer_email', 'co_buyer_email'];
+  for (const f of emailFields) {
+    if (body[f] === undefined || body[f] === null || body[f] === '') { clean[f] = null; continue; }
+    const v = String(body[f]).trim().toLowerCase();
+    if (!EMAIL_RE.test(v)) { errors.push(`${f} must be a valid email`); continue; }
+    clean[f] = v;
   }
 
   // Numbers (non-negative)
@@ -76,13 +86,31 @@ function validate(body) {
     .map(s => String(s || '').trim())
     .filter(Boolean);
   for (const r of recipients) {
-    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(r)) {
+    if (!EMAIL_RE.test(r)) {
       errors.push(`Invalid email: ${r}`);
     }
   }
   clean.recipients = [...new Set(recipients)]; // dedupe
 
   return { clean, errors };
+}
+
+// Effective mailing list = curated CP-RM `recipients` + buyer_email + co_buyer_email.
+// Deduped case-insensitively, preserving first occurrence order. Used for both
+// the preview "To:" line and the actual SMTP send.
+function effectiveRecipients(clean) {
+  const all = [
+    ...(clean.recipients || []),
+    ...(clean.buyer_email ? [clean.buyer_email] : []),
+    ...(clean.co_buyer_email ? [clean.co_buyer_email] : []),
+  ];
+  const seen = new Set();
+  return all.filter(e => {
+    const k = String(e).toLowerCase();
+    if (seen.has(k)) return false;
+    seen.add(k);
+    return true;
+  });
 }
 
 // Loads the full property row for the email body. Tries `properties` then
@@ -187,15 +215,21 @@ module.exports = async (req, res) => {
       booking: clean,
       submittedBy: user.email,
     });
-    return res.status(200).json({ success: true, subject, html, recipients: clean.recipients });
+    return res.status(200).json({
+      success: true, subject, html,
+      recipients: effectiveRecipients(clean),
+    });
   }
 
   // ── action: save (draft) or send (full) — both write a row.
   // For send, we additionally:
-  //   - require at least one recipient
+  //   - require buyer_email + at least one effective recipient
   //   - call SMTP after commit
   //   - stamp mail_sent_at + bump availability_status to Booked
-  if (action === 'send' && (!clean.recipients || !clean.recipients.length)) {
+  if (action === 'send' && !clean.buyer_email) {
+    return res.status(400).json({ success: false, error: 'Buyer email is required to send mail.' });
+  }
+  if (action === 'send' && !effectiveRecipients(clean).length) {
     return res.status(400).json({ success: false, error: 'At least one recipient is required to send mail.' });
   }
 
@@ -223,15 +257,17 @@ module.exports = async (req, res) => {
 
     const { rows } = await client.query(
       `INSERT INTO booking_details (
-         uid, buyer_name, co_buyer_name, consideration_amount, booking_amount_received,
+         uid, buyer_name, co_buyer_name, buyer_email, co_buyer_email,
+         consideration_amount, booking_amount_received,
          booking_amount_method, ats_timeline, registry_timeline, booking_amount_forfeitable,
          amount_on_ats_pct, other_conditions, recipients, submitted_by
-       ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+       ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
        RETURNING id`,
       [
-        uid, clean.buyer_name, clean.co_buyer_name, clean.consideration_amount,
-        clean.booking_amount_received, clean.booking_amount_method, clean.ats_timeline,
-        clean.registry_timeline, clean.booking_amount_forfeitable, clean.amount_on_ats_pct,
+        uid, clean.buyer_name, clean.co_buyer_name, clean.buyer_email, clean.co_buyer_email,
+        clean.consideration_amount, clean.booking_amount_received,
+        clean.booking_amount_method, clean.ats_timeline, clean.registry_timeline,
+        clean.booking_amount_forfeitable, clean.amount_on_ats_pct,
         clean.other_conditions, JSON.stringify(clean.recipients || []), user.email,
       ]
     );
@@ -269,8 +305,9 @@ module.exports = async (req, res) => {
     submittedBy: user.email,
   });
 
+  const mailTo = effectiveRecipients(clean);
   try {
-    await sendMail({ to: clean.recipients, subject, html });
+    await sendMail({ to: mailTo, subject, html });
   } catch (err) {
     console.error('[/api/booking-details POST send]', err.message);
     // The booking_details row is already inserted (without mail_sent_at).
@@ -292,7 +329,7 @@ module.exports = async (req, res) => {
 
   logActivity(uid, 'booking_sent', 'booking', user, {
     booking_id: insertedId,
-    recipients: clean.recipients,
+    recipients: mailTo,
     subject,
   });
 

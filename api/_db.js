@@ -85,6 +85,12 @@ const INIT_SQL = `
   CREATE INDEX IF NOT EXISTS idx_booking_details_sent      ON booking_details(mail_sent_at DESC);
   CREATE INDEX IF NOT EXISTS idx_booking_details_created   ON booking_details(created_at DESC);
 
+  -- buyer_email / co_buyer_email: captured on the Recipients page of the
+  -- booking modal. Stored separately from the curated CP-RM recipients array
+  -- (column "recipients"); combined into the effective mailing list at send time.
+  ALTER TABLE booking_details ADD COLUMN IF NOT EXISTS buyer_email    TEXT;
+  ALTER TABLE booking_details ADD COLUMN IF NOT EXISTS co_buyer_email TEXT;
+
   -- legacy_properties: parallel to the properties table but OWNED by the
   -- demand dashboard. Holds property records that came in via legacy bulk
   -- import (CSV) and do not belong in the supply pipeline. The Supply Closure

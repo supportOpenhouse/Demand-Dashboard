@@ -223,6 +223,14 @@ tbody tr.expand-row td {
 }
 .btn-submit-details:hover  { background: #4338ca; }
 .btn-submit-details:active { transform: translateY(1px); }
+
+/* Submit Details row — its own line below the section header, right-aligned,
+   so the button doesn't crowd the availability dropdown / push field rows. */
+.submit-details-row {
+  display: flex;
+  justify-content: flex-end;
+  margin: -4px 0 10px 0;
+}
 .field-row { margin-bottom: 8px; }
 .field-lbl { font-size: 9px; text-transform: uppercase; letter-spacing: .4px; color: #9ca3af; margin-bottom: 2px; font-weight: 500; }
 .field-val { font-size: 12px; color: #374151; line-height: 1.4; word-break: break-word; }
@@ -682,6 +690,12 @@ tbody tr.expand-row td {
 .bp-val { color: #111827; font-weight: 500; }
 
 .booking-form-grid { grid-template-columns: 1fr 1fr; gap: 12px 16px; }
+.booking-buyer-emails-grid { grid-template-columns: 1fr 1fr; gap: 12px 16px; }
+.booking-section-divider {
+  height: 1px;
+  background: #eef2ff;
+  margin: 18px 0 14px;
+}
 .req { color: #dc2626; }
 
 .booking-preview-meta {
