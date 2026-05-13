@@ -88,8 +88,13 @@ const INIT_SQL = `
   -- buyer_email / co_buyer_email: captured on the Recipients page of the
   -- booking modal. Stored separately from the curated CP-RM recipients array
   -- (column "recipients"); combined into the effective mailing list at send time.
-  ALTER TABLE booking_details ADD COLUMN IF NOT EXISTS buyer_email    TEXT;
-  ALTER TABLE booking_details ADD COLUMN IF NOT EXISTS co_buyer_email TEXT;
+  ALTER TABLE booking_details ADD COLUMN IF NOT EXISTS buyer_email      TEXT;
+  ALTER TABLE booking_details ADD COLUMN IF NOT EXISTS co_buyer_email   TEXT;
+  -- buyer_salutation: addressee prefix used in the buyer-facing letter
+  -- ("Dear Ms. Poonam"). One of Mr./Mrs./Ms./Dr. ats_timeline now stores
+  -- an ISO date string (YYYY-MM-DD); registry_timeline stores days-as-integer.
+  -- Both kept as TEXT so historical free-text rows still load.
+  ALTER TABLE booking_details ADD COLUMN IF NOT EXISTS buyer_salutation TEXT;
 
   -- legacy_properties: parallel to the properties table but OWNED by the
   -- demand dashboard. Holds property records that came in via legacy bulk

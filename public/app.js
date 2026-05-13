@@ -1406,6 +1406,7 @@ async function openBookingModal(uid) {
   // Prefill form if there's a saved draft (latest non-mailed booking row)
   if (data.latest && !data.latest.mail_sent_at) {
     const l = data.latest;
+    setBF('buyer_salutation', l.buyer_salutation);
     setBF('buyer_name', l.buyer_name);
     setBF('buyer_email', l.buyer_email);
     setBF('co_buyer_name', l.co_buyer_name);
@@ -1504,7 +1505,7 @@ function collectBookingForm() {
 // Validate the booking form before allowing preview/send.
 // buyer_email is collected on Page 1; the rest live on Page 2.
 function validateBookingForm(form) {
-  const required = ['buyer_email', 'buyer_name', 'consideration_amount',
+  const required = ['buyer_email', 'buyer_salutation', 'buyer_name', 'consideration_amount',
                     'booking_amount_received', 'booking_amount_method',
                     'booking_amount_forfeitable', 'ats_timeline',
                     'registry_timeline', 'amount_on_ats_pct'];

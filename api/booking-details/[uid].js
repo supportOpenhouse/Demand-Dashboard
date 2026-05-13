@@ -27,7 +27,9 @@ const { requireAuth, canEdit, setCors } = require('../_auth');
 const { buildBookingEmail, sendMail } = require('../_email');
 
 const PAYMENT_METHODS = ['UPI', 'NEFT', 'IMPS', 'RTGS', 'Cheque', 'Cash', 'Other'];
+const SALUTATIONS = ['Mr.', 'Mrs.', 'Ms.', 'Dr.'];
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+const ISO_DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 
 // Strict-list fields. Reject anything not in the allow-list to keep DB clean.
 function validate(body) {
@@ -36,7 +38,7 @@ function validate(body) {
 
   // Strings (trim, max length)
   const textFields = ['buyer_name', 'co_buyer_name', 'booking_amount_method',
-                      'ats_timeline', 'registry_timeline', 'other_conditions'];
+                      'buyer_salutation', 'other_conditions'];
   for (const f of textFields) {
     if (body[f] === undefined || body[f] === null || body[f] === '') { clean[f] = null; continue; }
     const v = String(body[f]).trim();
@@ -45,6 +47,32 @@ function validate(body) {
   }
   if (clean.booking_amount_method && !PAYMENT_METHODS.includes(clean.booking_amount_method)) {
     errors.push(`booking_amount_method must be one of: ${PAYMENT_METHODS.join(', ')}`);
+  }
+  if (clean.buyer_salutation && !SALUTATIONS.includes(clean.buyer_salutation)) {
+    errors.push(`buyer_salutation must be one of: ${SALUTATIONS.join(', ')}`);
+  }
+
+  // ats_timeline: ISO date string (YYYY-MM-DD) from the date picker.
+  // registry_timeline: integer days. Both stored as TEXT.
+  if (body.ats_timeline === undefined || body.ats_timeline === null || body.ats_timeline === '') {
+    clean.ats_timeline = null;
+  } else {
+    const v = String(body.ats_timeline).trim();
+    if (!ISO_DATE_RE.test(v) || isNaN(new Date(v).getTime())) {
+      errors.push('ats_timeline must be a valid date (YYYY-MM-DD)');
+    } else {
+      clean.ats_timeline = v;
+    }
+  }
+  if (body.registry_timeline === undefined || body.registry_timeline === null || body.registry_timeline === '') {
+    clean.registry_timeline = null;
+  } else {
+    const n = parseInt(body.registry_timeline, 10);
+    if (isNaN(n) || n < 1 || n > 365) {
+      errors.push('registry_timeline must be a whole number of days between 1 and 365');
+    } else {
+      clean.registry_timeline = String(n);
+    }
   }
 
   // Email fields — lowercased, validated as email format. NULL if empty.
@@ -260,14 +288,15 @@ module.exports = async (req, res) => {
 
     const { rows } = await client.query(
       `INSERT INTO booking_details (
-         uid, buyer_name, co_buyer_name, buyer_email, co_buyer_email,
+         uid, buyer_salutation, buyer_name, co_buyer_name, buyer_email, co_buyer_email,
          consideration_amount, booking_amount_received,
          booking_amount_method, ats_timeline, registry_timeline, booking_amount_forfeitable,
          amount_on_ats_pct, other_conditions, recipients, submitted_by
-       ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
+       ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
        RETURNING id`,
       [
-        uid, clean.buyer_name, clean.co_buyer_name, clean.buyer_email, clean.co_buyer_email,
+        uid, clean.buyer_salutation, clean.buyer_name, clean.co_buyer_name,
+        clean.buyer_email, clean.co_buyer_email,
         clean.consideration_amount, clean.booking_amount_received,
         clean.booking_amount_method, clean.ats_timeline, clean.registry_timeline,
         clean.booking_amount_forfeitable, clean.amount_on_ats_pct,

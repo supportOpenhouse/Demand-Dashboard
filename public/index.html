@@ -184,7 +184,16 @@
         <div class="form-grid booking-form-grid">
           <div class="fg">
             <label>Buyer Name <span class="req">*</span></label>
-            <input type="text" class="booking-input" data-bf="buyer_name" required>
+            <div style="display:flex;gap:6px;">
+              <select class="booking-input" data-bf="buyer_salutation" style="flex:0 0 90px;" required>
+                <option value="">Title…</option>
+                <option value="Mr.">Mr.</option>
+                <option value="Mrs.">Mrs.</option>
+                <option value="Ms.">Ms.</option>
+                <option value="Dr.">Dr.</option>
+              </select>
+              <input type="text" class="booking-input" data-bf="buyer_name" style="flex:1;min-width:0;" required>
+            </div>
           </div>
           <div class="fg">
             <label>Co-buyer Name</label>
@@ -213,12 +222,12 @@
             </select>
           </div>
           <div class="fg">
-            <label>ATS Timeline <span class="req">*</span></label>
-            <input type="text" class="booking-input" data-bf="ats_timeline" placeholder="e.g. Within 30 days, or 15 Jun 2026" required>
+            <label>ATS Date <span class="req">*</span></label>
+            <input type="date" class="booking-input" data-bf="ats_timeline" required>
           </div>
           <div class="fg">
-            <label>Registry Timeline <span class="req">*</span></label>
-            <input type="text" class="booking-input" data-bf="registry_timeline" placeholder="e.g. Within 90 days of ATS" required>
+            <label>Registry Within (days) <span class="req">*</span></label>
+            <input type="number" min="1" max="365" step="1" class="booking-input" data-bf="registry_timeline" placeholder="e.g. 45" required>
           </div>
           <div class="fg">
             <label>Amount Payable at ATS (%) <span class="req">*</span></label>
