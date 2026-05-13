@@ -169,7 +169,60 @@ tbody tr.expand-row td {
   margin-bottom: 12px;
   display: flex; align-items: center; gap: 6px;
   padding-bottom: 6px; border-bottom: 1px solid #eef2ff;
+  justify-content: space-between;  /* pushes availability control to the right */
 }
+
+/* Availability status pill (main row "Status" column) — colored chip. */
+.avail-pill {
+  display: inline-block;
+  padding: 3px 10px;
+  border-radius: 12px;
+  font-size: 10px; font-weight: 700;
+  letter-spacing: .3px;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+.avail-pill.avail-green { background: #dcfce7; color: #166534; }
+.avail-pill.avail-amber { background: #fef3c7; color: #92400e; }
+.avail-pill.avail-red   { background: #fee2e2; color: #b91c1c; }
+
+/* Availability dropdown in the Property section header — same color codes. */
+.avail-header-control {
+  display: inline-flex; align-items: center; gap: 6px;
+  text-transform: none; letter-spacing: 0; font-weight: 500;
+}
+.avail-select {
+  font-size: 10px !important; font-weight: 700 !important;
+  letter-spacing: .3px; text-transform: uppercase;
+  padding: 3px 22px 3px 10px !important;
+  border-radius: 12px !important;
+  border: none !important;
+  cursor: pointer;
+  appearance: none; -webkit-appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='8' height='5' viewBox='0 0 8 5'%3E%3Cpath d='M0 0l4 5 4-5z' fill='currentColor'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 7px center;
+}
+.avail-select.avail-green { background-color: #dcfce7; color: #166534; }
+.avail-select.avail-amber { background-color: #fef3c7; color: #92400e; }
+.avail-select.avail-red   { background-color: #fee2e2; color: #b91c1c; }
+.avail-select:focus       { outline: 2px solid rgba(99,102,241,.4); outline-offset: 1px; }
+
+/* Submit Details button — appears only when status === Booked. */
+.btn-submit-details {
+  display: inline-flex; align-items: center; gap: 4px;
+  font-size: 10px; font-weight: 700;
+  letter-spacing: .3px; text-transform: uppercase;
+  padding: 4px 10px;
+  border-radius: 6px;
+  border: 1px solid #4f46e5;
+  background: #4f46e5; color: #fff;
+  cursor: pointer;
+  font-family: 'Inter', sans-serif;
+  transition: background .12s;
+}
+.btn-submit-details:hover  { background: #4338ca; }
+.btn-submit-details:active { transform: translateY(1px); }
 .field-row { margin-bottom: 8px; }
 .field-lbl { font-size: 9px; text-transform: uppercase; letter-spacing: .4px; color: #9ca3af; margin-bottom: 2px; font-weight: 500; }
 .field-val { font-size: 12px; color: #374151; line-height: 1.4; word-break: break-word; }

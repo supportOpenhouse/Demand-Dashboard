@@ -52,6 +52,11 @@ const INIT_SQL = `
   -- Shape: { "<column_name>": "<original raw text>", ... }
   ALTER TABLE demand_details ADD COLUMN IF NOT EXISTS legacy_raw_values JSONB;
 
+  -- availability_status: demand-side flag distinct from the supply pipeline
+  -- (which lives in ap_details.status). Drives the colored pill in the main
+  -- row's "Status" column. Valid values: 'Available' / 'Booked' / 'Sold'.
+  ALTER TABLE demand_details ADD COLUMN IF NOT EXISTS availability_status TEXT DEFAULT 'Available';
+
   -- legacy_properties: parallel to the properties table but OWNED by the
   -- demand dashboard. Holds property records that came in via legacy bulk
   -- import (CSV) and do not belong in the supply pipeline. The Supply Closure

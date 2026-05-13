@@ -83,6 +83,43 @@ function fmtSource(v) {
   return SOURCE_LABELS[v] || v;
 }
 
+// Demand-side availability. Drives the colored pill in the main row's
+// "Status" column AND the dropdown in the expand panel's Property header.
+const AVAILABILITY_OPTIONS = ['Available', 'Booked', 'Sold'];
+const AVAILABILITY_CLASS = {
+  'Available': 'avail-green',
+  'Booked':    'avail-amber',
+  'Sold':      'avail-red',
+};
+function renderAvailabilityPill(value) {
+  const v = value || 'Available';
+  const cls = AVAILABILITY_CLASS[v] || 'avail-green';
+  return `<span class="avail-pill ${cls}">${esc(v)}</span>`;
+}
+
+// Inline status selector for the Property section header. Posts to
+// /api/demand-details via the delegated change handler. When status is 'Booked',
+// an additional "Submit Details" button is shown — clicking it opens the
+// 2-page booking modal (Phase 2 — currently a stub).
+function renderAvailabilityHeaderControl(r) {
+  const current = r.availability_status || 'Available';
+  const cls = AVAILABILITY_CLASS[current] || 'avail-green';
+  const opts = AVAILABILITY_OPTIONS.map(o =>
+    `<option value="${esc(o)}"${o === current ? ' selected' : ''}>${esc(o)}</option>`
+  ).join('');
+  const submitBtn = current === 'Booked'
+    ? `<button type="button" class="btn-submit-details" data-submit-booking-uid="${esc(r.uid)}" title="Capture booking details and email">📨 Submit Details</button>`
+    : '';
+  return `
+    <span class="avail-header-control">
+      <select class="inline-select avail-select ${cls}"
+              data-uid="${esc(r.uid)}" data-field="availability_status">
+        ${opts}
+      </select>
+      ${submitBtn}
+    </span>`;
+}
+
 // ── Canonical option lists ──────────────────────────────────────────────
 // Mirror of backend-form's routes/config.js. Used by editable dropdowns to
 // keep `properties` field values aligned with what the supply-side forms
@@ -386,12 +423,13 @@ function renderRow(r) {
       <td class="col-ama-date">${esc(fmtDate(r.ama_date)) || '—'}</td>
       <td class="col-key-handover">${esc(fmtDate(r.key_handover_date)) || '—'}</td>
       <td>${esc(r.owner_name || '—')}<div class="prop-unit col-contact">${esc(r.contact_no || '')}</div></td>
+      <td>${renderAvailabilityPill(r.availability_status)}</td>
       <td class="td-remarks">${remarksCell}</td>
     </tr>`;
 
   const expandRow = `
     <tr class="expand-row ${isOpen ? 'open' : ''}" data-uid-expand="${esc(r.uid)}">
-      <td colspan="10">${isOpen ? renderExpand(r) : ''}</td>
+      <td colspan="11">${isOpen ? renderExpand(r) : ''}</td>
     </tr>`;
 
   return dataRow + expandRow;
@@ -424,10 +462,21 @@ function renderExpand(r) {
   const legacy = r.legacy_raw_values || {};
   const carpetTooltip = legacy.carpet_area ? `Original CSV value: ${legacy.carpet_area}` : '';
 
+  // Availability status dropdown — placed in the Property section header (top-right
+  // of the section) for admin/manager. The Submit Details button appears next to
+  // it only when status === 'Booked'. Viewers see neither (the main-row pill is
+  // their read-only view of the value).
+  const availHeaderControl = canEdit()
+    ? renderAvailabilityHeaderControl(r)
+    : '';
+
   // ── Section: Property
   const sectionProperty = `
     <div class="expand-section">
-      <h4>🏠 Property</h4>
+      <h4>
+        <span>🏠 Property</span>
+        ${availHeaderControl}
+      </h4>
       ${field('Society', r.society_name)}
       ${field('Unit No', r.unit_no)}
       ${field('Tower', r.tower_no)}
@@ -827,8 +876,54 @@ document.addEventListener('change', (e) => {
     if (wrapper) wrapper.style.display = el.value === 'Non-Flexible' ? 'none' : '';
   }
 
+  // Side-effect: when availability_status changes, recolor both the in-header
+  // select AND the main row's Status pill, and show/hide the Submit Details
+  // button without re-rendering the row.
+  if (el.dataset.field === 'availability_status') {
+    syncAvailabilityUI(uid, el.value);
+  }
+
   saveField(uid, el);
 });
+
+// Update all DOM nodes tied to a uid's availability_status: header select color,
+// main row pill, and Submit Details button visibility.
+function syncAvailabilityUI(uid, value) {
+  const cls = AVAILABILITY_CLASS[value] || 'avail-green';
+
+  // Header select
+  const sel = document.querySelector(`select.avail-select[data-uid="${cssEscape(uid)}"]`);
+  if (sel) {
+    sel.classList.remove('avail-green', 'avail-amber', 'avail-red');
+    sel.classList.add(cls);
+  }
+
+  // Main row pill — the row uses a separate <span> render; safest to just
+  // replace its outerHTML rather than mutate classes (the row may be collapsed
+  // or open, and we control the pill rendering centrally).
+  const row = document.querySelector(`tr.data-row[data-uid="${cssEscape(uid)}"]`);
+  if (row) {
+    const pill = row.querySelector('.avail-pill');
+    if (pill) pill.outerHTML = renderAvailabilityPill(value);
+  }
+
+  // Submit Details button toggle (only shown when Booked, only for editors)
+  const headerControl = sel?.closest('.avail-header-control');
+  if (headerControl && canEdit()) {
+    const existingBtn = headerControl.querySelector('.btn-submit-details');
+    if (value === 'Booked' && !existingBtn) {
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'btn-submit-details';
+      btn.dataset.submitBookingUid = uid;
+      btn.title = 'Capture booking details and email';
+      btn.textContent = '📨 Submit Details';
+      headerControl.appendChild(btn);
+    } else if (value !== 'Booked' && existingBtn) {
+      existingBtn.remove();
+    }
+  }
+}
 
 // Remarks history button (admin-only). Live binding via delegation since
 // rows re-render on every loadData / sort / row-toggle.
@@ -837,6 +932,17 @@ document.addEventListener('click', (e) => {
   if (!btn) return;
   e.stopPropagation(); // don't toggle the row
   openRemarksHistory(btn.dataset.historyUid);
+});
+
+// Submit Details button — opens the booking modal (Phase 2). Phase 1 stub:
+// shows a toast saying the modal isn't built yet. Delegated since the button
+// appears/disappears dynamically.
+document.addEventListener('click', (e) => {
+  const btn = e.target.closest('.btn-submit-details');
+  if (!btn) return;
+  e.stopPropagation();
+  // TODO Phase 2: openBookingModal(btn.dataset.submitBookingUid);
+  showToast('Booking submission modal coming next', '');
 });
 
 function cssEscape(s) {
@@ -1013,6 +1119,7 @@ function exportCsv() {
     ['Photo Links', r => collectImages(r).map(i => i.url).join(' | ')],
     ['Video Link', 'video_link'],
     ['Supply Status', 'supply_status'],
+    ['Availability', r => r.availability_status || 'Available'],
     ['Origin', r => r.origin === 'legacy' ? 'Legacy (CSV)' : 'Supply pipeline'],
   ];
 

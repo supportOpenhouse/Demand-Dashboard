@@ -229,6 +229,7 @@ module.exports = async (req, res) => {
       SELECT u.*,
              dd.listing_price          AS listing_price,
              COALESCE(dd.demand_status, 'Buyer Visit') AS demand_status,
+             COALESCE(dd.availability_status, 'Available') AS availability_status,
              dd.buyer_visit_date,
              dd.buyer_interested_date,
              dd.buyer_revisit_date,

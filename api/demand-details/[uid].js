@@ -3,9 +3,16 @@ const { requireAuth, canEdit, setCors } = require('../_auth');
 
 // Pipeline tracking (demand_status + 8 stage dates) was removed from the UI.
 // Schema columns remain but are no longer writable through this endpoint.
-const EDITOR_FIELDS = ['internal_remarks'];
+// availability_status (Available/Booked/Sold) is editable by admin + manager,
+// strict enum-validated. Once a Booked submission has been mailed, the
+// booking_details locked flag (checked elsewhere) prevents further status
+// changes for managers — admins keep full edit rights.
+const EDITOR_FIELDS = ['internal_remarks', 'availability_status'];
 const ADMIN_ONLY_FIELDS = ['listing_price'];
 const TEXT_FIELDS = ['internal_remarks'];
+const ENUM_FIELDS = {
+  availability_status: ['Available', 'Booked', 'Sold'],
+};
 const MAX_LEN = 5000;
 
 module.exports = async (req, res) => {
@@ -51,6 +58,36 @@ module.exports = async (req, res) => {
           }
           updates[field] = num;
         }
+      } else if (ENUM_FIELDS[field]) {
+        const val = String(raw || '').trim();
+        if (!ENUM_FIELDS[field].includes(val)) {
+          return res.status(400).json({
+            success: false,
+            error: `${field} must be one of: ${ENUM_FIELDS[field].join(', ')}`,
+          });
+        }
+        // Lockout: once a Booked submission has been mailed, managers can't
+        // change availability_status (admins still can). Check booking_details
+        // for a row with mail_sent_at not null. Wrapped to tolerate the
+        // booking_details table not existing yet (pre-Phase-2 deploys).
+        if (field === 'availability_status' && !isAdmin) {
+          try {
+            const { rows: locked } = await pool.query(
+              `SELECT 1 FROM booking_details WHERE uid = $1 AND mail_sent_at IS NOT NULL LIMIT 1`,
+              [uid]
+            );
+            if (locked.length) {
+              return res.status(403).json({
+                success: false,
+                error: 'This property has a submitted booking. Only admins can change status.',
+              });
+            }
+          } catch (e) {
+            // booking_details table not yet created — no lockout applies.
+            if (!/relation .*booking_details.* does not exist/i.test(e.message)) throw e;
+          }
+        }
+        updates[field] = val;
       } else if (TEXT_FIELDS.includes(field)) {
         const val = String(raw || '').trim();
         if (val.length > MAX_LEN) {
@@ -90,7 +127,10 @@ module.exports = async (req, res) => {
     // Best-effort audit log per changed field. Async — failures don't block the save.
     // Remarks history (visible to admin) is reconstructed from these activity_logs rows.
     for (const [field, value] of Object.entries(updates)) {
-      const category = field === 'listing_price' ? 'price' : 'text';
+      const category =
+        field === 'listing_price'         ? 'price'
+        : field === 'availability_status' ? 'availability'
+        :                                   'text';
       logActivity(uid, 'demand_update', category, user, { field, value });
     }
 
