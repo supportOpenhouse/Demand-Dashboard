@@ -10,6 +10,7 @@
     { "source": "/api/list",                "destination": "/api/list" },
     { "source": "/api/detail/:uid",         "destination": "/api/detail/[uid]" },
     { "source": "/api/demand-details/:uid", "destination": "/api/demand-details/[uid]" },
+    { "source": "/api/booking-details/:uid", "destination": "/api/booking-details/[uid]" },
     { "source": "/api/property-edits/:uid",  "destination": "/api/property-edits/[uid]" },
     { "source": "/api/remarks-history/:uid", "destination": "/api/remarks-history/[uid]" },
     { "source": "/login",                   "destination": "/login.html" },

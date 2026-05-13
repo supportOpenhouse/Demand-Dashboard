@@ -1,0 +1,300 @@
+// /api/booking-details/:uid
+//
+// GET  → returns the latest booking_details row for this uid (for prefilling
+//        the modal) + the list of CP-RM emails seen on previous bookings
+//        (for the page-1 datalist suggestions).
+//
+// POST → handles three actions via body.action:
+//        - 'preview' : returns { subject, html } without writing anything.
+//                      Used by the "Preview Mail" button in the modal.
+//        - 'send'    : inserts a booking_details row, sends the email via
+//                      SMTP, then marks mail_sent_at on the inserted row.
+//                      Sets availability_status='Booked' on demand_details
+//                      (idempotent — already Booked when the user opens the modal).
+//        - 'save'    : draft save — inserts/updates without sending mail. Useful
+//                      if we want to add a "Save Draft" button later. Currently
+//                      not exposed in the UI, kept here for future extension.
+//
+// Admin + manager only. After mail_sent_at is set, the row is considered
+// locked for managers (admins can still re-submit a fresh row, treated as a
+// new submission rather than an edit).
+//
+// All writes wrapped in a transaction; mail send happens AFTER commit so a
+// failed send doesn't leave an orphan unsent row in the DB.
+
+const { pool, ensureTable, logActivity } = require('../_db');
+const { requireAuth, canEdit, setCors } = require('../_auth');
+const { buildBookingEmail, sendMail } = require('../_email');
+
+const PAYMENT_METHODS = ['UPI', 'NEFT', 'IMPS', 'RTGS', 'Cheque', 'Cash', 'Other'];
+
+// Strict-list fields. Reject anything not in the allow-list to keep DB clean.
+function validate(body) {
+  const errors = [];
+  const clean = {};
+
+  // Strings (trim, max length)
+  const textFields = ['buyer_name', 'co_buyer_name', 'booking_amount_method',
+                      'ats_timeline', 'registry_timeline', 'other_conditions'];
+  for (const f of textFields) {
+    if (body[f] === undefined || body[f] === null || body[f] === '') { clean[f] = null; continue; }
+    const v = String(body[f]).trim();
+    if (v.length > 2000) { errors.push(`${f} exceeds 2000 chars`); continue; }
+    clean[f] = v;
+  }
+  if (clean.booking_amount_method && !PAYMENT_METHODS.includes(clean.booking_amount_method)) {
+    errors.push(`booking_amount_method must be one of: ${PAYMENT_METHODS.join(', ')}`);
+  }
+
+  // Numbers (non-negative)
+  const numFields = ['consideration_amount', 'booking_amount_received', 'amount_on_ats_pct'];
+  for (const f of numFields) {
+    if (body[f] === undefined || body[f] === null || body[f] === '') { clean[f] = null; continue; }
+    const n = parseFloat(body[f]);
+    if (isNaN(n) || n < 0) { errors.push(`${f} must be a non-negative number`); continue; }
+    clean[f] = n;
+  }
+  if (clean.amount_on_ats_pct != null && clean.amount_on_ats_pct > 100) {
+    errors.push('amount_on_ats_pct must be 0-100');
+  }
+
+  // Boolean
+  if (body.booking_amount_forfeitable === undefined || body.booking_amount_forfeitable === null || body.booking_amount_forfeitable === '') {
+    clean.booking_amount_forfeitable = null;
+  } else if (body.booking_amount_forfeitable === true || body.booking_amount_forfeitable === 'true' || body.booking_amount_forfeitable === 'Yes') {
+    clean.booking_amount_forfeitable = true;
+  } else if (body.booking_amount_forfeitable === false || body.booking_amount_forfeitable === 'false' || body.booking_amount_forfeitable === 'No') {
+    clean.booking_amount_forfeitable = false;
+  } else {
+    errors.push('booking_amount_forfeitable must be Yes/No');
+  }
+
+  // Recipients — array of valid-looking emails
+  let recipients = body.recipients;
+  if (!Array.isArray(recipients)) recipients = [];
+  recipients = recipients
+    .map(s => String(s || '').trim())
+    .filter(Boolean);
+  for (const r of recipients) {
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(r)) {
+      errors.push(`Invalid email: ${r}`);
+    }
+  }
+  clean.recipients = [...new Set(recipients)]; // dedupe
+
+  return { clean, errors };
+}
+
+// Loads the full property row for the email body. Tries `properties` then
+// `legacy_properties`. Returns null if not found.
+async function loadProperty(uid) {
+  const real = await pool.query(
+    `SELECT p.*, apd.status AS supply_status
+     FROM properties p
+     LEFT JOIN ap_details apd ON apd.uid = p.uid
+     WHERE p.uid = $1`,
+    [uid]
+  );
+  if (real.rows.length) return { ...real.rows[0], origin: 'real' };
+
+  const legacy = await pool.query(`SELECT * FROM legacy_properties WHERE uid = $1`, [uid]);
+  if (legacy.rows.length) return { ...legacy.rows[0], origin: 'legacy' };
+
+  return null;
+}
+
+module.exports = async (req, res) => {
+  setCors(res);
+  if (req.method === 'OPTIONS') return res.status(200).end();
+
+  const user = await requireAuth(req, res);
+  if (!user) return;
+
+  const { uid } = req.query;
+  if (!uid) return res.status(400).json({ success: false, error: 'uid is required' });
+
+  await ensureTable();
+
+  // ── GET: prefill data for the modal ────────────────────────────────────
+  if (req.method === 'GET') {
+    if (!canEdit(user)) {
+      return res.status(403).json({ success: false, error: 'Viewer access is read-only' });
+    }
+    try {
+      // Latest booking for this uid (could be null — fresh submission)
+      const latest = await pool.query(
+        `SELECT * FROM booking_details WHERE uid = $1 ORDER BY created_at DESC LIMIT 1`,
+        [uid]
+      );
+
+      // Distinct CP-RM-ish emails from past submissions — used to populate
+      // the datalist on page 1. Filter out the standard fixed recipients so
+      // suggestions don't repeat them.
+      const FIXED = ['bookings@openhouse.in', 'manish.pal@openhouse.in'];
+      const past = await pool.query(`
+        SELECT DISTINCT TRIM(LOWER(email)) AS email
+        FROM booking_details, jsonb_array_elements_text(recipients) AS email
+        WHERE TRIM(email) <> ''
+      `);
+      const suggestions = past.rows
+        .map(r => r.email)
+        .filter(e => e && !FIXED.includes(e))
+        .sort();
+
+      // Demand team users — useful for the page-1 datalist too (any of them
+      // can be a recipient).
+      const teamUsers = await pool.query(
+        `SELECT email, name FROM demand_users WHERE role IN ('admin','manager') ORDER BY name NULLS LAST, email`
+      );
+
+      return res.status(200).json({
+        success: true,
+        latest: latest.rows[0] || null,
+        locked: !!(latest.rows[0]?.mail_sent_at),
+        suggestions,
+        team: teamUsers.rows,
+        fixedRecipients: FIXED,
+        paymentMethods: PAYMENT_METHODS,
+      });
+    } catch (err) {
+      console.error('[/api/booking-details GET]', err.message);
+      return res.status(500).json({ success: false, error: err.message });
+    }
+  }
+
+  // ── POST: preview / send / save ────────────────────────────────────────
+  if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
+  if (!canEdit(user)) {
+    return res.status(403).json({ success: false, error: 'Viewer access is read-only' });
+  }
+
+  const { action } = req.body || {};
+  if (!['preview', 'send', 'save'].includes(action)) {
+    return res.status(400).json({ success: false, error: `action must be one of: preview, send, save` });
+  }
+
+  const { clean, errors } = validate(req.body);
+  if (errors.length) return res.status(400).json({ success: false, error: errors.join('; ') });
+
+  // Load property for email body
+  const property = await loadProperty(uid);
+  if (!property) return res.status(404).json({ success: false, error: 'Property not found' });
+
+  // ── action: preview — no DB write, no mail send. Just return rendered HTML.
+  if (action === 'preview') {
+    const { subject, html } = buildBookingEmail({
+      property,
+      booking: clean,
+      submittedBy: user.email,
+    });
+    return res.status(200).json({ success: true, subject, html, recipients: clean.recipients });
+  }
+
+  // ── action: save (draft) or send (full) — both write a row.
+  // For send, we additionally:
+  //   - require at least one recipient
+  //   - call SMTP after commit
+  //   - stamp mail_sent_at + bump availability_status to Booked
+  if (action === 'send' && (!clean.recipients || !clean.recipients.length)) {
+    return res.status(400).json({ success: false, error: 'At least one recipient is required to send mail.' });
+  }
+
+  // Manager lockout: if a prior booking for this uid is already mailed and
+  // user is manager (not admin), block further bookings. Admins can re-submit.
+  if (user.role !== 'admin') {
+    const existing = await pool.query(
+      `SELECT 1 FROM booking_details WHERE uid = $1 AND mail_sent_at IS NOT NULL LIMIT 1`,
+      [uid]
+    );
+    if (existing.rows.length) {
+      return res.status(403).json({
+        success: false,
+        error: 'A booking for this property has already been submitted. Only admins can re-submit.',
+      });
+    }
+  }
+
+  // Insert booking row. Email sending happens AFTER the transaction commits
+  // so we don't lose track of in-flight bookings if SMTP fails.
+  const client = await pool.connect();
+  let insertedId;
+  try {
+    await client.query('BEGIN');
+
+    const { rows } = await client.query(
+      `INSERT INTO booking_details (
+         uid, buyer_name, co_buyer_name, consideration_amount, booking_amount_received,
+         booking_amount_method, ats_timeline, registry_timeline, booking_amount_forfeitable,
+         amount_on_ats_pct, other_conditions, recipients, submitted_by
+       ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+       RETURNING id`,
+      [
+        uid, clean.buyer_name, clean.co_buyer_name, clean.consideration_amount,
+        clean.booking_amount_received, clean.booking_amount_method, clean.ats_timeline,
+        clean.registry_timeline, clean.booking_amount_forfeitable, clean.amount_on_ats_pct,
+        clean.other_conditions, JSON.stringify(clean.recipients || []), user.email,
+      ]
+    );
+    insertedId = rows[0].id;
+
+    // Ensure demand_details has availability_status='Booked' (idempotent).
+    await client.query(
+      `INSERT INTO demand_details (uid, availability_status, updated_by)
+       VALUES ($1, 'Booked', $2)
+       ON CONFLICT (uid) DO UPDATE
+         SET availability_status = 'Booked', updated_by = $2, updated_at = NOW()`,
+      [uid, user.email]
+    );
+
+    await client.query('COMMIT');
+  } catch (err) {
+    await client.query('ROLLBACK');
+    console.error('[/api/booking-details POST insert]', err.message);
+    client.release();
+    return res.status(500).json({ success: false, error: err.message });
+  } finally {
+    client.release();
+  }
+
+  // Save (draft) — done. Audit log + return.
+  if (action === 'save') {
+    logActivity(uid, 'booking_save', 'booking', user, { booking_id: insertedId });
+    return res.status(200).json({ success: true, id: insertedId, sent: false });
+  }
+
+  // Send — call SMTP, then stamp mail_sent_at.
+  const { subject, html } = buildBookingEmail({
+    property,
+    booking: clean,
+    submittedBy: user.email,
+  });
+
+  try {
+    await sendMail({ to: clean.recipients, subject, html });
+  } catch (err) {
+    console.error('[/api/booking-details POST send]', err.message);
+    // The booking_details row is already inserted (without mail_sent_at).
+    // Surface the failure to the user so they can retry the send without
+    // re-typing the form.
+    return res.status(500).json({
+      success: false,
+      error: 'Failed to send email: ' + err.message,
+      booking_id: insertedId,
+      hint: 'The booking was saved but the email was not sent. An admin can retry.',
+    });
+  }
+
+  // Stamp mail_sent_at on success.
+  await pool.query(
+    `UPDATE booking_details SET mail_sent_at = NOW(), updated_at = NOW() WHERE id = $1`,
+    [insertedId]
+  );
+
+  logActivity(uid, 'booking_sent', 'booking', user, {
+    booking_id: insertedId,
+    recipients: clean.recipients,
+    subject,
+  });
+
+  return res.status(200).json({ success: true, id: insertedId, sent: true });
+};

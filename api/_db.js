@@ -57,6 +57,34 @@ const INIT_SQL = `
   -- row's "Status" column. Valid values: 'Available' / 'Booked' / 'Sold'.
   ALTER TABLE demand_details ADD COLUMN IF NOT EXISTS availability_status TEXT DEFAULT 'Available';
 
+  -- booking_details: captures the per-property booking submission (the "Submit
+  -- Details" modal) and remembers who the email was sent to. Owned by the
+  -- demand dashboard. One row per submission — if a booking falls through and
+  -- a new buyer appears, a fresh row gets inserted. Latest by mail_sent_at /
+  -- created_at is what the UI shows.
+  CREATE TABLE IF NOT EXISTS booking_details (
+    id                          SERIAL PRIMARY KEY,
+    uid                         TEXT NOT NULL,
+    buyer_name                  TEXT,
+    co_buyer_name               TEXT,
+    consideration_amount        REAL,             -- in Rupees
+    booking_amount_received     REAL,             -- in Rupees
+    booking_amount_method       TEXT,             -- UPI / NEFT / Cash / Cheque / Other
+    ats_timeline                TEXT,             -- free text or date
+    registry_timeline           TEXT,
+    booking_amount_forfeitable  BOOLEAN,
+    amount_on_ats_pct           REAL,
+    other_conditions            TEXT,
+    recipients                  JSONB DEFAULT '[]',  -- array of emails
+    mail_sent_at                TIMESTAMPTZ,         -- null until Send Mail succeeds
+    submitted_by                TEXT,                -- email of demand-team user
+    created_at                  TIMESTAMPTZ DEFAULT NOW(),
+    updated_at                  TIMESTAMPTZ DEFAULT NOW()
+  );
+  CREATE INDEX IF NOT EXISTS idx_booking_details_uid       ON booking_details(uid);
+  CREATE INDEX IF NOT EXISTS idx_booking_details_sent      ON booking_details(mail_sent_at DESC);
+  CREATE INDEX IF NOT EXISTS idx_booking_details_created   ON booking_details(created_at DESC);
+
   -- legacy_properties: parallel to the properties table but OWNED by the
   -- demand dashboard. Holds property records that came in via legacy bulk
   -- import (CSV) and do not belong in the supply pipeline. The Supply Closure

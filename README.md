@@ -43,6 +43,12 @@ Tables it reads from (owned by other apps): `properties`, `ap_details`.
 | `GOOGLE_CLIENT_ID`   | yes      | Google OAuth client ID                                  |
 | `JWT_SECRET`         | yes      | secret used to sign session JWTs                        |
 | `ALLOWED_ORIGIN`     | no       | CORS origin (only needed if frontend is on a 2nd host)  |
+| `SMTP_HOST`          | yes\*    | SMTP server hostname (\*required only if Send Mail used) |
+| `SMTP_PORT`          | no       | SMTP port — defaults to 587 (STARTTLS)                  |
+| `SMTP_SECURE`        | no       | `true` for implicit TLS port 465; defaults to `false`   |
+| `SMTP_USER`          | yes\*    | SMTP auth username                                      |
+| `SMTP_PASS`          | yes\*    | SMTP auth password / app password                       |
+| `SMTP_FROM`          | no       | From address (defaults to SMTP_USER)                    |
 
 ## Run locally
 

@@ -934,15 +934,12 @@ document.addEventListener('click', (e) => {
   openRemarksHistory(btn.dataset.historyUid);
 });
 
-// Submit Details button — opens the booking modal (Phase 2). Phase 1 stub:
-// shows a toast saying the modal isn't built yet. Delegated since the button
-// appears/disappears dynamically.
+// Submit Details button — opens the booking submission modal.
 document.addEventListener('click', (e) => {
   const btn = e.target.closest('.btn-submit-details');
   if (!btn) return;
   e.stopPropagation();
-  // TODO Phase 2: openBookingModal(btn.dataset.submitBookingUid);
-  showToast('Booking submission modal coming next', '');
+  openBookingModal(btn.dataset.submitBookingUid);
 });
 
 function cssEscape(s) {
@@ -1292,4 +1289,334 @@ async function addUser() {
   $('#newUserEmail').value = '';
   showToast('User added', 'success');
   await loadUsers();
+}
+
+// ── Booking Submission Modal ───────────────────────────────────────────
+// 3-step flow (Recipients → Details → Preview → Send). State is local to
+// the modal session (resets each open). Uses /api/booking-details/:uid.
+const bookingState = {
+  uid: null,
+  property: null,
+  step: 1,
+  recipients: [],
+  fixedRecipients: [],
+  paymentMethods: [],
+  form: {},
+};
+
+async function openBookingModal(uid) {
+  bookingState.uid = uid;
+  bookingState.step = 1;
+  bookingState.form = {};
+
+  // Reset visible form inputs
+  document.querySelectorAll('#bookingModal [data-bf]').forEach(el => { el.value = ''; });
+  $('#bookingNewRecipient').value = '';
+
+  // Fetch prefill data: latest booking row (if any), team users, past CP RM
+  // emails, payment methods, fixed recipients.
+  let data;
+  try {
+    const r = await fetch('/api/booking-details/' + encodeURIComponent(uid), { credentials: 'include' });
+    data = await r.json();
+    if (!data.success) throw new Error(data.error || 'Failed to load booking data');
+  } catch (e) {
+    showToast(e.message, 'error');
+    return;
+  }
+
+  bookingState.paymentMethods = data.paymentMethods || [];
+  bookingState.fixedRecipients = data.fixedRecipients || [];
+
+  // Build recipients list: fixed + current user (sender) + property POC + suggestions
+  const row = state.rows.find(r => r.uid === uid);
+  bookingState.property = row || null;
+  const senderEmail = state.user.email;
+  const pocEmail = findPocEmail(row, data.team);
+
+  const defaults = [
+    ...bookingState.fixedRecipients,
+    senderEmail,
+    pocEmail,
+  ].filter(Boolean);
+  // Dedupe (case-insensitive) preserving order
+  const seen = new Set();
+  bookingState.recipients = defaults.filter(e => {
+    const k = e.toLowerCase();
+    if (seen.has(k)) return false;
+    seen.add(k);
+    return true;
+  });
+
+  // Populate datalist with non-fixed suggestions (past CP RM emails + team)
+  const dl = $('#bookingRecipientSuggestions');
+  const suggestionSet = new Set([
+    ...(data.suggestions || []),
+    ...(data.team || []).map(t => t.email).filter(Boolean),
+  ]);
+  dl.innerHTML = [...suggestionSet]
+    .filter(e => !bookingState.recipients.includes(e))
+    .map(e => `<option value="${esc(e)}">`)
+    .join('');
+
+  // Prefill payment method options
+  const paySel = $('#bookingModal [data-bf="booking_amount_method"]');
+  paySel.innerHTML = '<option value="">Select…</option>' +
+    bookingState.paymentMethods.map(m => `<option value="${esc(m)}">${esc(m)}</option>`).join('');
+
+  // Prefill form if there's a saved draft (latest non-mailed booking row)
+  if (data.latest && !data.latest.mail_sent_at) {
+    const l = data.latest;
+    setBF('buyer_name', l.buyer_name);
+    setBF('co_buyer_name', l.co_buyer_name);
+    setBF('consideration_amount', l.consideration_amount);
+    setBF('booking_amount_received', l.booking_amount_received);
+    setBF('booking_amount_method', l.booking_amount_method);
+    setBF('ats_timeline', l.ats_timeline);
+    setBF('registry_timeline', l.registry_timeline);
+    setBF('booking_amount_forfeitable', l.booking_amount_forfeitable === true ? 'Yes' : l.booking_amount_forfeitable === false ? 'No' : '');
+    setBF('amount_on_ats_pct', l.amount_on_ats_pct);
+    setBF('other_conditions', l.other_conditions);
+    if (Array.isArray(l.recipients) && l.recipients.length) {
+      bookingState.recipients = l.recipients;
+    }
+  }
+
+  // If a prior booking has been mailed and the user isn't admin, block.
+  if (data.locked && state.user.role !== 'admin') {
+    showToast('Booking already submitted. Only admins can re-submit.', 'error');
+    return;
+  }
+
+  // Modal subtitle
+  const subtitle = row
+    ? `· ${row.society_name || ''} ${row.unit_no ? '· Unit ' + row.unit_no : ''}`
+    : '';
+  $('#bookingModalSubtitle').textContent = subtitle;
+
+  // Property summary on page 2
+  $('#bookingPropertySummary').innerHTML = row ? `
+    <div class="bp-row"><span class="bp-lbl">Property</span><span class="bp-val">${esc(row.society_name || '')}</span></div>
+    <div class="bp-row"><span class="bp-lbl">Unit</span><span class="bp-val">${esc(row.unit_no || '')} ${row.tower_no ? '· ' + esc(row.tower_no) : ''} ${row.floor != null ? '· Floor ' + esc(row.floor) : ''}</span></div>
+    <div class="bp-row"><span class="bp-lbl">Configuration</span><span class="bp-val">${esc(row.configuration || '')} · ${esc(row.super_area || row.area_sqft || '')} sqft</span></div>
+    <div class="bp-row"><span class="bp-lbl">City</span><span class="bp-val">${esc(row.city || '')} · ${esc(row.locality || '')}</span></div>
+  ` : '';
+
+  renderBookingRecipients();
+  goToBookingStep(1);
+  $('#bookingModal').classList.add('open');
+}
+
+// Looks up a likely POC email for the property:
+// - properties.assigned_by may be a full name like "Shashank Kumar". Match against
+//   demand_users.name (case-insensitive) to get their email.
+// - Fallback: if assigned_by already looks like an email, use it.
+function findPocEmail(row, teamUsers) {
+  if (!row || !row.poc) return null;
+  const v = String(row.poc).trim();
+  if (!v) return null;
+  if (v.includes('@')) return v;
+  if (!teamUsers || !teamUsers.length) return null;
+  const match = teamUsers.find(u =>
+    (u.name && u.name.trim().toLowerCase() === v.toLowerCase())
+  );
+  return match ? match.email : null;
+}
+
+function setBF(field, value) {
+  const el = document.querySelector(`#bookingModal [data-bf="${cssEscape(field)}"]`);
+  if (el != null && value != null) el.value = value;
+}
+
+function renderBookingRecipients() {
+  const list = $('#bookingRecipientsList');
+  list.innerHTML = bookingState.recipients.map((email, i) => {
+    const isFixed = bookingState.fixedRecipients.includes(email);
+    return `
+      <div class="recipient-chip ${isFixed ? 'recipient-chip--fixed' : ''}">
+        <span class="recipient-email">${esc(email)}</span>
+        ${isFixed
+          ? '<span class="recipient-label">default</span>'
+          : `<button type="button" class="recipient-remove" data-recipient-idx="${i}" title="Remove">×</button>`}
+      </div>`;
+  }).join('');
+}
+
+// Step navigation
+function goToBookingStep(step) {
+  bookingState.step = step;
+  document.querySelectorAll('#bookingModal .booking-page').forEach(p => {
+    p.style.display = (parseInt(p.dataset.page, 10) === step) ? '' : 'none';
+  });
+  document.querySelectorAll('#bookingModal .booking-step').forEach(s => {
+    const n = parseInt(s.dataset.step, 10);
+    s.classList.toggle('active', n === step);
+    s.classList.toggle('done', n < step);
+  });
+
+  // Footer button visibility
+  $('#bookingBackBtn').style.display = step === 1 ? 'none' : '';
+  $('#bookingPreviewBtn').style.display = step === 2 ? '' : 'none';
+  $('#bookingNextBtn').style.display = step === 3 ? 'none' : (step === 2 ? 'none' : '');
+  $('#bookingSendBtn').style.display = step === 3 ? '' : 'none';
+}
+
+// Collect form values into bookingState.form
+function collectBookingForm() {
+  const form = {};
+  document.querySelectorAll('#bookingModal [data-bf]').forEach(el => {
+    const k = el.dataset.bf;
+    let v = el.value;
+    if (v === '') v = null;
+    form[k] = v;
+  });
+  bookingState.form = form;
+  return form;
+}
+
+// Validate page 2 form before allowing preview/send
+function validateBookingForm(form) {
+  const required = ['buyer_name', 'consideration_amount', 'booking_amount_received',
+                    'booking_amount_method', 'booking_amount_forfeitable',
+                    'ats_timeline', 'registry_timeline', 'amount_on_ats_pct'];
+  const missing = required.filter(k => !form[k] && form[k] !== 0);
+  return missing;
+}
+
+// Bind modal buttons (once)
+(function bindBookingModal() {
+  document.addEventListener('click', (e) => {
+    // Add recipient
+    if (e.target.id === 'bookingAddRecipient') {
+      const input = $('#bookingNewRecipient');
+      const val = input.value.trim();
+      if (!val) return;
+      if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(val)) {
+        showToast('Enter a valid email', 'error');
+        return;
+      }
+      if (bookingState.recipients.some(e => e.toLowerCase() === val.toLowerCase())) {
+        showToast('Already in the list', '');
+        input.value = '';
+        return;
+      }
+      bookingState.recipients.push(val);
+      input.value = '';
+      renderBookingRecipients();
+    }
+    // Remove recipient
+    const rm = e.target.closest('.recipient-remove');
+    if (rm) {
+      const idx = parseInt(rm.dataset.recipientIdx, 10);
+      bookingState.recipients.splice(idx, 1);
+      renderBookingRecipients();
+    }
+    // Next
+    if (e.target.id === 'bookingNextBtn') {
+      if (bookingState.step === 1) {
+        if (!bookingState.recipients.length) {
+          showToast('At least one recipient is required', 'error');
+          return;
+        }
+        goToBookingStep(2);
+      }
+    }
+    // Back
+    if (e.target.id === 'bookingBackBtn') {
+      if (bookingState.step > 1) goToBookingStep(bookingState.step - 1);
+    }
+    // Preview (page 2 → server preview → page 3)
+    if (e.target.id === 'bookingPreviewBtn') {
+      const form = collectBookingForm();
+      const missing = validateBookingForm(form);
+      if (missing.length) {
+        showToast('Missing required fields: ' + missing.join(', '), 'error');
+        return;
+      }
+      generateBookingPreview();
+    }
+    // Send
+    if (e.target.id === 'bookingSendBtn') {
+      sendBookingMail();
+    }
+  });
+
+  // Enter key on the "Add recipient" input
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' && e.target.id === 'bookingNewRecipient') {
+      e.preventDefault();
+      $('#bookingAddRecipient').click();
+    }
+  });
+})();
+
+async function generateBookingPreview() {
+  const form = collectBookingForm();
+  try {
+    const r = await fetch('/api/booking-details/' + encodeURIComponent(bookingState.uid), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'include',
+      body: JSON.stringify({
+        action: 'preview',
+        recipients: bookingState.recipients,
+        ...form,
+      }),
+    });
+    const data = await r.json();
+    if (!data.success) {
+      showToast(data.error || 'Preview failed', 'error');
+      return;
+    }
+    $('#bookingPreviewTo').textContent = (data.recipients || []).join(', ');
+    $('#bookingPreviewSubject').textContent = data.subject;
+
+    const iframe = $('#bookingPreviewIframe');
+    // Write HTML directly into the sandboxed iframe (no script execution).
+    iframe.srcdoc = data.html;
+    goToBookingStep(3);
+  } catch (e) {
+    showToast('Network error: ' + e.message, 'error');
+  }
+}
+
+async function sendBookingMail() {
+  const form = bookingState.form;
+  const btn = $('#bookingSendBtn');
+  const original = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = '⏳ Sending…';
+
+  try {
+    const r = await fetch('/api/booking-details/' + encodeURIComponent(bookingState.uid), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'include',
+      body: JSON.stringify({
+        action: 'send',
+        recipients: bookingState.recipients,
+        ...form,
+      }),
+    });
+    const data = await r.json();
+    if (!data.success) {
+      showToast(data.error || 'Send failed', 'error');
+      btn.disabled = false;
+      btn.textContent = original;
+      return;
+    }
+    showToast('Booking submitted and email sent', 'success');
+    $('#bookingModal').classList.remove('open');
+    btn.disabled = false;
+    btn.textContent = original;
+
+    // Reflect lockout: refresh row state, sync UI.
+    const row = state.rows.find(x => x.uid === bookingState.uid);
+    if (row) row.availability_status = 'Booked';
+    syncAvailabilityUI(bookingState.uid, 'Booked');
+  } catch (e) {
+    showToast('Network error: ' + e.message, 'error');
+    btn.disabled = false;
+    btn.textContent = original;
+  }
 }

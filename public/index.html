@@ -131,6 +131,117 @@
   </div>
 </div>
 
+<!-- ── Booking Submission modal (2 pages) ─────────────────────────────────── -->
+<div class="modal-overlay" id="bookingModal">
+  <div class="modal modal-wide">
+    <div class="modal-head">
+      <h3>
+        Submit Booking Details
+        <span id="bookingModalSubtitle" style="font-weight:400;color:#9ca3af;font-size:12px;margin-left:6px;"></span>
+      </h3>
+      <button class="modal-close" data-close="bookingModal">×</button>
+    </div>
+
+    <!-- Tabs / progress indicator -->
+    <div class="booking-stepper">
+      <div class="booking-step active" data-step="1"><span class="num">1</span> Recipients</div>
+      <div class="booking-step" data-step="2"><span class="num">2</span> Booking Details</div>
+      <div class="booking-step" data-step="3"><span class="num">3</span> Preview & Send</div>
+    </div>
+
+    <div class="modal-body" id="bookingModalBody">
+      <!-- ── Page 1: Recipients ── -->
+      <div class="booking-page" data-page="1">
+        <p class="booking-help">Defaults pre-loaded. Edit anyone, then add CP RM emails if needed.</p>
+        <div class="booking-recipients-list" id="bookingRecipientsList"></div>
+
+        <div class="booking-add-row">
+          <input type="email" class="booking-input" id="bookingNewRecipient"
+                 placeholder="Add CP RM email…" list="bookingRecipientSuggestions">
+          <datalist id="bookingRecipientSuggestions"></datalist>
+          <button type="button" class="btn btn-ghost" id="bookingAddRecipient">+ Add</button>
+        </div>
+      </div>
+
+      <!-- ── Page 2: Booking details ── -->
+      <div class="booking-page" data-page="2" style="display:none;">
+        <div class="booking-property-summary" id="bookingPropertySummary"></div>
+
+        <div class="form-grid booking-form-grid">
+          <div class="fg">
+            <label>Buyer Name <span class="req">*</span></label>
+            <input type="text" class="booking-input" data-bf="buyer_name" required>
+          </div>
+          <div class="fg">
+            <label>Co-buyer Name</label>
+            <input type="text" class="booking-input" data-bf="co_buyer_name">
+          </div>
+          <div class="fg">
+            <label>Consideration Amount (₹) <span class="req">*</span></label>
+            <input type="number" min="0" step="1" class="booking-input" data-bf="consideration_amount" required>
+          </div>
+          <div class="fg">
+            <label>Booking Amount Received (₹) <span class="req">*</span></label>
+            <input type="number" min="0" step="1" class="booking-input" data-bf="booking_amount_received" required>
+          </div>
+          <div class="fg">
+            <label>Payment Method <span class="req">*</span></label>
+            <select class="booking-input" data-bf="booking_amount_method" required>
+              <option value="">Select…</option>
+            </select>
+          </div>
+          <div class="fg">
+            <label>Booking Amount Forfeitable? <span class="req">*</span></label>
+            <select class="booking-input" data-bf="booking_amount_forfeitable" required>
+              <option value="">Select…</option>
+              <option value="Yes">Yes</option>
+              <option value="No">No</option>
+            </select>
+          </div>
+          <div class="fg">
+            <label>ATS Timeline <span class="req">*</span></label>
+            <input type="text" class="booking-input" data-bf="ats_timeline" placeholder="e.g. Within 30 days, or 15 Jun 2026" required>
+          </div>
+          <div class="fg">
+            <label>Registry Timeline <span class="req">*</span></label>
+            <input type="text" class="booking-input" data-bf="registry_timeline" placeholder="e.g. Within 90 days of ATS" required>
+          </div>
+          <div class="fg">
+            <label>Amount Payable at ATS (%) <span class="req">*</span></label>
+            <input type="number" min="0" max="100" step="0.01" class="booking-input" data-bf="amount_on_ats_pct" required>
+          </div>
+        </div>
+
+        <div class="fg" style="margin-top:12px;">
+          <label>Other Conditions</label>
+          <textarea class="booking-input" data-bf="other_conditions" rows="3"
+                    placeholder="Any additional terms or notes for the booking…"></textarea>
+        </div>
+      </div>
+
+      <!-- ── Page 3: Preview ── -->
+      <div class="booking-page" data-page="3" style="display:none;">
+        <div class="booking-preview-meta">
+          <div><strong>To:</strong> <span id="bookingPreviewTo"></span></div>
+          <div><strong>Subject:</strong> <span id="bookingPreviewSubject"></span></div>
+        </div>
+        <iframe id="bookingPreviewIframe" class="booking-preview-iframe" sandbox=""></iframe>
+      </div>
+    </div>
+
+    <div class="modal-foot booking-foot">
+      <div class="booking-foot-left">
+        <button type="button" class="btn btn-ghost" id="bookingBackBtn" style="display:none;">← Back</button>
+      </div>
+      <div class="booking-foot-right">
+        <button type="button" class="btn btn-ghost" id="bookingPreviewBtn">Preview Mail</button>
+        <button type="button" class="btn btn-primary" id="bookingNextBtn">Next →</button>
+        <button type="button" class="btn btn-primary" id="bookingSendBtn" style="display:none;">📨 Send Mail</button>
+      </div>
+    </div>
+  </div>
+</div>
+
 <div class="toast" id="toast"></div>
 
 <script src="/app.js"></script>
