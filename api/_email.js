@@ -167,17 +167,39 @@ function buildBookingEmail({ property, booking, submittedBy, submittedByName }) 
     <p style="margin:0 0 14px;"><strong>${esc(signerName)}</strong></p>
 
     <p style="margin:24px 0 0;font-size:12px;color:#6b7280;">
-      <a href="https://www.openhouse.in" style="color:#4f46e5;text-decoration:none;">www.openhouse.in</a>
+      <a href="https://www.openhouse.in" style="color:#f97316;text-decoration:none;font-weight:600;">www.openhouse.in</a>
     </p>
   `;
 
+  // Logo URL — served from public/logo.png by Vercel's static hosting. Built
+  // from PUBLIC_BASE_URL (set in Vercel env, e.g. "https://demand.openhouse.in")
+  // and falls back to the per-deploy VERCEL_URL so the logo still renders in
+  // preview deploys. If neither env var is present, the right cell is dropped.
+  const baseUrl = process.env.PUBLIC_BASE_URL
+    || (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : '');
+  const logoUrl = baseUrl ? `${baseUrl.replace(/\/$/, '')}/logo.png` : '';
+  const logoCell = logoUrl
+    ? `<td align="right" valign="middle" style="padding:20px 24px;width:1%;white-space:nowrap;">
+         <img src="${logoUrl}" alt="Openhouse" width="44" height="44"
+              style="display:block;height:44px;width:auto;border:0;outline:none;text-decoration:none;">
+       </td>`
+    : '';
+
+  // Banner uses a 2-column table (text left, logo right) for Outlook-safe
+  // layout — flexbox isn't honored by Word-engine renderers used by Outlook.
   const html = `<!DOCTYPE html>
 <html><body style="margin:0;padding:0;background:#f5f6f8;font-family:Inter,Arial,sans-serif;color:#1a1d23;">
   <div style="max-width:680px;margin:24px auto;background:#fff;border-radius:12px;overflow:hidden;box-shadow:0 1px 4px rgba(0,0,0,.06);">
-    <div style="padding:20px 24px;background:#4f46e5;color:#fff;">
-      <div style="font-size:11px;letter-spacing:.5px;text-transform:uppercase;opacity:.85;">Openhouse</div>
-      <div style="font-size:20px;font-weight:700;margin-top:4px;">Booking Confirmation</div>
-    </div>
+    <table role="presentation" cellpadding="0" cellspacing="0" border="0"
+           style="width:100%;background:#f97316;color:#fff;border-collapse:collapse;">
+      <tr>
+        <td valign="middle" style="padding:20px 24px;">
+          <div style="font-size:11px;letter-spacing:.5px;text-transform:uppercase;opacity:.85;">Openhouse</div>
+          <div style="font-size:20px;font-weight:700;margin-top:4px;">Booking Confirmation</div>
+        </td>
+        ${logoCell}
+      </tr>
+    </table>
 
     <div style="padding:24px;font-size:14px;line-height:1.6;color:#1a1d23;">
       ${letterHtml}

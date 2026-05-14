@@ -704,23 +704,32 @@ tbody tr.expand-row td {
 }
 .req { color: #dc2626; }
 
-/* Payment Mode pill toggle (Single / Split) inside the booking modal. */
+/* Payment Mode pill toggle (Single / Split) inside the booking modal.
+   Sized via min-width on each tab so both options have equal visual weight
+   regardless of label length, and the container hugs its content. */
 .pay-mode-tabs {
-  display: inline-flex; gap: 4px;
-  background: #f3f4f6; padding: 3px; border-radius: 8px;
-  border: 1px solid #e4e7ec;
+  display: inline-flex; gap: 0;
+  background: #f3f4f6;
+  padding: 4px;
+  border-radius: 999px;
+  border: 1px solid #e5e7eb;
 }
 .pay-mode-tab {
   border: 0; background: transparent; cursor: pointer;
-  padding: 6px 14px; border-radius: 6px;
-  font-size: 13px; font-weight: 500; color: #6b7280;
-  transition: background .15s, color .15s, box-shadow .15s;
+  padding: 8px 22px; border-radius: 999px;
+  font-size: 13px; font-weight: 600;
+  color: #6b7280; letter-spacing: .2px;
+  min-width: 90px; text-align: center;
+  transition: background .18s ease, color .18s ease, box-shadow .18s ease, transform .12s ease;
 }
-.pay-mode-tab:hover { color: #374151; }
+.pay-mode-tab:hover { color: #1f2937; }
+.pay-mode-tab:active { transform: scale(.97); }
 .pay-mode-tab.active {
-  background: #ffffff; color: #4f46e5;
-  box-shadow: 0 1px 2px rgba(0,0,0,.06);
+  background: #ffffff;
+  color: #ea580c;             /* brand orange, slightly deeper for legibility on white */
+  box-shadow: 0 1px 3px rgba(15,23,42,.10), 0 1px 1px rgba(15,23,42,.04);
 }
+.pay-mode-tab.active:hover { color: #c2410c; }
 
 /* Live rupee equivalent shown next to the ATS percentage input. */
 .ats-pct-hint {
