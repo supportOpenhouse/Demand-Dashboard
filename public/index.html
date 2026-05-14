@@ -164,6 +164,18 @@
 
         <div class="booking-section-divider"></div>
 
+        <p class="booking-help">Broker email IDs — added manually. Auto-included as recipients of the booking mail.</p>
+        <div class="booking-recipients-list" id="bookingBrokersList"></div>
+
+        <div class="booking-add-row">
+          <input type="email" class="booking-input" id="bookingNewBroker"
+                 placeholder="Add broker email…" list="bookingBrokerSuggestions">
+          <datalist id="bookingBrokerSuggestions"></datalist>
+          <button type="button" class="btn btn-ghost" id="bookingAddBroker">+ Add</button>
+        </div>
+
+        <div class="booking-section-divider"></div>
+
         <p class="booking-help">Buyer's email IDs — auto-included as recipients of the booking mail.</p>
         <div class="form-grid booking-buyer-emails-grid">
           <div class="fg">
@@ -207,12 +219,45 @@
             <label>Booking Amount Received (₹) <span class="req">*</span></label>
             <input type="number" min="0" step="1" class="booking-input" data-bf="booking_amount_received" required>
           </div>
-          <div class="fg">
-            <label>Payment Method <span class="req">*</span></label>
-            <select class="booking-input" data-bf="booking_amount_method" required>
-              <option value="">Select…</option>
-            </select>
+
+          <div class="fg fg-fullwidth" style="grid-column:1 / -1;">
+            <label>Payment Mode <span class="req">*</span></label>
+            <div class="pay-mode-tabs" role="tablist">
+              <button type="button" class="pay-mode-tab active" data-pay-mode="single" role="tab" aria-selected="true">Single</button>
+              <button type="button" class="pay-mode-tab" data-pay-mode="split" role="tab" aria-selected="false">Split</button>
+            </div>
+
+            <!-- Method 1 is always rendered. In single mode it's "Payment Method"; in
+                 split mode its sibling block reveals Method 2 + split amounts. -->
+            <div style="margin-top:8px;display:grid;grid-template-columns:1fr 1fr;gap:10px;">
+              <div>
+                <div class="pay-mode-mini-label" style="font-size:11px;color:#6b7280;margin-bottom:4px;">
+                  <span data-pay-label="single">Payment Method</span>
+                  <span data-pay-label="split" style="display:none;">Method 1</span>
+                </div>
+                <select class="booking-input" data-bf="booking_amount_method" required>
+                  <option value="">Select…</option>
+                </select>
+                <input type="number" min="0" step="1" class="booking-input"
+                       data-bf="booking_amount_split_1"
+                       data-pay-show="split" style="margin-top:6px;display:none;"
+                       placeholder="Amount via Method 1">
+              </div>
+              <div data-pay-show="split" style="display:none;">
+                <div class="pay-mode-mini-label" style="font-size:11px;color:#6b7280;margin-bottom:4px;">Method 2</div>
+                <select class="booking-input" data-bf="booking_amount_method_2">
+                  <option value="">Select…</option>
+                </select>
+                <input type="number" min="0" step="1" class="booking-input"
+                       data-bf="booking_amount_split_2" style="margin-top:6px;"
+                       placeholder="Auto-filled" readonly>
+              </div>
+            </div>
+            <div class="pay-split-msg" data-pay-show="split" style="display:none;margin-top:6px;font-size:12px;color:#6b7280;">
+              Method 2's amount auto-fills from Booking Amount Received minus Method 1.
+            </div>
           </div>
+
           <div class="fg">
             <label>Booking Amount Forfeitable? <span class="req">*</span></label>
             <select class="booking-input" data-bf="booking_amount_forfeitable" required>
@@ -231,7 +276,10 @@
           </div>
           <div class="fg">
             <label>Amount Payable at ATS (%) <span class="req">*</span></label>
-            <input type="number" min="0" max="100" step="0.01" class="booking-input" data-bf="amount_on_ats_pct" required>
+            <div style="display:flex;gap:8px;align-items:center;">
+              <input type="number" min="0" max="100" step="0.01" class="booking-input" data-bf="amount_on_ats_pct" style="flex:1;min-width:0;" required>
+              <span id="atsPctRupeeHint" class="ats-pct-hint" style="font-size:13px;color:#4f46e5;font-weight:600;white-space:nowrap;">= ₹—</span>
+            </div>
           </div>
         </div>
 

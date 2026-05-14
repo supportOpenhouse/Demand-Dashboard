@@ -120,6 +120,50 @@ function validate(body) {
   }
   clean.recipients = [...new Set(recipients)]; // dedupe
 
+  // Broker emails — same shape as recipients, separate list. Lowercased for
+  // dedupe + future suggestion lookups.
+  let brokers = body.broker_emails;
+  if (!Array.isArray(brokers)) brokers = [];
+  brokers = brokers.map(s => String(s || '').trim().toLowerCase()).filter(Boolean);
+  for (const b of brokers) {
+    if (!EMAIL_RE.test(b)) errors.push(`Invalid broker email: ${b}`);
+  }
+  clean.broker_emails = [...new Set(brokers)];
+
+  // Split payment — optional second leg. If method_2 OR split_1 OR split_2 is
+  // present, treat as a split and require all three. Else single (legs NULL).
+  const m2 = body.booking_amount_method_2;
+  const s1 = body.booking_amount_split_1;
+  const s2 = body.booking_amount_split_2;
+  const isSplit = (m2 != null && m2 !== '') || (s1 != null && s1 !== '') || (s2 != null && s2 !== '');
+  if (!isSplit) {
+    clean.booking_amount_method_2 = null;
+    clean.booking_amount_split_1 = null;
+    clean.booking_amount_split_2 = null;
+  } else {
+    if (!m2 || !PAYMENT_METHODS.includes(String(m2).trim())) {
+      errors.push(`booking_amount_method_2 must be one of: ${PAYMENT_METHODS.join(', ')}`);
+    } else {
+      clean.booking_amount_method_2 = String(m2).trim();
+    }
+    const n1 = parseFloat(s1), n2 = parseFloat(s2);
+    if (isNaN(n1) || n1 < 0) errors.push('booking_amount_split_1 must be a non-negative number');
+    else clean.booking_amount_split_1 = n1;
+    if (isNaN(n2) || n2 < 0) errors.push('booking_amount_split_2 must be a non-negative number');
+    else clean.booking_amount_split_2 = n2;
+    // Reject when method_1 === method_2 (split into the same instrument makes no sense)
+    if (clean.booking_amount_method && clean.booking_amount_method === clean.booking_amount_method_2) {
+      errors.push('Split payment methods must be different');
+    }
+    // Sum must equal booking_amount_received (allow 1 paisa tolerance for float rounding).
+    if (clean.booking_amount_received != null && !isNaN(n1) && !isNaN(n2)) {
+      const sum = n1 + n2;
+      if (Math.abs(sum - clean.booking_amount_received) > 0.01) {
+        errors.push(`Split amounts (${sum}) must total Booking Amount Received (${clean.booking_amount_received})`);
+      }
+    }
+  }
+
   return { clean, errors };
 }
 
@@ -129,6 +173,7 @@ function validate(body) {
 function effectiveRecipients(clean) {
   const all = [
     ...(clean.recipients || []),
+    ...(clean.broker_emails || []),
     ...(clean.buyer_email ? [clean.buyer_email] : []),
     ...(clean.co_buyer_email ? [clean.co_buyer_email] : []),
   ];
@@ -180,7 +225,7 @@ module.exports = async (req, res) => {
     try {
       const FIXED = ['bookings@openhouse.in', 'manish.pal@openhouse.in'];
 
-      const [latest, past, teamUsers] = await Promise.all([
+      const [latest, past, pastBrokers, teamUsers] = await Promise.all([
         // Latest booking for this uid (could be null — fresh submission)
         pool.query(
           `SELECT * FROM booking_details WHERE uid = $1 ORDER BY created_at DESC LIMIT 1`,
@@ -194,6 +239,15 @@ module.exports = async (req, res) => {
           FROM booking_details, jsonb_array_elements_text(recipients) AS email
           WHERE TRIM(email) <> ''
         `),
+        // Distinct broker emails from past submissions — feeds the broker-section
+        // datalist on page 1. Wrapped in COALESCE so rows predating the
+        // broker_emails column (NULL JSONB) don't blow up jsonb_array_elements_text.
+        pool.query(`
+          SELECT DISTINCT TRIM(LOWER(email)) AS email
+          FROM booking_details,
+               jsonb_array_elements_text(COALESCE(broker_emails, '[]'::jsonb)) AS email
+          WHERE TRIM(email) <> ''
+        `),
         // Demand team users — used for the page-1 datalist too (any of them
         // can be a recipient).
         pool.query(
@@ -205,12 +259,14 @@ module.exports = async (req, res) => {
         .map(r => r.email)
         .filter(e => e && !FIXED.includes(e))
         .sort();
+      const brokerSuggestions = pastBrokers.rows.map(r => r.email).filter(Boolean).sort();
 
       return res.status(200).json({
         success: true,
         latest: latest.rows[0] || null,
         locked: !!(latest.rows[0]?.mail_sent_at),
         suggestions,
+        brokerSuggestions,
         team: teamUsers.rows,
         fixedRecipients: FIXED,
         paymentMethods: PAYMENT_METHODS,
@@ -245,6 +301,7 @@ module.exports = async (req, res) => {
       property,
       booking: clean,
       submittedBy: user.email,
+      submittedByName: user.name || user.email,
     });
     return res.status(200).json({
       success: true, subject, html,
@@ -290,17 +347,24 @@ module.exports = async (req, res) => {
       `INSERT INTO booking_details (
          uid, buyer_salutation, buyer_name, co_buyer_name, buyer_email, co_buyer_email,
          consideration_amount, booking_amount_received,
-         booking_amount_method, ats_timeline, registry_timeline, booking_amount_forfeitable,
-         amount_on_ats_pct, other_conditions, recipients, submitted_by
-       ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
+         booking_amount_method, booking_amount_method_2,
+         booking_amount_split_1, booking_amount_split_2,
+         ats_timeline, registry_timeline, booking_amount_forfeitable,
+         amount_on_ats_pct, other_conditions, recipients, broker_emails, submitted_by
+       ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20)
        RETURNING id`,
       [
         uid, clean.buyer_salutation, clean.buyer_name, clean.co_buyer_name,
         clean.buyer_email, clean.co_buyer_email,
         clean.consideration_amount, clean.booking_amount_received,
-        clean.booking_amount_method, clean.ats_timeline, clean.registry_timeline,
+        clean.booking_amount_method, clean.booking_amount_method_2,
+        clean.booking_amount_split_1, clean.booking_amount_split_2,
+        clean.ats_timeline, clean.registry_timeline,
         clean.booking_amount_forfeitable, clean.amount_on_ats_pct,
-        clean.other_conditions, JSON.stringify(clean.recipients || []), user.email,
+        clean.other_conditions,
+        JSON.stringify(clean.recipients || []),
+        JSON.stringify(clean.broker_emails || []),
+        user.email,
       ]
     );
     insertedId = rows[0].id;

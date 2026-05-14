@@ -704,6 +704,31 @@ tbody tr.expand-row td {
 }
 .req { color: #dc2626; }
 
+/* Payment Mode pill toggle (Single / Split) inside the booking modal. */
+.pay-mode-tabs {
+  display: inline-flex; gap: 4px;
+  background: #f3f4f6; padding: 3px; border-radius: 8px;
+  border: 1px solid #e4e7ec;
+}
+.pay-mode-tab {
+  border: 0; background: transparent; cursor: pointer;
+  padding: 6px 14px; border-radius: 6px;
+  font-size: 13px; font-weight: 500; color: #6b7280;
+  transition: background .15s, color .15s, box-shadow .15s;
+}
+.pay-mode-tab:hover { color: #374151; }
+.pay-mode-tab.active {
+  background: #ffffff; color: #4f46e5;
+  box-shadow: 0 1px 2px rgba(0,0,0,.06);
+}
+
+/* Live rupee equivalent shown next to the ATS percentage input. */
+.ats-pct-hint {
+  display: inline-block; padding: 0 8px;
+  background: #eef2ff; border-radius: 6px;
+  min-width: 80px; text-align: right;
+}
+
 .booking-preview-meta {
   background: #f9fafb; border: 1px solid #e4e7ec; border-radius: 8px;
   padding: 10px 14px; margin-bottom: 12px;

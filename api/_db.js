@@ -96,6 +96,21 @@ const INIT_SQL = `
   -- Both kept as TEXT so historical free-text rows still load.
   ALTER TABLE booking_details ADD COLUMN IF NOT EXISTS buyer_salutation TEXT;
 
+  -- broker_emails: separate chip-list on Page 1 of the booking modal, parallel
+  -- to the curated CP-RM recipients array. Stored as JSONB array of lowercased
+  -- emails. Combined into the effective mailing list at send time.
+  ALTER TABLE booking_details ADD COLUMN IF NOT EXISTS broker_emails JSONB DEFAULT '[]';
+
+  -- Split payment support. When the booking amount is paid via two instruments,
+  -- booking_amount_method holds the first method + booking_amount_split_1 the
+  -- amount paid via it; booking_amount_method_2 / booking_amount_split_2 hold
+  -- the second leg. For single-instrument payments, the _2 / split columns
+  -- stay NULL and booking_amount_received is the total. The total of the two
+  -- legs (when split) equals booking_amount_received.
+  ALTER TABLE booking_details ADD COLUMN IF NOT EXISTS booking_amount_method_2 TEXT;
+  ALTER TABLE booking_details ADD COLUMN IF NOT EXISTS booking_amount_split_1  REAL;
+  ALTER TABLE booking_details ADD COLUMN IF NOT EXISTS booking_amount_split_2  REAL;
+
   -- legacy_properties: parallel to the properties table but OWNED by the
   -- demand dashboard. Holds property records that came in via legacy bulk
   -- import (CSV) and do not belong in the supply pipeline. The Supply Closure

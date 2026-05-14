@@ -432,7 +432,12 @@ function renderRow(r) {
       <td class="col-ama-date">${esc(fmtDate(r.ama_date)) || '—'}</td>
       <td class="col-key-handover">${esc(fmtDate(r.key_handover_date)) || '—'}</td>
       <td>${esc(r.owner_name || '—')}<div class="prop-unit col-contact">${esc(r.contact_no || '')}</div></td>
-      <td>${renderAvailabilityPill(r.availability_status)}</td>
+      <td>
+        ${renderAvailabilityPill(r.availability_status)}
+        ${(r.possession_status || r.occupancy_status)
+          ? `<div class="prop-unit">${esc(r.possession_status || r.occupancy_status)}</div>`
+          : ''}
+      </td>
       <td class="td-remarks">${remarksCell}</td>
     </tr>`;
 
@@ -1302,8 +1307,10 @@ const bookingState = {
   property: null,
   step: 1,
   recipients: [],
+  brokers: [],
   fixedRecipients: [],
   paymentMethods: [],
+  payMode: 'single',  // 'single' | 'split'
   form: {},
 };
 
@@ -1315,9 +1322,18 @@ async function openBookingModal(uid) {
   // Reset visible form inputs + transient state
   document.querySelectorAll('#bookingModal [data-bf]').forEach(el => { el.value = ''; });
   $('#bookingNewRecipient').value = '';
+  $('#bookingNewBroker').value = '';
+  // Reset the Send button — sendBookingMail() leaves it as "✓ Sent" / disabled
+  // on success to prevent races, so re-opening the modal must restore it.
+  const sendBtn = $('#bookingSendBtn');
+  if (sendBtn) { sendBtn.disabled = false; sendBtn.textContent = '📨 Send Mail'; }
   bookingState.recipients = [];
+  bookingState.brokers = [];
   bookingState.fixedRecipients = [];
   bookingState.paymentMethods = [];
+  bookingState.payMode = 'single';
+  applyPayMode('single');
+  updateAtsPctHint();
 
   // Everything we can render from local state (no network) goes FIRST so the
   // modal pops up instantly. The API call is fired in the background — its
@@ -1398,10 +1414,17 @@ async function openBookingModal(uid) {
     .map(e => `<option value="${esc(e)}">`)
     .join('');
 
-  // Prefill payment method options
-  const paySel = $('#bookingModal [data-bf="booking_amount_method"]');
-  paySel.innerHTML = '<option value="">Select…</option>' +
+  // Broker suggestions — distinct emails seen in past bookings' broker_emails.
+  const brokerDl = $('#bookingBrokerSuggestions');
+  brokerDl.innerHTML = (data.brokerSuggestions || [])
+    .map(e => `<option value="${esc(e)}">`)
+    .join('');
+
+  // Prefill payment method options on both selects (single mode + split-method-2).
+  const methodOpts = '<option value="">Select…</option>' +
     bookingState.paymentMethods.map(m => `<option value="${esc(m)}">${esc(m)}</option>`).join('');
+  document.querySelectorAll('#bookingModal [data-bf="booking_amount_method"], #bookingModal [data-bf="booking_amount_method_2"]')
+    .forEach(sel => { sel.innerHTML = methodOpts; });
 
   // Prefill form if there's a saved draft (latest non-mailed booking row)
   if (data.latest && !data.latest.mail_sent_at) {
@@ -1414,6 +1437,9 @@ async function openBookingModal(uid) {
     setBF('consideration_amount', l.consideration_amount);
     setBF('booking_amount_received', l.booking_amount_received);
     setBF('booking_amount_method', l.booking_amount_method);
+    setBF('booking_amount_method_2', l.booking_amount_method_2);
+    setBF('booking_amount_split_1', l.booking_amount_split_1);
+    setBF('booking_amount_split_2', l.booking_amount_split_2);
     setBF('ats_timeline', l.ats_timeline);
     setBF('registry_timeline', l.registry_timeline);
     setBF('booking_amount_forfeitable', l.booking_amount_forfeitable === true ? 'Yes' : l.booking_amount_forfeitable === false ? 'No' : '');
@@ -1422,6 +1448,14 @@ async function openBookingModal(uid) {
     if (Array.isArray(l.recipients) && l.recipients.length) {
       bookingState.recipients = l.recipients;
     }
+    if (Array.isArray(l.broker_emails) && l.broker_emails.length) {
+      bookingState.brokers = l.broker_emails;
+    }
+    if (l.booking_amount_method_2) {
+      bookingState.payMode = 'split';
+      applyPayMode('split');
+    }
+    updateAtsPctHint();
   }
 
   // If a prior booking has been mailed and the user isn't admin, block.
@@ -1432,6 +1466,7 @@ async function openBookingModal(uid) {
   }
 
   renderBookingRecipients();
+  renderBookingBrokers();
   $('#bookingNextBtn').disabled = false;
 }
 
@@ -1468,6 +1503,75 @@ function renderBookingRecipients() {
           : `<button type="button" class="recipient-remove" data-recipient-idx="${i}" title="Remove">×</button>`}
       </div>`;
   }).join('');
+}
+
+// Broker chip list. Parallel to renderBookingRecipients but uses a separate
+// data-broker-idx attribute so the click delegation targets the right array.
+function renderBookingBrokers() {
+  const list = $('#bookingBrokersList');
+  if (!list) return;
+  if (!bookingState.brokers.length) {
+    list.innerHTML = '<div style="font-size:12px;color:#9ca3af;padding:4px 0;">No broker emails added.</div>';
+    return;
+  }
+  list.innerHTML = bookingState.brokers.map((email, i) => `
+    <div class="recipient-chip">
+      <span class="recipient-email">${esc(email)}</span>
+      <button type="button" class="recipient-remove" data-broker-idx="${i}" title="Remove">×</button>
+    </div>`).join('');
+}
+
+// Updates the visibility of payment-mode bodies (single vs split) and the
+// readonly state on Method 1's amount input. Called whenever the tabs flip.
+function applyPayMode(mode) {
+  bookingState.payMode = mode;
+  document.querySelectorAll('#bookingModal .pay-mode-tab').forEach(t => {
+    const active = t.dataset.payMode === mode;
+    t.classList.toggle('active', active);
+    t.setAttribute('aria-selected', active ? 'true' : 'false');
+  });
+  document.querySelectorAll('#bookingModal [data-pay-show]').forEach(el => {
+    el.style.display = el.dataset.payShow === mode ? '' : 'none';
+  });
+  document.querySelectorAll('#bookingModal [data-pay-label]').forEach(el => {
+    el.style.display = el.dataset.payLabel === mode ? '' : 'none';
+  });
+  // In single mode, clear the split fields so they don't get sent. In split
+  // mode, recompute the auto leg from whatever Method 1's amount is currently.
+  if (mode === 'single') {
+    const s1 = document.querySelector('#bookingModal [data-bf="booking_amount_split_1"]');
+    const s2 = document.querySelector('#bookingModal [data-bf="booking_amount_split_2"]');
+    const m2 = document.querySelector('#bookingModal [data-bf="booking_amount_method_2"]');
+    if (s1) s1.value = '';
+    if (s2) s2.value = '';
+    if (m2) m2.value = '';
+  } else {
+    recomputeSplitTwo();
+  }
+}
+
+// Method 2's split amount = Booking Amount Received − Method 1's split amount.
+// Clamped to ≥ 0 and to ≤ received. Renders empty if either input is missing.
+function recomputeSplitTwo() {
+  const received = parseFloat(document.querySelector('#bookingModal [data-bf="booking_amount_received"]')?.value);
+  const s1 = parseFloat(document.querySelector('#bookingModal [data-bf="booking_amount_split_1"]')?.value);
+  const s2El = document.querySelector('#bookingModal [data-bf="booking_amount_split_2"]');
+  if (!s2El) return;
+  if (isNaN(received) || isNaN(s1)) { s2El.value = ''; return; }
+  const remainder = Math.max(0, Math.round((received - s1) * 100) / 100);
+  s2El.value = remainder;
+}
+
+// Live rupee equivalent shown next to the Amount Payable at ATS (%) input.
+// e.g. consideration ₹1,27,00,000 × 10% → "= ₹12,70,000". Empty inputs → "= ₹—".
+function updateAtsPctHint() {
+  const hint = $('#atsPctRupeeHint');
+  if (!hint) return;
+  const consideration = parseFloat(document.querySelector('#bookingModal [data-bf="consideration_amount"]')?.value);
+  const pct = parseFloat(document.querySelector('#bookingModal [data-bf="amount_on_ats_pct"]')?.value);
+  if (isNaN(consideration) || isNaN(pct)) { hint.textContent = '= ₹—'; return; }
+  const amount = Math.round((consideration * pct) / 100);
+  hint.textContent = '= ₹' + amount.toLocaleString('en-IN');
 }
 
 // Step navigation
@@ -1509,7 +1613,15 @@ function validateBookingForm(form) {
                     'booking_amount_received', 'booking_amount_method',
                     'booking_amount_forfeitable', 'ats_timeline',
                     'registry_timeline', 'amount_on_ats_pct'];
+  if (bookingState.payMode === 'split') {
+    required.push('booking_amount_method_2', 'booking_amount_split_1');
+  }
   const missing = required.filter(k => !form[k] && form[k] !== 0);
+  // In split mode the two methods must be different.
+  if (bookingState.payMode === 'split' && form.booking_amount_method &&
+      form.booking_amount_method_2 && form.booking_amount_method === form.booking_amount_method_2) {
+    missing.push('different payment methods (Method 1 and Method 2 must differ)');
+  }
   return missing;
 }
 
@@ -1536,12 +1648,42 @@ const EMAIL_RE_FE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
       input.value = '';
       renderBookingRecipients();
     }
+    // Add broker
+    if (e.target.id === 'bookingAddBroker') {
+      const input = $('#bookingNewBroker');
+      const val = input.value.trim().toLowerCase();
+      if (!val) return;
+      if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(val)) {
+        showToast('Enter a valid broker email', 'error');
+        return;
+      }
+      if (bookingState.brokers.some(b => b.toLowerCase() === val)) {
+        showToast('Broker already in the list', '');
+        input.value = '';
+        return;
+      }
+      bookingState.brokers.push(val);
+      input.value = '';
+      renderBookingBrokers();
+    }
     // Remove recipient
-    const rm = e.target.closest('.recipient-remove');
+    const rm = e.target.closest('.recipient-remove[data-recipient-idx]');
     if (rm) {
       const idx = parseInt(rm.dataset.recipientIdx, 10);
       bookingState.recipients.splice(idx, 1);
       renderBookingRecipients();
+    }
+    // Remove broker
+    const rmB = e.target.closest('.recipient-remove[data-broker-idx]');
+    if (rmB) {
+      const idx = parseInt(rmB.dataset.brokerIdx, 10);
+      bookingState.brokers.splice(idx, 1);
+      renderBookingBrokers();
+    }
+    // Payment Mode tabs
+    const payTab = e.target.closest('#bookingModal .pay-mode-tab');
+    if (payTab) {
+      applyPayMode(payTab.dataset.payMode);
     }
     // Next
     if (e.target.id === 'bookingNextBtn') {
@@ -1587,11 +1729,29 @@ const EMAIL_RE_FE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
     }
   });
 
-  // Enter key on the "Add recipient" input
+  // Enter key on the "Add recipient" / "Add broker" inputs
   document.addEventListener('keydown', (e) => {
     if (e.key === 'Enter' && e.target.id === 'bookingNewRecipient') {
       e.preventDefault();
       $('#bookingAddRecipient').click();
+    }
+    if (e.key === 'Enter' && e.target.id === 'bookingNewBroker') {
+      e.preventDefault();
+      $('#bookingAddBroker').click();
+    }
+  });
+
+  // Live numeric updates: ATS % rupee hint + split-amount auto-fill. Wired
+  // here (delegated) so they don't have to be rebound when the modal opens.
+  document.addEventListener('input', (e) => {
+    const field = e.target?.dataset?.bf;
+    if (!field) return;
+    if (field === 'consideration_amount' || field === 'amount_on_ats_pct') {
+      updateAtsPctHint();
+    }
+    if (bookingState.payMode === 'split' &&
+        (field === 'booking_amount_received' || field === 'booking_amount_split_1')) {
+      recomputeSplitTwo();
     }
   });
 })();
@@ -1606,6 +1766,7 @@ async function generateBookingPreview() {
       body: JSON.stringify({
         action: 'preview',
         recipients: bookingState.recipients,
+        broker_emails: bookingState.brokers,
         ...form,
       }),
     });
@@ -1641,6 +1802,7 @@ async function sendBookingMail() {
       body: JSON.stringify({
         action: 'send',
         recipients: bookingState.recipients,
+        broker_emails: bookingState.brokers,
         ...form,
       }),
     });
@@ -1652,9 +1814,11 @@ async function sendBookingMail() {
       return;
     }
     showToast('Booking submitted and email sent', 'success');
+    // Keep the button disabled with a success label — the modal closes a
+    // moment later via classList.remove, but the lock prevents any
+    // double-click from racing a second send in between.
+    btn.textContent = '✓ Sent';
     $('#bookingModal').classList.remove('open');
-    btn.disabled = false;
-    btn.textContent = original;
 
     // Reflect lockout: refresh row state, sync UI.
     const row = state.rows.find(x => x.uid === bookingState.uid);

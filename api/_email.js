@@ -49,13 +49,6 @@ function esc(s) {
     .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
 }
 
-function inr(n) {
-  if (n == null || n === '') return '—';
-  const num = Number(n);
-  if (isNaN(num)) return esc(String(n));
-  return '₹' + num.toLocaleString('en-IN', { maximumFractionDigits: 2 });
-}
-
 // "INR 1,27,00,000/-" — the format the buyer letter uses. Whole rupees,
 // Indian-style lakh/crore commas, no symbol prefix.
 function inrLetter(n) {
@@ -90,25 +83,14 @@ function firstName(name) {
   return String(name).trim().split(/\s+/)[0] || '';
 }
 
-function row(label, value) {
-  if (value == null || value === '') return '';
-  return `<tr>
-    <td style="padding:6px 12px;color:#6b7280;font-size:12px;border-bottom:1px solid #f1f3f5;width:200px;">${esc(label)}</td>
-    <td style="padding:6px 12px;color:#111827;font-size:13px;font-weight:500;border-bottom:1px solid #f1f3f5;">${esc(value)}</td>
-  </tr>`;
-}
-
-// Builds the email subject + HTML body for a booking submission.
-// `property` is the row from /api/list-or-detail; `booking` is the form data.
+// Builds the email subject + HTML body for a booking submission. The body is
+// a buyer-facing narrative letter; the same email is sent to the buyer, CP RMs,
+// brokers, and the internal fixed list (the caller concatenates the To line).
 //
-// The email is a single message that goes to both the buyer and the internal
-// recipient list (concatenated To by the caller). It has two stacked sections:
-//   (1) A buyer-facing narrative letter at the top — "Dear Ms. Poonam, …".
-//       The third paragraph (forfeit / refund) is included only when
-//       booking_amount_forfeitable === true.
-//   (2) An internal HTML summary table below, separated by a divider —
-//       gives the demand team and CP RMs a structured record of every field.
-function buildBookingEmail({ property, booking, submittedBy }) {
+// The forfeit/refund paragraph appears only when booking_amount_forfeitable===true.
+// The receipt line renders one or two payment instruments depending on whether
+// `booking_amount_method_2` and the `booking_amount_split_*` legs are populated.
+function buildBookingEmail({ property, booking, submittedBy, submittedByName }) {
   const p = property || {};
   const b = booking || {};
 
@@ -130,8 +112,19 @@ function buildBookingEmail({ property, booking, submittedBy }) {
   const atsPctStr = b.amount_on_ats_pct != null ? `${b.amount_on_ats_pct}%` : '—';
   const registryDaysStr = b.registry_timeline ? `${b.registry_timeline} days` : '—';
   const bookingAmtStr = inrLetter(b.booking_amount_received);
-  const payMethod = b.booking_amount_method || '—';
   const showForfeitClause = b.booking_amount_forfeitable === true;
+
+  // Payment sentence — single instrument vs split. For split, we render
+  // "INR X (INR A via UPI and INR B via NEFT)" so the buyer sees both legs.
+  const isSplit = !!(b.booking_amount_method_2 && b.booking_amount_split_1 != null && b.booking_amount_split_2 != null);
+  const receiptHtml = isSplit
+    ? `via <strong>${esc(b.booking_amount_method || '—')}</strong>
+       (${esc(inrLetter(b.booking_amount_split_1))}) and
+       <strong>${esc(b.booking_amount_method_2)}</strong>
+       (${esc(inrLetter(b.booking_amount_split_2))})`
+    : `via <strong>${esc(b.booking_amount_method || '—')}</strong>`;
+
+  const signerName = submittedByName || submittedBy || 'Team Openhouse';
 
   const letterHtml = `
     <p style="margin:0 0 14px;">Dear ${esc(addressee)},</p>
@@ -152,7 +145,7 @@ function buildBookingEmail({ property, booking, submittedBy }) {
 
     <p style="margin:0 0 14px;">
       We also acknowledge receipt of a booking amount totaling
-      <strong>${esc(bookingAmtStr)}</strong> via <strong>${esc(payMethod)}</strong>.
+      <strong>${esc(bookingAmtStr)}</strong> ${receiptHtml}.
       ${showForfeitClause ? `Please note that if you choose not to proceed with the ATS, the booking amount will be forfeited. However after the successful signing of the ATS, the booking amount will be refunded to you.` : ''}
     </p>
 
@@ -165,49 +158,17 @@ function buildBookingEmail({ property, booking, submittedBy }) {
       any questions or require further clarification.
     </p>
 
+    <p style="margin:0 0 14px;color:#374151;">
+      <em>Note: Pls note that Stamp Duty, Registration related charges are not
+      included in the total consideration and has to be incurred by the buyer.</em>
+    </p>
+
     <p style="margin:0 0 4px;">Thanks &amp; Regards,</p>
-    <p style="margin:0 0 14px;"><strong>Team Openhouse</strong></p>
-  `;
+    <p style="margin:0 0 14px;"><strong>${esc(signerName)}</strong></p>
 
-  // ── Internal summary table — for the demand team + CP RM records ────────
-  const summaryHtml = `
-    <div style="font-size:11px;color:#6b7280;text-transform:uppercase;letter-spacing:.4px;font-weight:600;margin-bottom:8px;">Property</div>
-    <table style="width:100%;border-collapse:collapse;">
-      ${row('Society', p.society_name)}
-      ${row('Unit', p.unit_no)}
-      ${row('Tower', p.tower_no)}
-      ${row('Floor', p.floor != null ? String(p.floor) : '')}
-      ${row('Configuration', p.configuration)}
-      ${row('Super Area (sqft)', p.super_area || p.area_sqft)}
-      ${row('Carpet Area (sqft)', p.carpet_area)}
-      ${row('Locality', p.locality)}
-      ${row('City', p.city)}
-    </table>
-
-    <div style="font-size:11px;color:#6b7280;text-transform:uppercase;letter-spacing:.4px;font-weight:600;margin:20px 0 8px;">Booking Details</div>
-    <table style="width:100%;border-collapse:collapse;">
-      ${row('Buyer', [b.buyer_salutation, b.buyer_name].filter(Boolean).join(' '))}
-      ${row('Buyer Email', b.buyer_email)}
-      ${row('Co-buyer Name', b.co_buyer_name)}
-      ${row('Co-buyer Email', b.co_buyer_email)}
-      ${row('Consideration Amount', inr(b.consideration_amount))}
-      ${row('Booking Amount Received', inr(b.booking_amount_received))}
-      ${row('Payment Method', b.booking_amount_method)}
-      ${row('ATS Date', dateLetter(b.ats_timeline))}
-      ${row('Registry Within', b.registry_timeline ? b.registry_timeline + ' days' : '')}
-      ${row('Booking Amount Forfeitable?', b.booking_amount_forfeitable === true ? 'Yes' : b.booking_amount_forfeitable === false ? 'No' : '')}
-      ${row('Amount Payable at ATS (%)', b.amount_on_ats_pct != null ? b.amount_on_ats_pct + '%' : '')}
-    </table>
-
-    ${b.other_conditions ? `
-      <div style="font-size:11px;color:#6b7280;text-transform:uppercase;letter-spacing:.4px;font-weight:600;margin:20px 0 8px;">Other Conditions</div>
-      <div style="font-size:13px;color:#374151;background:#fffbeb;border-left:3px solid #f59e0b;padding:10px 12px;white-space:pre-wrap;">${esc(b.other_conditions)}</div>
-    ` : ''}
-
-    <div style="margin-top:24px;padding-top:14px;border-top:1px solid #e4e7ec;font-size:11px;color:#9ca3af;">
-      Submitted by <strong style="color:#374151;">${esc(submittedBy || '—')}</strong>
-      on ${new Date().toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short', timeZone: 'Asia/Kolkata' })} IST
-    </div>
+    <p style="margin:24px 0 0;font-size:12px;color:#6b7280;">
+      <a href="https://www.openhouse.in" style="color:#4f46e5;text-decoration:none;">www.openhouse.in</a>
+    </p>
   `;
 
   const html = `<!DOCTYPE html>
@@ -220,15 +181,6 @@ function buildBookingEmail({ property, booking, submittedBy }) {
 
     <div style="padding:24px;font-size:14px;line-height:1.6;color:#1a1d23;">
       ${letterHtml}
-    </div>
-
-    <div style="padding:0 24px;">
-      <div style="border-top:1px dashed #d1d5db;margin:0 -4px;"></div>
-      <div style="font-size:10px;color:#9ca3af;text-transform:uppercase;letter-spacing:.5px;margin:14px 0 12px;">— Internal record (booking summary) —</div>
-    </div>
-
-    <div style="padding:0 24px 24px;">
-      ${summaryHtml}
     </div>
   </div>
 </body></html>`;
