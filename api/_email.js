@@ -148,7 +148,8 @@ function buildBookingEmail({ property, booking, submittedBy, submittedByName }) 
     <p style="margin:0 0 14px;">
       We also acknowledge receipt of a booking amount of
       <strong>${esc(bookingAmtStr)}</strong> ${receiptHtml}.
-      ${showForfeitClause ? `Please note that if you choose not to proceed with the ATS, the booking amount will be forfeited. However, after the successful signing of the ATS, the booking amount will be refunded to you.` : ''}
+      ${showForfeitClause ? `Please note that if you choose not to proceed with the ATS, the booking amount will be forfeited.` : ''}
+      However, after the successful signing of the ATS, the booking amount will be refunded to you
     </p>
 
     ${b.other_conditions ? `
