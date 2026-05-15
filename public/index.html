@@ -152,31 +152,26 @@
     <div class="modal-body" id="bookingModalBody">
       <!-- ── Page 1: Recipients ── -->
       <div class="booking-page" data-page="1">
-        <p class="booking-help">Defaults pre-loaded. Edit anyone, then add CP RM emails if needed.</p>
         <div class="booking-recipients-list" id="bookingRecipientsList"></div>
-
-        <div class="booking-add-row">
-          <input type="email" class="booking-input" id="bookingNewRecipient"
-                 placeholder="Add CP RM email…" list="bookingRecipientSuggestions">
-          <datalist id="bookingRecipientSuggestions"></datalist>
-          <button type="button" class="btn btn-ghost" id="bookingAddRecipient">+ Add</button>
-        </div>
-
-        <div class="booking-section-divider"></div>
-
-        <p class="booking-help">Broker email IDs — added manually. Auto-included as recipients of the booking mail.</p>
         <div class="booking-recipients-list" id="bookingBrokersList"></div>
 
-        <div class="booking-add-row">
-          <input type="email" class="booking-input" id="bookingNewBroker"
-                 placeholder="Add broker email…" list="bookingBrokerSuggestions">
-          <datalist id="bookingBrokerSuggestions"></datalist>
-          <button type="button" class="btn btn-ghost" id="bookingAddBroker">+ Add</button>
+        <div class="booking-add-row booking-add-row-double">
+          <div class="booking-add-cell">
+            <input type="email" class="booking-input" id="bookingNewRecipient"
+                   placeholder="Add CP RM email…" list="bookingRecipientSuggestions">
+            <datalist id="bookingRecipientSuggestions"></datalist>
+            <button type="button" class="btn btn-ghost" id="bookingAddRecipient">+ Add</button>
+          </div>
+          <div class="booking-add-cell">
+            <input type="email" class="booking-input" id="bookingNewBroker"
+                   placeholder="Add broker email…" list="bookingBrokerSuggestions">
+            <datalist id="bookingBrokerSuggestions"></datalist>
+            <button type="button" class="btn btn-ghost" id="bookingAddBroker">+ Add</button>
+          </div>
         </div>
 
         <div class="booking-section-divider"></div>
 
-        <p class="booking-help">Buyer's email IDs — auto-included as recipients of the booking mail.</p>
         <div class="form-grid booking-buyer-emails-grid">
           <div class="fg">
             <label>Buyer Email <span class="req">*</span></label>
@@ -196,68 +191,69 @@
         <div class="form-grid booking-form-grid">
           <div class="fg">
             <label>Buyer Name <span class="req">*</span></label>
-            <div style="display:flex;gap:6px;">
-              <select class="booking-input" data-bf="buyer_salutation" style="flex:0 0 90px;" required>
-                <option value="">Title…</option>
-                <option value="Mr.">Mr.</option>
-                <option value="Mrs.">Mrs.</option>
-                <option value="Ms.">Ms.</option>
-                <option value="Dr.">Dr.</option>
-              </select>
-              <input type="text" class="booking-input" data-bf="buyer_name" style="flex:1;min-width:0;" required>
-            </div>
+            <input type="text" class="booking-input" data-bf="buyer_name" required>
           </div>
           <div class="fg">
             <label>Co-buyer Name</label>
             <input type="text" class="booking-input" data-bf="co_buyer_name">
           </div>
+        </div>
+
+        <div class="form-grid booking-money-row">
           <div class="fg">
             <label>Consideration Amount (₹) <span class="req">*</span></label>
-            <input type="number" min="0" step="1" class="booking-input" data-bf="consideration_amount" required>
+            <input type="number" min="0" step="1" class="booking-input booking-amount-input"
+                   data-bf="consideration_amount" data-amount-hint="consideration_amount" required>
+            <div class="amount-hint" data-amount-hint-for="consideration_amount"></div>
           </div>
           <div class="fg">
             <label>Booking Amount Received (₹) <span class="req">*</span></label>
-            <input type="number" min="0" step="1" class="booking-input" data-bf="booking_amount_received" required>
+            <input type="number" min="0" step="1" class="booking-input booking-amount-input"
+                   data-bf="booking_amount_received" data-amount-hint="booking_amount_received" required>
+            <div class="amount-hint" data-amount-hint-for="booking_amount_received"></div>
           </div>
-
-          <div class="fg fg-fullwidth" style="grid-column:1 / -1;">
+          <div class="fg">
             <label>Payment Mode <span class="req">*</span></label>
             <div class="pay-mode-tabs" role="tablist">
               <button type="button" class="pay-mode-tab active" data-pay-mode="single" role="tab" aria-selected="true">Single</button>
               <button type="button" class="pay-mode-tab" data-pay-mode="split" role="tab" aria-selected="false">Split</button>
             </div>
+          </div>
+        </div>
 
-            <!-- Method 1 is always rendered. In single mode it's "Payment Method"; in
-                 split mode its sibling block reveals Method 2 + split amounts. -->
-            <div style="margin-top:8px;display:grid;grid-template-columns:1fr 1fr;gap:10px;">
-              <div>
-                <div class="pay-mode-mini-label" style="font-size:11px;color:#6b7280;margin-bottom:4px;">
-                  <span data-pay-label="single">Payment Method</span>
-                  <span data-pay-label="split" style="display:none;">Method 1</span>
-                </div>
-                <select class="booking-input" data-bf="booking_amount_method" required>
-                  <option value="">Select…</option>
-                </select>
-                <input type="number" min="0" step="1" class="booking-input"
-                       data-bf="booking_amount_split_1"
-                       data-pay-show="split" style="margin-top:6px;display:none;"
-                       placeholder="Amount via Method 1">
+        <!-- Payment method selector(s) and split amounts. Method 1 always rendered;
+             split mode reveals Method 2 + per-leg amounts. -->
+        <div class="fg fg-fullwidth" style="margin-bottom:12px;">
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
+            <div>
+              <div class="pay-mode-mini-label" style="font-size:11px;color:#6b7280;margin-bottom:4px;">
+                <span data-pay-label="single">Payment Method</span>
+                <span data-pay-label="split" style="display:none;">Method 1</span>
               </div>
-              <div data-pay-show="split" style="display:none;">
-                <div class="pay-mode-mini-label" style="font-size:11px;color:#6b7280;margin-bottom:4px;">Method 2</div>
-                <select class="booking-input" data-bf="booking_amount_method_2">
-                  <option value="">Select…</option>
-                </select>
-                <input type="number" min="0" step="1" class="booking-input"
-                       data-bf="booking_amount_split_2" style="margin-top:6px;"
-                       placeholder="Auto-filled" readonly>
-              </div>
+              <select class="booking-input" data-bf="booking_amount_method" required>
+                <option value="">Select…</option>
+              </select>
+              <input type="number" min="0" step="1" class="booking-input"
+                     data-bf="booking_amount_split_1"
+                     data-pay-show="split" style="margin-top:6px;display:none;"
+                     placeholder="Amount via Method 1">
             </div>
-            <div class="pay-split-msg" data-pay-show="split" style="display:none;margin-top:6px;font-size:12px;color:#6b7280;">
-              Method 2's amount auto-fills from Booking Amount Received minus Method 1.
+            <div data-pay-show="split" style="display:none;">
+              <div class="pay-mode-mini-label" style="font-size:11px;color:#6b7280;margin-bottom:4px;">Method 2</div>
+              <select class="booking-input" data-bf="booking_amount_method_2">
+                <option value="">Select…</option>
+              </select>
+              <input type="number" min="0" step="1" class="booking-input"
+                     data-bf="booking_amount_split_2" style="margin-top:6px;"
+                     placeholder="Auto-filled" readonly>
             </div>
           </div>
+          <div class="pay-split-msg" data-pay-show="split" style="display:none;margin-top:6px;font-size:12px;color:#6b7280;">
+            Method 2's amount auto-fills from Booking Amount Received minus Method 1.
+          </div>
+        </div>
 
+        <div class="form-grid booking-form-grid">
           <div class="fg">
             <label>Booking Amount Forfeitable? <span class="req">*</span></label>
             <select class="booking-input" data-bf="booking_amount_forfeitable" required>
@@ -277,7 +273,8 @@
           <div class="fg">
             <label>Amount Payable at ATS (%) <span class="req">*</span></label>
             <div style="display:flex;gap:8px;align-items:center;">
-              <input type="number" min="0" max="100" step="0.01" class="booking-input" data-bf="amount_on_ats_pct" style="flex:1;min-width:0;" required>
+              <input type="number" min="0" max="100" step="0.01" class="booking-input booking-pct-input"
+                     data-bf="amount_on_ats_pct" style="flex:1;min-width:0;" required>
               <span id="atsPctRupeeHint" class="ats-pct-hint" style="font-size:13px;color:#4f46e5;font-weight:600;white-space:nowrap;">= ₹—</span>
             </div>
           </div>

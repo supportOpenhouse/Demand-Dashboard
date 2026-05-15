@@ -100,9 +100,9 @@ function buildBookingEmail({ property, booking, submittedBy, submittedByName }) 
   const subject = `Booking Confirmation — ${unitLabel}, ${societyLabel}`;
 
   // ── Letter body. Variables ───────────────────────────────────────────────
-  const addressee = [b.buyer_salutation, firstName(b.buyer_name)].filter(Boolean).join(' ') || 'Buyer';
+  const addressee = firstName(b.buyer_name) || 'Buyer';
   const propertyAddress = [
-    p.unit_no && `Unit No. ${p.unit_no}`,
+    p.tower_no && `${p.unit_no} -`,
     p.society_name,
     p.locality,
     p.city,
@@ -130,6 +130,8 @@ function buildBookingEmail({ property, booking, submittedBy, submittedByName }) 
     <p style="margin:0 0 14px;">Dear ${esc(addressee)},</p>
 
     <p style="margin:0 0 14px;">
+      Greetings from Openhouse!
+
       Thank you for booking <strong>${esc(propertyAddress)}</strong>
       for a total consideration of <strong>${esc(considerationStr)}</strong>.
     </p>
@@ -144,7 +146,7 @@ function buildBookingEmail({ property, booking, submittedBy, submittedByName }) 
     </p>
 
     <p style="margin:0 0 14px;">
-      We also acknowledge receipt of a booking amount totaling
+      We also acknowledge receipt of a booking amount of
       <strong>${esc(bookingAmtStr)}</strong> ${receiptHtml}.
       ${showForfeitClause ? `Please note that if you choose not to proceed with the ATS, the booking amount will be forfeited. However after the successful signing of the ATS, the booking amount will be refunded to you.` : ''}
     </p>
@@ -171,13 +173,14 @@ function buildBookingEmail({ property, booking, submittedBy, submittedByName }) 
     </p>
   `;
 
-  // Logo URL — served from public/logo.png by Vercel's static hosting. Built
-  // from PUBLIC_BASE_URL (set in Vercel env, e.g. "https://demand.openhouse.in")
+  // Logo URL — served from public/logo_white.png by Vercel's static hosting.
+  // White variant chosen for legibility on the orange banner. Built from
+  // PUBLIC_BASE_URL (set in Vercel env, e.g. "https://demand.openhouse.in")
   // and falls back to the per-deploy VERCEL_URL so the logo still renders in
   // preview deploys. If neither env var is present, the right cell is dropped.
   const baseUrl = process.env.PUBLIC_BASE_URL
     || (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : '');
-  const logoUrl = baseUrl ? `${baseUrl.replace(/\/$/, '')}/logo.png` : '';
+  const logoUrl = baseUrl ? `${baseUrl.replace(/\/$/, '')}/logo_white.png` : '';
   const logoCell = logoUrl
     ? `<td align="right" valign="middle" style="padding:20px 24px;width:1%;white-space:nowrap;">
          <img src="${logoUrl}" alt="Openhouse" width="44" height="44"
@@ -191,7 +194,7 @@ function buildBookingEmail({ property, booking, submittedBy, submittedByName }) 
 <html><body style="margin:0;padding:0;background:#f5f6f8;font-family:Inter,Arial,sans-serif;color:#1a1d23;">
   <div style="max-width:680px;margin:24px auto;background:#fff;border-radius:12px;overflow:hidden;box-shadow:0 1px 4px rgba(0,0,0,.06);">
     <table role="presentation" cellpadding="0" cellspacing="0" border="0"
-           style="width:100%;background:#f97316;color:#fff;border-collapse:collapse;">
+           style="width:100%;background:#FF6B2B;color:#fff;border-collapse:collapse;">
       <tr>
         <td valign="middle" style="padding:20px 24px;">
           <div style="font-size:11px;letter-spacing:.5px;text-transform:uppercase;opacity:.85;">Openhouse</div>

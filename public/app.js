@@ -1429,7 +1429,6 @@ async function openBookingModal(uid) {
   // Prefill form if there's a saved draft (latest non-mailed booking row)
   if (data.latest && !data.latest.mail_sent_at) {
     const l = data.latest;
-    setBF('buyer_salutation', l.buyer_salutation);
     setBF('buyer_name', l.buyer_name);
     setBF('buyer_email', l.buyer_email);
     setBF('co_buyer_name', l.co_buyer_name);
@@ -1456,6 +1455,7 @@ async function openBookingModal(uid) {
       applyPayMode('split');
     }
     updateAtsPctHint();
+    refreshAllAmountHints();
   }
 
   // If a prior booking has been mailed and the user isn't admin, block.
@@ -1511,7 +1511,7 @@ function renderBookingBrokers() {
   const list = $('#bookingBrokersList');
   if (!list) return;
   if (!bookingState.brokers.length) {
-    list.innerHTML = '<div style="font-size:12px;color:#9ca3af;padding:4px 0;">No broker emails added.</div>';
+    list.innerHTML = '';
     return;
   }
   list.innerHTML = bookingState.brokers.map((email, i) => `
@@ -1519,6 +1519,41 @@ function renderBookingBrokers() {
       <span class="recipient-email">${esc(email)}</span>
       <button type="button" class="recipient-remove" data-broker-idx="${i}" title="Remove">×</button>
     </div>`).join('');
+}
+
+// Formats a rupee amount as "X Lakhs" or "X Crores" using Indian numbering.
+// Returns an empty string for amounts below 1 lakh — those don't need a hint.
+function formatLakhsCrores(n) {
+  const num = Number(n);
+  if (!isFinite(num) || num < 100000) return '';
+  if (num < 10000000) {
+    const lakhs = num / 100000;
+    const isInt = Math.abs(lakhs - Math.round(lakhs)) < 1e-9;
+    const str = isInt ? String(Math.round(lakhs)) : lakhs.toFixed(2).replace(/\.?0+$/, '');
+    return `${str} ${str === '1' ? 'Lakh' : 'Lakhs'}`;
+  }
+  const crores = num / 10000000;
+  const isInt = Math.abs(crores - Math.round(crores)) < 1e-9;
+  const str = isInt ? String(Math.round(crores)) : crores.toFixed(2).replace(/\.?0+$/, '');
+  return `${str} ${str === '1' ? 'Crore' : 'Crores'}`;
+}
+
+// Refreshes the lakhs/crores hint shown below an amount input. Looks up the
+// sibling `.amount-hint[data-amount-hint-for="<field>"]` via the input's
+// data-amount-hint attribute.
+function updateAmountHint(input) {
+  const field = input?.dataset?.amountHint;
+  if (!field) return;
+  const hint = document.querySelector(
+    `#bookingModal .amount-hint[data-amount-hint-for="${field}"]`
+  );
+  if (hint) hint.textContent = formatLakhsCrores(input.value);
+}
+
+// Refresh every visible amount hint — used after prefill (draft load) so the
+// hints reflect values that weren't entered via an `input` event.
+function refreshAllAmountHints() {
+  document.querySelectorAll('#bookingModal [data-amount-hint]').forEach(updateAmountHint);
 }
 
 // Updates the visibility of payment-mode bodies (single vs split) and the
@@ -1609,7 +1644,7 @@ function collectBookingForm() {
 // Validate the booking form before allowing preview/send.
 // buyer_email is collected on Page 1; the rest live on Page 2.
 function validateBookingForm(form) {
-  const required = ['buyer_email', 'buyer_salutation', 'buyer_name', 'consideration_amount',
+  const required = ['buyer_email', 'buyer_name', 'consideration_amount',
                     'booking_amount_received', 'booking_amount_method',
                     'booking_amount_forfeitable', 'ats_timeline',
                     'registry_timeline', 'amount_on_ats_pct'];
@@ -1741,10 +1776,20 @@ const EMAIL_RE_FE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
     }
   });
 
-  // Live numeric updates: ATS % rupee hint + split-amount auto-fill. Wired
-  // here (delegated) so they don't have to be rebound when the modal opens.
+  // Live numeric updates: ATS % rupee hint + split-amount auto-fill + lakhs/
+  // crores hints below amount inputs. Delegated so they don't rebind on each
+  // modal open. Percentage inputs are clamped to [0, 100] in real time.
   document.addEventListener('input', (e) => {
-    const field = e.target?.dataset?.bf;
+    const el = e.target;
+    if (el?.classList?.contains('booking-pct-input')) {
+      const n = parseFloat(el.value);
+      if (!isNaN(n) && n > 100) el.value = '100';
+      else if (!isNaN(n) && n < 0) el.value = '0';
+    }
+    if (el?.dataset?.amountHint) {
+      updateAmountHint(el);
+    }
+    const field = el?.dataset?.bf;
     if (!field) return;
     if (field === 'consideration_amount' || field === 'amount_on_ats_pct') {
       updateAtsPctHint();
