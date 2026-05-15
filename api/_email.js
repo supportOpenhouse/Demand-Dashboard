@@ -159,7 +159,7 @@ function buildBookingEmail({ property, booking, submittedBy, submittedByName }) 
     </p>
 
     <p style="margin:0 0 14px;color:#374151;">
-      <em>Note: Pls note that Stamp Duty, Registration related charges are not
+      <em>Note: Please note that Stamp Duty, Registration related charges are not
       included in the total consideration and has to be incurred by the buyer.</em>
     </p>
 
