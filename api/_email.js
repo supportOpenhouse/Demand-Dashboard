@@ -164,8 +164,8 @@ function buildBookingEmail({ property, booking, submittedBy, submittedByName }) 
     <p style="margin:0 0 4px;">Thanks &amp; Regards,</p>
     <p style="margin:0 0 14px;"><strong>${esc(signerName)}</strong></p>    
 
-    <p style="margin:24px 0 0;font-size:12px;color:#6b7280;">
-      <a href="https://www.openhouse.in" style="color:#f97316;text-decoration:none;font-weight:600;">www.openhouse.in</a>
+    <p style="margin:24px 0 0;">
+      <a href="https://www.openhouse.in" style="color:#1d4ed8;text-decoration:underline;">www.openhouse.in</a>
     </p>
 
     <p style="margin:0 0 14px;color:#374151;">

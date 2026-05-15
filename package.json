@@ -1,7 +1,7 @@
 {
-  "name": "openhouse-demand-visibility-dashboard",
+  "name": "openhouse-demand-dashboard",
   "version": "1.0.0",
-  "description": "Demand Visibility Dashboard — Vercel serverless + Neon PostgreSQL + Google Auth. Sells properties acquired by the Supply team.",
+  "description": "Demand Dashboard — Vercel serverless + Neon PostgreSQL + Google Auth. Sells properties acquired by the Supply team.",
   "dependencies": {
     "google-auth-library": "^10.6.2",
     "jsonwebtoken": "^9.0.2",

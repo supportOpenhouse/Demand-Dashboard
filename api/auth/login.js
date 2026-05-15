@@ -57,7 +57,7 @@ module.exports = async (req, res) => {
   if (!user) {
     return res.status(403).json({
       success: false,
-      error: 'Access denied. Your email is not authorized for the Demand Visibility Dashboard. Contact admin to get access.',
+      error: 'Access denied. Your email is not authorized for the Demand Dashboard. Contact admin to get access.',
     });
   }
 

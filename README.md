@@ -1,4 +1,4 @@
-# Demand Visibility Dashboard
+# Demand Dashboard
 
 Sells properties that the Supply team has acquired. Reads from the same Neon PostgreSQL database as the Supply Closure Tracker and Acquired Property Dashboard.
 
