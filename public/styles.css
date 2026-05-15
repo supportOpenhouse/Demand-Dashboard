@@ -172,6 +172,10 @@ tbody tr.expand-row td {
   justify-content: space-between;  /* pushes availability control to the right */
 }
 
+/* Status column — center-aligns the availability pill and the
+   possession/occupancy sub-label (tenant / vacant / etc.). */
+.col-status { text-align: center; }
+
 /* Availability status pill (main row "Status" column) — colored chip. */
 .avail-pill {
   display: inline-block;

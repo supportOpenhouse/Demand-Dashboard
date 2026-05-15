@@ -432,7 +432,7 @@ function renderRow(r) {
       <td class="col-ama-date">${esc(fmtDate(r.ama_date)) || '—'}</td>
       <td class="col-key-handover">${esc(fmtDate(r.key_handover_date)) || '—'}</td>
       <td>${esc(r.owner_name || '—')}<div class="prop-unit col-contact">${esc(r.contact_no || '')}</div></td>
-      <td>
+      <td class="col-status">
         ${renderAvailabilityPill(r.availability_status)}
         ${(r.possession_status || r.occupancy_status)
           ? `<div class="prop-unit">${esc(r.possession_status || r.occupancy_status)}</div>`
