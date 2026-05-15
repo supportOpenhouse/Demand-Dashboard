@@ -399,6 +399,7 @@ module.exports = async (req, res) => {
     property,
     booking: clean,
     submittedBy: user.email,
+    submittedByName: user.name,
   });
 
   const mailTo = effectiveRecipients(clean);
