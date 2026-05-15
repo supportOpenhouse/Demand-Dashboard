@@ -148,7 +148,7 @@ function buildBookingEmail({ property, booking, submittedBy, submittedByName }) 
     <p style="margin:0 0 14px;">
       We also acknowledge receipt of a booking amount of
       <strong>${esc(bookingAmtStr)}</strong> ${receiptHtml}.
-      ${showForfeitClause ? `Please note that if you choose not to proceed with the ATS, the booking amount will be forfeited. However after the successful signing of the ATS, the booking amount will be refunded to you.` : ''}
+      ${showForfeitClause ? `Please note that if you choose not to proceed with the ATS, the booking amount will be forfeited. However, after the successful signing of the ATS, the booking amount will be refunded to you.` : ''}
     </p>
 
     ${b.other_conditions ? `
@@ -157,19 +157,20 @@ function buildBookingEmail({ property, booking, submittedBy, submittedByName }) 
 
     <p style="margin:0 0 14px;">
       Congratulations on your booking. Please feel free to contact us if you have
-      any questions or require further clarification.
+      any questions or require further clarifications.
+    </p>
+
+
+    <p style="margin:0 0 4px;">Thanks &amp; Regards,</p>
+    <p style="margin:0 0 14px;"><strong>${esc(signerName)}</strong></p>    
+
+    <p style="margin:24px 0 0;font-size:12px;color:#6b7280;">
+      <a href="https://www.openhouse.in" style="color:#f97316;text-decoration:none;font-weight:600;">www.openhouse.in</a>
     </p>
 
     <p style="margin:0 0 14px;color:#374151;">
       <em>P.S.: Please note that Stamp Duty, Registration related charges are not
       included in the total consideration and has to be incurred by the buyer.</em>
-    </p>
-
-    <p style="margin:0 0 4px;">Thanks &amp; Regards,</p>
-    <p style="margin:0 0 14px;"><strong>${esc(signerName)}</strong></p>
-
-    <p style="margin:24px 0 0;font-size:12px;color:#6b7280;">
-      <a href="https://www.openhouse.in" style="color:#f97316;text-decoration:none;font-weight:600;">www.openhouse.in</a>
     </p>
   `;
 
