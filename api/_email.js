@@ -83,6 +83,50 @@ function firstName(name) {
   return String(name).trim().split(/\s+/)[0] || '';
 }
 
+// Whole rupees → Indian-system words: "12700000" → "One Crore Twenty Seven Lakh".
+// Uses the Indian numbering segmentation (crore/lakh/thousand/hundred) — not
+// the western million/billion — so the words match the figure's comma grouping.
+function _twoDigitWords(n) {
+  const ones = ['', 'One', 'Two', 'Three', 'Four', 'Five', 'Six', 'Seven', 'Eight', 'Nine',
+                'Ten', 'Eleven', 'Twelve', 'Thirteen', 'Fourteen', 'Fifteen', 'Sixteen',
+                'Seventeen', 'Eighteen', 'Nineteen'];
+  const tens = ['', '', 'Twenty', 'Thirty', 'Forty', 'Fifty', 'Sixty', 'Seventy', 'Eighty', 'Ninety'];
+  if (n < 20) return ones[n];
+  const t = Math.floor(n / 10), o = n % 10;
+  return tens[t] + (o ? ' ' + ones[o] : '');
+}
+function _threeDigitWords(n) {
+  const ones = ['', 'One', 'Two', 'Three', 'Four', 'Five', 'Six', 'Seven', 'Eight', 'Nine'];
+  const h = Math.floor(n / 100), r = n % 100;
+  let s = '';
+  if (h) s += ones[h] + ' Hundred';
+  if (r) s += (s ? ' ' : '') + _twoDigitWords(r);
+  return s;
+}
+function numToWordsIndian(n) {
+  const num = Math.round(Number(n));
+  if (!isFinite(num) || num < 0) return '';
+  if (num === 0) return 'Zero';
+  const crore    = Math.floor(num / 10000000);
+  const lakh     = Math.floor((num % 10000000) / 100000);
+  const thousand = Math.floor((num % 100000) / 1000);
+  const hundred  =            num % 1000;
+  let s = '';
+  if (crore)    s += _threeDigitWords(crore) + ' Crore';
+  if (lakh)     s += (s ? ' ' : '') + _twoDigitWords(lakh) + ' Lakh';
+  if (thousand) s += (s ? ' ' : '') + _twoDigitWords(thousand) + ' Thousand';
+  if (hundred)  s += (s ? ' ' : '') + _threeDigitWords(hundred);
+  return s;
+}
+
+// "Rupees <words> only" — Indian formal-letter convention for amounts in words.
+// Returns '' for null/blank inputs so the template can branch off it.
+function inrWords(n) {
+  if (n == null || n === '') return '';
+  const words = numToWordsIndian(n);
+  return words ? `Rupees ${words} only` : '';
+}
+
 // Builds the email subject + HTML body for a booking submission. The body is
 // a buyer-facing narrative letter; the same email is sent to the buyer, CP RMs,
 // brokers, and the internal fixed list (the caller concatenates the To line).
@@ -108,6 +152,7 @@ function buildBookingEmail({ property, booking, submittedBy, submittedByName }) 
     p.city,
   ].filter(Boolean).join(', ');
   const considerationStr = inrLetter(b.consideration_amount);
+  const considerationWords = inrWords(b.consideration_amount);
   const atsDateStr = dateLetter(b.ats_timeline);
   const atsPctStr = b.amount_on_ats_pct != null ? `${b.amount_on_ats_pct}%` : '—';
   const registryDaysStr = b.registry_timeline ? `${b.registry_timeline} days` : '—';
@@ -133,7 +178,7 @@ function buildBookingEmail({ property, booking, submittedBy, submittedByName }) 
       Greetings from Openhouse!
 
       Thank you for booking <strong>${esc(propertyAddress)}</strong>
-      for a total consideration of <strong>${esc(considerationStr)}</strong>.
+      for a total consideration of <strong>${esc(considerationStr)}</strong>${considerationWords ? ` (<strong>${esc(considerationWords)}</strong>)` : ''}.
     </p>
 
     <p style="margin:0 0 14px;">
@@ -164,7 +209,8 @@ function buildBookingEmail({ property, booking, submittedBy, submittedByName }) 
 
     <p style="margin:0 0 4px;">Thanks &amp; Regards,</p>
     <p style="margin:0 0 14px;"><strong>${esc(signerName)}</strong></p>    
-    <p style="margin:24px 0 0;"><a href="https://www.openhouse.in" style="color:#1d4ed8;text-decoration:underline;">www.openhouse.in</a></p>
+    <p style="margin:24px 0 0;"><a href="https://www.openhouse.in" style="color:#1d4ed8;text-decoration:underline;">www.openhouse.in</a>
+    </p>
 
     <p style="margin:0 0 14px;color:#374151;">
     
