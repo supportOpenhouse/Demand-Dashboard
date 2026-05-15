@@ -55,7 +55,7 @@ function inrLetter(n) {
   if (n == null || n === '') return '—';
   const num = Math.round(Number(n));
   if (isNaN(num)) return esc(String(n));
-  return 'INR ' + num.toLocaleString('en-IN') + '/-';
+  return '₹' + num.toLocaleString('en-IN') + '/-';
 }
 
 // "2026-05-14" → "14th May 2026" (Indian-style ordinal). Returns the raw input
@@ -159,7 +159,7 @@ function buildBookingEmail({ property, booking, submittedBy, submittedByName }) 
     </p>
 
     <p style="margin:0 0 14px;color:#374151;">
-      <em>Note: Please note that Stamp Duty, Registration related charges are not
+      <em>P.S.: Please note that Stamp Duty, Registration related charges are not
       included in the total consideration and has to be incurred by the buyer.</em>
     </p>
 
