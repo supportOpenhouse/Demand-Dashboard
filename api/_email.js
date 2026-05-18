@@ -178,7 +178,7 @@ function buildBookingEmail({ property, booking, submittedBy, submittedByName }) 
       Greetings from Openhouse!
 
       Thank you for booking <strong>${esc(propertyAddress)}</strong>
-      for a total consideration of <strong>${esc(considerationStr)}</strong>${considerationWords ? ` (<strong>${esc(considerationWords)}</strong>)` : ''}.
+      for a total consideration of <strong>${esc(considerationStr)}</strong>${considerationWords ? ` (${esc(considerationWords)})` : ''}.
     </p>
 
     <p style="margin:0 0 14px;">
@@ -208,12 +208,10 @@ function buildBookingEmail({ property, booking, submittedBy, submittedByName }) 
 
 
     <p style="margin:0 0 4px;">Thanks &amp; Regards,</p>
-    <p style="margin:0 0 14px;"><strong>${esc(signerName)}</strong></p>    
-    <p style="margin:24px 0 0;"><a href="https://www.openhouse.in" style="color:#1d4ed8;text-decoration:underline;">www.openhouse.in</a>
-    </p>
+    <p style="margin:0 0 4px;"><strong>${esc(signerName)}</strong></p>
+    <p style="margin:0;"><a href="https://www.openhouse.in" style="color:#1d4ed8;text-decoration:underline;">www.openhouse.in</a></p>
 
-    <p style="margin:0 0 14px;color:#374151;">
-    
+    <p style="margin:28px 0 0;color:#374151;">
       <em>P.S.: Please note that Stamp Duty, Registration related charges are not
       included in the total consideration and has to be incurred by the buyer.</em>
     </p>
