@@ -544,28 +544,18 @@ function renderExpand(r) {
       ${isViewer()
         ? ''
         : editableDate('Key Handover Date', 'key_handover_date', r.key_handover_date, { uid: r.uid })}
-      ${field('Current Occupancy', r.possession_status || r.occupancy_status)}
+      <span data-occupancy-for="${esc(r.uid)}">${field('Current Occupancy', r.possession_status || r.occupancy_status)}</span>
       ${field('Furnishing Status', r.furnishing)}
       ${field('Furnishing Items', formatList(r.furnishing_details))}
       ${field('Parking', r.parking)}
       ${field('Parking No.', r.parking_number)}
       ${field('Property Tax Status', r.property_tax_status)}
-      ${r.origin === 'legacy'
-        ? editableSelect('Payment Structure', 'alpha_beta', r.alpha_beta, {
-            uid: r.uid,
-            options: ['Flexible', 'Non-Flexible'],
-          })
-        : `
-          ${editableSelect('Payment Structure', 'ama_payment_structure', r.ama_payment_structure, {
-            uid: r.uid,
-            options: ['Flexible', 'Non-Flexible'],
-          })}
-          <div class="payment-flexible-only" data-payment-flexible-for="${esc(r.uid)}"
-               ${r.ama_payment_structure === 'Non-Flexible' ? 'style="display:none"' : ''}>
-            ${editableNum('Min %', 'ama_beta_min_pct', r.ama_beta_min_pct, { uid: r.uid })}
-            ${editableNum('Max %', 'ama_beta_max_pct', r.ama_beta_max_pct, { uid: r.uid })}
-          </div>
-        `}
+      <!-- Payment Structure / Min % / Max % temporarily hidden from the Demand
+           Dashboard UI for all users (per ask, frontend-only). The columns
+           (ama_payment_structure / ama_beta_min_pct / ama_beta_max_pct on
+           properties, alpha_beta on legacy_properties) remain populated and
+           writable via the API; nothing has changed in the backend. Re-enable
+           by restoring the block from git history. -->
     </div>`;
 
   // ── Section: Owner & Loan
@@ -990,10 +980,51 @@ async function saveField(uid, el) {
       if (data.data) Object.assign(row, data.data);
       if (data.updated) Object.assign(row, data.updated);
     }
+
+    // Server-side auto-vacant: when key_handover_date is changed, the
+    // property-edits endpoint also flips possession_status / occupancy_status
+    // to 'Vacant' (only if currently Tenant or Owner Staying). Surgically
+    // refresh the Status column subtitle + the expand panel's Current
+    // Occupancy field so the user sees the flip immediately — without a
+    // full re-render that would wipe unsaved edits in the expand panel.
+    if (data.updated && (
+        data.updated.possession_status !== undefined ||
+        data.updated.occupancy_status  !== undefined)) {
+      syncOccupancyDisplay(uid);
+    }
   } catch (e) {
     console.error(e);
     if (dot) dot.className = 'save-dot error';
     showToast('Network error', 'error');
+  }
+}
+
+// Re-renders the Status column subtitle (main row) and the Current Occupancy
+// field-row (expand panel) for one uid, sourcing values from state.rows.
+// Called after saveField when the server auto-derived an occupancy change.
+function syncOccupancyDisplay(uid) {
+  const r = state.rows.find(x => x.uid === uid);
+  if (!r) return;
+  const subtitle = r.possession_status || r.occupancy_status;
+
+  // Main row — Status cell: keep the pill, replace the subtitle line.
+  const tr = document.querySelector(`tr.data-row[data-uid="${cssEscape(uid)}"]`);
+  if (tr) {
+    const cell = tr.querySelector('.col-status');
+    if (cell) {
+      cell.innerHTML = `
+        ${renderAvailabilityPill(r.availability_status)}
+        ${subtitle ? `<div class="prop-unit">${esc(subtitle)}</div>` : ''}
+      `;
+    }
+  }
+
+  // Expand panel — Current Occupancy field-row. Wrapped in a <span> tagged
+  // data-occupancy-for=<uid> so we can swap its contents without re-rendering
+  // the whole expand panel.
+  const occWrap = document.querySelector(`[data-occupancy-for="${cssEscape(uid)}"]`);
+  if (occWrap) {
+    occWrap.innerHTML = field('Current Occupancy', subtitle);
   }
 }
 
@@ -1090,13 +1121,9 @@ function exportCsv() {
     ['Loan Status', r => r.loan_status || (r.outstanding_loan ? 'Active' : 'No Loan')],
     ['Loan Amount', 'outstanding_loan'],
     ['Property Tax Status', 'property_tax_status'],
-    // Payment Structure is "Flexible"/"Non-Flexible" for both origins.
-    // Real properties store it in ama_payment_structure (with the Beta range
-    // in beta min/max). Legacy uses alpha_beta. Single CSV column with a
-    // fallback covers both.
-    ['Payment Structure', r => r.ama_payment_structure || r.alpha_beta || ''],
-    ['Beta Min %',        'ama_beta_min_pct'],
-    ['Beta Max %',        'ama_beta_max_pct'],
+    // Payment Structure / Beta Min % / Beta Max % columns intentionally
+    // omitted from the CSV — matches the temporary UI hide-out. Backend
+    // values are untouched; restore from git history when re-enabling.
     ['Super Area', r => r.super_area || r.area_sqft],
     ['Carpet Area', 'carpet_area'],
     ['No. of Bedrooms', r => extractBedrooms(r.configuration)],

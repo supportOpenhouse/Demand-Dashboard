@@ -66,6 +66,15 @@ const ALLOWED_FIELDS = [
 
 const MAX_TEXT_LEN = 500;
 
+// Auto-derivation for the per-unit "Current Occupancy" labels.
+// Trigger: an actual change to key_handover_date — once the unit's keys are
+// in Openhouse custody, any prior Tenant/Owner Staying label is no longer
+// accurate, so we flip the affected fields to 'Vacant'. We only re-label
+// values already in the canonical {Vacant, Tenant, Owner Staying} set —
+// other values (society-level "Ready to Move" etc.) are left untouched.
+const AUTO_VACANT_FIELDS  = ['possession_status', 'occupancy_status'];
+const AUTO_VACANT_FROM    = ['Vacant', 'Tenant', 'Owner Staying'];
+
 // Cache: which columns exist on legacy_properties. We own this schema, so the
 // list is stable per cold start. Mirrors the getPropertiesColumns pattern.
 let _legacyColumnCache = null;
@@ -222,6 +231,35 @@ module.exports = async (req, res) => {
       return res.status(200).json({ success: true, updated: {}, message: 'No changes' });
     }
 
+    // Auto-vacant rule: if key_handover_date actually changed in this request,
+    // also flip possession_status / occupancy_status to 'Vacant' — but ONLY
+    // when the current value is one of {Vacant, Tenant, Owner Staying}. Other
+    // values are left alone. Runs inside the same transaction (and inside the
+    // row-level lock from the earlier FOR UPDATE) so the date change and the
+    // status flip can never disagree under concurrency.
+    const autoDerived = new Set();
+    // Only fire when key_handover_date is being SET to a non-null date — if
+    // the user clears the date (cancelling the handover), the prior tenant /
+    // owner may still be staying, so we should not force-flip to Vacant.
+    if (diff.key_handover_date && diff.key_handover_date.to) {
+      const autoCols = AUTO_VACANT_FIELDS.filter(c => tableCols.includes(c));
+      if (autoCols.length) {
+        const sel = autoCols.map(c => `"${c}"`).join(', ');
+        const curRes = await client.query(
+          `SELECT ${sel} FROM ${targetTable} WHERE uid = $1`,
+          [uid]
+        );
+        const cur = curRes.rows[0] || {};
+        for (const c of autoCols) {
+          const cv = (cur[c] == null) ? '' : String(cur[c]).trim();
+          // Skip if not in the trigger set, OR already Vacant (no-op per spec).
+          if (!AUTO_VACANT_FROM.includes(cv) || cv === 'Vacant') continue;
+          diff[c] = { from: cur[c], to: 'Vacant' };
+          autoDerived.add(c);
+        }
+      }
+    }
+
     const setClauses = Object.keys(diff).map((f, i) => `"${f}" = $${i + 2}`).join(', ');
     const updateParams = [uid, ...Object.values(diff).map(d => d.to)];
     await client.query(
@@ -230,12 +268,16 @@ module.exports = async (req, res) => {
     );
 
     // Audit log — `table` field on details lets us distinguish legacy edits
-    // from real-properties edits when querying activity_logs later.
+    // from real-properties edits when querying activity_logs later. Auto-
+    // derived rows carry an explicit `auto` tag so they can be filtered out
+    // (or counted) in later analytics.
     for (const [field, { from, to }] of Object.entries(diff)) {
+      const details = { field, from, to, table: targetTable };
+      if (autoDerived.has(field)) details.auto = 'key_handover_vacant';
       await client.query(
         `INSERT INTO activity_logs (uid, action, category, actor_email, actor_name, details, dashboard)
          VALUES ($1, 'property_edit', 'supply_field', $2, $3, $4, 'Demand Dashboard')`,
-        [uid, user.email || '', user.name || '', JSON.stringify({ field, from, to, table: targetTable })]
+        [uid, user.email || '', user.name || '', JSON.stringify(details)]
       );
     }
 
