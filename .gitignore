@@ -3,6 +3,7 @@
 .env
 .env.*
 !.env.example
+.claude
 
 # Local env-var template (placeholder values; README is the canonical doc)
 Environment
@@ -18,3 +19,4 @@ node_modules/
 
 # Logs
 *.log
+

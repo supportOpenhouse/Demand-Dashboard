@@ -83,6 +83,7 @@ const UNIFIED_COLS = [
 
   ['additional_images',         'additional_images',         'additional_images',         'JSONB'],
   ['video_link',                'video_link',                'video_link',                'TEXT'],
+  ['core_home_id',              null,                        'core_home_id',              'INTEGER'],
 ];
 
 // Build the SELECT projection for the real-properties side of the UNION.

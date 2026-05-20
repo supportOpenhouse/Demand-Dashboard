@@ -7,6 +7,7 @@
     { "source": "/api/users",               "destination": "/api/users/index" },
     { "source": "/api/users/:id/force-logout", "destination": "/api/users/[id]/force-logout" },
     { "source": "/api/users/:id",           "destination": "/api/users/[id]" },
+    { "source": "/api/home-photos",          "destination": "/api/home-photos" },
     { "source": "/api/list",                "destination": "/api/list" },
     { "source": "/api/detail/:uid",         "destination": "/api/detail/[uid]" },
     { "source": "/api/demand-details/:uid", "destination": "/api/demand-details/[uid]" },

@@ -18,6 +18,8 @@ const state = {
     from: '',
     to: '',
   },
+  // homeId (number) → string[] of image URLs, fetched from backend photos API.
+  homePhotos: {},
 };
 
 // ── Helpers ────────────────────────────────────────────────────────────
@@ -166,7 +168,7 @@ const CANONICAL_BANKS = [
     state.user = data.user;
     renderUserMenu();
     bindUI();
-    await loadData();
+    await Promise.all([loadData(), fetchHomePhotos()]);
   } catch (e) {
     console.error('init failed', e);
     window.location.href = '/login';
@@ -281,6 +283,24 @@ function bindUI() {
 }
 
 // ── Data load ──────────────────────────────────────────────────────────
+async function fetchHomePhotos() {
+  try {
+    const r = await fetch('/api/home-photos', { credentials: 'include' });
+    if (!r.ok) return;
+    const data = await r.json();
+    if (!data.success || !Array.isArray(data.homePhoto)) return;
+    const map = {};
+    for (const entry of data.homePhoto) {
+      if (entry.homeId != null && Array.isArray(entry.images) && entry.images.length) {
+        map[entry.homeId] = entry.images;
+      }
+    }
+    state.homePhotos = map;
+  } catch (e) {
+    console.warn('[home-photos] fetch failed:', e);
+  }
+}
+
 async function loadData() {
   $('#loadingBox').style.display = 'flex';
   $('#emptyBox').style.display = 'none';
@@ -790,9 +810,14 @@ function renderBalconyViewsCard(views) {
     </div>`;
 }
 
-// Property images: compass (a single square dial photo) + any extras the supply
-// team uploaded. Rendered as a standalone gallery card.
+// Property images: use fresh photos from the backend API (keyed by core_home_id)
+// when available; fall back to the compass + additional_images stored in the DB.
 function collectPropertyImages(r) {
+  const apiImages = r.core_home_id != null ? state.homePhotos[r.core_home_id] : null;
+  if (apiImages && apiImages.length) {
+    return apiImages.map(url => ({ url, caption: '' }));
+  }
+  // Fallback: stale DB images
   const imgs = [];
   if (r.exit_compass_image) {
     imgs.push({ url: r.exit_compass_image, caption: 'Exit Compass' });
