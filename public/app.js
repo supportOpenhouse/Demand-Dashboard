@@ -608,7 +608,8 @@ function renderExpand(r) {
   // Spans 2 grid columns to fill the space freed up by the removed Demand
   // Pipeline section.
   const propImgs = collectPropertyImages(r);
-  const balconyViews = collectBalconyViews(r);
+  const hasApiImages = r.core_home_id != null && state.homePhotos[r.core_home_id]?.length > 0;
+  const balconyViews = hasApiImages ? [] : collectBalconyViews(r);
   const noMediaMsg = (!propImgs.length && !balconyViews.length)
     ? '<div class="gallery-empty">No images uploaded</div>'
     : '';
