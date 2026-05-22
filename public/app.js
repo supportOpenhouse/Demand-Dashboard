@@ -570,12 +570,22 @@ function renderExpand(r) {
       ${field('Parking', r.parking)}
       ${field('Parking No.', r.parking_number)}
       ${field('Property Tax Status', r.property_tax_status)}
-      <!-- Payment Structure / Min % / Max % temporarily hidden from the Demand
-           Dashboard UI for all users (per ask, frontend-only). The columns
-           (ama_payment_structure / ama_beta_min_pct / ama_beta_max_pct on
-           properties, alpha_beta on legacy_properties) remain populated and
-           writable via the API; nothing has changed in the backend. Re-enable
-           by restoring the block from git history. -->
+      ${r.origin === 'legacy'
+        ? editableSelect('Payment Structure', 'alpha_beta', r.alpha_beta, {
+            uid: r.uid,
+            options: ['Flexible', 'Non-Flexible'],
+          })
+        : `
+          ${editableSelect('Payment Structure', 'ama_payment_structure', r.ama_payment_structure, {
+            uid: r.uid,
+            options: ['Flexible', 'Non-Flexible'],
+          })}
+          <div class="payment-flexible-only" data-payment-flexible-for="${esc(r.uid)}"
+               ${r.ama_payment_structure === 'Non-Flexible' ? 'style="display:none"' : ''}>
+            ${editableNum('Min %', 'ama_beta_min_pct', r.ama_beta_min_pct, { uid: r.uid })}
+            ${editableNum('Max %', 'ama_beta_max_pct', r.ama_beta_max_pct, { uid: r.uid })}
+          </div>
+        `}
     </div>`;
 
   // ── Section: Owner & Loan
@@ -1147,9 +1157,13 @@ function exportCsv() {
     ['Loan Status', r => r.loan_status || (r.outstanding_loan ? 'Active' : 'No Loan')],
     ['Loan Amount', 'outstanding_loan'],
     ['Property Tax Status', 'property_tax_status'],
-    // Payment Structure / Beta Min % / Beta Max % columns intentionally
-    // omitted from the CSV — matches the temporary UI hide-out. Backend
-    // values are untouched; restore from git history when re-enabling.
+    // Payment Structure is "Flexible"/"Non-Flexible" for both origins.
+    // Real properties store it in ama_payment_structure (with the Beta range
+    // in beta min/max). Legacy uses alpha_beta. Single CSV column with a
+    // fallback covers both.
+    ['Payment Structure', r => r.ama_payment_structure || r.alpha_beta || ''],
+    ['Beta Min %',        'ama_beta_min_pct'],
+    ['Beta Max %',        'ama_beta_max_pct'],
     ['Super Area', r => r.super_area || r.area_sqft],
     ['Carpet Area', 'carpet_area'],
     ['No. of Bedrooms', r => extractBedrooms(r.configuration)],
