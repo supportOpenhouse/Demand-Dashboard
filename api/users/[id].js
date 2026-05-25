@@ -1,4 +1,4 @@
-const { pool } = require('../_db');
+const { pool, logActivity } = require('../_db');
 const { requireAuth, requireAdmin, setCors } = require('../_auth');
 
 module.exports = async (req, res) => {
@@ -19,14 +19,23 @@ module.exports = async (req, res) => {
       return res.status(400).json({ success: false, error: 'Invalid role. Must be: admin, manager, viewer' });
     }
 
+    // Fetch the target up-front so we can capture the previous role for the
+    // activity log AND reuse it for the "last admin" guard below.
+    const targetRes = await pool.query(
+      'SELECT id, email, name, role FROM demand_users WHERE id = $1',
+      [id]
+    );
+    if (!targetRes.rows.length) {
+      return res.status(404).json({ success: false, error: 'User not found' });
+    }
+    const target = targetRes.rows[0];
+    const prevRole = target.role;
+
     // Prevent demoting the last admin — system would lock itself out of user management.
-    if (role !== 'admin') {
-      const target = await pool.query('SELECT role FROM demand_users WHERE id = $1', [id]);
-      if (target.rows[0]?.role === 'admin') {
-        const admins = await pool.query("SELECT COUNT(*) FROM demand_users WHERE role = 'admin'");
-        if (parseInt(admins.rows[0].count) <= 1) {
-          return res.status(400).json({ success: false, error: 'Cannot remove the last admin' });
-        }
+    if (role !== 'admin' && prevRole === 'admin') {
+      const admins = await pool.query("SELECT COUNT(*) FROM demand_users WHERE role = 'admin'");
+      if (parseInt(admins.rows[0].count) <= 1) {
+        return res.status(400).json({ success: false, error: 'Cannot remove the last admin' });
       }
     }
 
@@ -36,6 +45,18 @@ module.exports = async (req, res) => {
       [role, id]
     );
     if (!rows.length) return res.status(404).json({ success: false, error: 'User not found' });
+
+    // Audit: record every role transition (skip no-op writes where role is unchanged).
+    if (prevRole !== role) {
+      logActivity(null, 'user_role_change', 'user', user, {
+        target_user_id: target.id,
+        target_email: target.email,
+        target_name: target.name,
+        old_role: prevRole,
+        new_role: role,
+      });
+    }
+
     return res.status(200).json({ success: true, user: rows[0] });
   }
 
