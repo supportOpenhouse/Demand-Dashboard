@@ -193,7 +193,7 @@ const INIT_SQL = `
   CREATE INDEX IF NOT EXISTS idx_legacy_props_city     ON legacy_properties(city);
 
   -- Beta range for legacy units. Mirrors the ama_beta_min_pct / ama_beta_max_pct
-  -- columns on the `properties` table so the Demand Dashboard can surface a
+  -- columns on the properties table so the Demand Dashboard can surface a
   -- Min %/Max % pair when alpha_beta = 'Flexible' on legacy rows too. Legacy
   -- imports leave these NULL; users fill them in from the expand panel.
   ALTER TABLE legacy_properties ADD COLUMN IF NOT EXISTS ama_beta_min_pct REAL;
