@@ -51,12 +51,14 @@ const UNIFIED_COLS = [
   ['circle_rate',               'circle_rate',               'circle_rate',               'REAL'],
   ['alpha_beta',                'alpha_beta',                'alpha_beta',                'TEXT'],
   ['beta_pct',                  'beta_pct',                  'beta_pct',                  'REAL'],
-  // Backend-form's canonical Payment Structure trio. Only present on the
-  // `properties` side; legacy_properties returns NULL since legacy CSVs
-  // pre-date these columns (legacy still uses the alpha_beta TEXT field).
+  // Backend-form's canonical Payment Structure trio. `ama_payment_structure` is
+  // still real-only — legacy carries its Flexible/Non-Flexible flag in
+  // alpha_beta (TEXT). The min/max pair is now mirrored on legacy_properties
+  // (added via INIT_SQL ALTERs) so the dashboard can surface the same Min %/
+  // Max % range when alpha_beta = 'Flexible' on legacy rows.
   ['ama_payment_structure',     null,                        'ama_payment_structure',     'TEXT'],
-  ['ama_beta_min_pct',          null,                        'ama_beta_min_pct',          'REAL'],
-  ['ama_beta_max_pct',          null,                        'ama_beta_max_pct',          'REAL'],
+  ['ama_beta_min_pct',          'ama_beta_min_pct',          'ama_beta_min_pct',          'REAL'],
+  ['ama_beta_max_pct',          'ama_beta_max_pct',          'ama_beta_max_pct',          'REAL'],
   ['guaranteed_sale_price',     'guaranteed_sale_price',     'guaranteed_sale_price',     'REAL'],
   ['listing_asking_price',      'listing_asking_price',      'listing_asking_price',      'REAL'],
   ['demand_price',              'demand_price',              'demand_price',              'REAL'],

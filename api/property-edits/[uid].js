@@ -33,8 +33,10 @@ const ALLOWED_FIELDS_REAL = [
   'circle_rate',
   'society_age_years',
   'outstanding_loan',
-  // Backend-form's Beta range — only exists on `properties`, not legacy_properties.
-  // Writes to a legacy uid will fail the column-existence check below (intentional).
+  // Backend-form's Beta range. Now present on both `properties` and
+  // `legacy_properties` (legacy columns added via INIT_SQL ALTERs) so the
+  // Demand Dashboard can surface the same Min %/Max % range on legacy rows
+  // when alpha_beta = 'Flexible'.
   'ama_beta_min_pct',
   'ama_beta_max_pct',
 ];

@@ -570,22 +570,25 @@ function renderExpand(r) {
       ${field('Parking', r.parking)}
       ${field('Parking No.', r.parking_number)}
       ${field('Property Tax Status', r.property_tax_status)}
-      ${r.origin === 'legacy'
-        ? editableSelect('Payment Structure', 'alpha_beta', r.alpha_beta, {
-            uid: r.uid,
-            options: ['Flexible', 'Non-Flexible'],
-          })
-        : `
-          ${editableSelect('Payment Structure', 'ama_payment_structure', r.ama_payment_structure, {
+      ${(() => {
+        // Legacy rows store the Flexible/Non-Flexible flag in alpha_beta; real
+        // properties use ama_payment_structure. The Min %/Max % pair is the
+        // same on both sides (ama_beta_min_pct / ama_beta_max_pct columns now
+        // exist on legacy_properties too — added via INIT_SQL ALTERs).
+        const structureField = r.origin === 'legacy' ? 'alpha_beta' : 'ama_payment_structure';
+        const structureValue = r.origin === 'legacy' ? r.alpha_beta : r.ama_payment_structure;
+        return `
+          ${editableSelect('Payment Structure', structureField, structureValue, {
             uid: r.uid,
             options: ['Flexible', 'Non-Flexible'],
           })}
           <div class="payment-flexible-only" data-payment-flexible-for="${esc(r.uid)}"
-               ${r.ama_payment_structure === 'Non-Flexible' ? 'style="display:none"' : ''}>
+               ${structureValue === 'Non-Flexible' ? 'style="display:none"' : ''}>
             ${editableNum('Min %', 'ama_beta_min_pct', r.ama_beta_min_pct, { uid: r.uid })}
             ${editableNum('Max %', 'ama_beta_max_pct', r.ama_beta_max_pct, { uid: r.uid })}
           </div>
-        `}
+        `;
+      })()}
     </div>`;
 
   // ── Section: Owner & Loan
@@ -912,7 +915,9 @@ document.addEventListener('change', (e) => {
 
   // Side-effect: when Payment Structure flips to/from Non-Flexible, show/hide
   // the Min %/Max % wrapper inline (no full re-render so we don't lose focus).
-  if (el.dataset.field === 'ama_payment_structure') {
+  // Real properties drive this off ama_payment_structure; legacy rows use
+  // alpha_beta — both surface the same wrapper.
+  if (el.dataset.field === 'ama_payment_structure' || el.dataset.field === 'alpha_beta') {
     const wrapper = document.querySelector(
       `.payment-flexible-only[data-payment-flexible-for="${cssEscape(uid)}"]`
     );
