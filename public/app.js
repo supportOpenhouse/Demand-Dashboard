@@ -689,19 +689,25 @@ function editableText(label, fieldName, value, opts) {
 
 function editableDate(label, fieldName, value, opts) {
   const { uid } = opts;
-  // Normalize value to YYYY-MM-DD for the date input
+  // Normalize value to YYYY-MM-DD for the picker
   let dateVal = '';
   if (value) {
     const d = new Date(value);
     if (!isNaN(d.getTime())) dateVal = d.toISOString().slice(0, 10);
   }
   if (!canEdit()) return field(label, value ? fmtDate(value) : '');
+  // type="text" so flatpickr can manage display via altInput. The original
+  // input is hidden by flatpickr but stays the canonical YYYY-MM-DD source
+  // (which the delegated change handler + /api/property-edits expect). The
+  // visible alt input shows DD/MM/YYYY. flatpickr is wired up per-row in
+  // attachExpandHandlers.
   return `
     <div class="field-row">
       <div class="field-lbl">${esc(label)}</div>
-      <input type="date" class="inline-input"
+      <input type="text" class="inline-input flatpickr-date"
              data-uid="${esc(uid)}" data-field="${esc(fieldName)}" data-endpoint="property-edits"
-             value="${esc(dateVal)}">
+             value="${esc(dateVal)}"
+             placeholder="DD/MM/YYYY">
       <span class="save-dot" data-dot="${esc(fieldName)}-${esc(uid)}"></span>
     </div>`;
 }
@@ -891,6 +897,23 @@ function collectImages(r) {
 function attachExpandHandlers(uid) {
   const expandTr = document.querySelector(`tr.expand-row[data-uid-expand="${cssEscape(uid)}"]`);
   if (!expandTr) return;
+
+  // Initialize flatpickr on date inputs so they display DD/MM/YYYY instead
+  // of the browser-locale default (US locale renders <input type=date> as
+  // MM/DD/YYYY which trips up Indian users). The underlying value stays
+  // YYYY-MM-DD, which is what saveField + /api/property-edits expect.
+  if (window.flatpickr) {
+    expandTr.querySelectorAll('input.flatpickr-date').forEach(input => {
+      if (input._flatpickr) return;
+      flatpickr(input, {
+        dateFormat: 'Y-m-d',
+        altInput: true,
+        altFormat: 'd/m/Y',
+        allowInput: false,
+      });
+    });
+  }
+
   // Property Images + Balcony View images all participate in one lightbox
   // sequence — clicking any one passes the full URL list + the clicked index
   // so left/right arrows can scrub through every image in the panel.
