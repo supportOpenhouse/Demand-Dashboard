@@ -33,6 +33,7 @@ const ALLOWED_FIELDS_REAL = [
   'circle_rate',
   'society_age_years',
   'outstanding_loan',
+  'current_occupancy_pct',
   // Backend-form's Beta range. Now present on both `properties` and
   // `legacy_properties` (legacy columns added via INIT_SQL ALTERs) so the
   // Demand Dashboard can surface the same Min %/Max % range on legacy rows

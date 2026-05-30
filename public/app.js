@@ -551,7 +551,7 @@ function renderExpand(r) {
       ${editableNum('Circle Rate',             'circle_rate',             r.circle_rate,             { uid: r.uid })}
       ${field('Gas Pipeline', r.gas_pipeline)}
       ${field('Club Facility', r.club_facility)}
-      ${field('Society Occupancy', r.current_occupancy_pct != null ? r.current_occupancy_pct + '%' : '')}
+      ${editableNum('Society Occupancy %', 'current_occupancy_pct', r.current_occupancy_pct, { uid: r.uid })}
     </div>`;
 
   // ── Section: Possession & Listing
