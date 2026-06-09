@@ -274,7 +274,7 @@ function hasCol(allCols, name) {
   return allCols.includes(name);
 }
 
-// `master_socities` is owned externally (not created by INIT_SQL), so it may be
+// `master_societies` is owned externally (not created by INIT_SQL), so it may be
 // absent on some deployments. Cache — once per cold start — whether the table and
 // the two columns we LEFT JOIN on (society_name, affordable) exist, so /api/list
 // can fold in the affordable flag without risking a crash where the table is missing.
@@ -285,7 +285,7 @@ async function masterSocietiesHasAffordable() {
   try {
     const { rows } = await pool.query(`
       SELECT column_name FROM information_schema.columns
-      WHERE table_name = 'master_socities'
+      WHERE table_name = 'master_societies'
     `);
     const cols = rows.map(r => r.column_name);
     _masterSocietiesCache = cols.includes('society_name') && cols.includes('affordable');

@@ -165,7 +165,7 @@ module.exports = async (req, res) => {
       outerParams.push(poc);
       outerConditions.push(`u.poc = $${baseParams.length + outerParams.length}`);
     }
-    // Affordable filter ('yes' / 'no') resolves against the master_socities
+    // Affordable filter ('yes' / 'no') resolves against the master_societies
     // LEFT JOIN added below, so it only applies where that table is available.
     // 'yes' → affordable = true; 'no' → affordable = false (societies with no
     // master row are NULL and fall out of both filtered views, as expected).
@@ -206,7 +206,7 @@ module.exports = async (req, res) => {
     const propsProjection = buildPropertiesProjection(allCols);
     const legacyProjection = buildLegacyProjection();
 
-    // master_socities.affordable (BOOLEAN) folded in by matching society_name
+    // master_societies.affordable (BOOLEAN) folded in by matching society_name
     // (case-insensitive, trimmed). LATERAL + LIMIT 1 keeps it a 1:1 lookup so a
     // duplicate society_name in the master table can't multiply demand rows.
     // Skipped entirely (projected NULL) where the externally-owned table is absent.
@@ -216,7 +216,7 @@ module.exports = async (req, res) => {
       : 'NULL::boolean AS affordable,';
     const affordableJoin = hasAffordable
       ? `LEFT JOIN LATERAL (
-             SELECT affordable FROM master_socities ms
+             SELECT affordable FROM master_societies ms
              WHERE LOWER(TRIM(ms.society_name)) = LOWER(TRIM(u.society_name))
              LIMIT 1
            ) ms ON TRUE`
