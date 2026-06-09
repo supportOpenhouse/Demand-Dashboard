@@ -446,7 +446,11 @@ function renderRow(r) {
       <td>
         <div class="prop-cell">
           <div class="prop-name">${esc(r.society_name || '—')} ${supplyBadge}</div>
-          <div class="prop-unit">${esc(r.tower_no || '')} ${esc(r.unit_no ? '· Unit ' + r.unit_no : '')} ${r.floor != null ? '· Floor ' + esc(r.floor) : ''}</div>
+          <div class="prop-unit">${(() => {
+            const towerUnit = [r.tower_no, r.unit_no].filter(v => v != null && v !== '').map(esc).join('-');
+            const floorPart = r.floor != null ? 'Floor-' + esc(r.floor) : '';
+            return [towerUnit, floorPart].filter(Boolean).join('&nbsp;&nbsp;');
+          })()}</div>
         </div>
       </td>
       <td>${esc(r.city || '—')}<div class="prop-unit">${esc(r.locality || '')}</div></td>
