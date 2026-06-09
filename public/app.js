@@ -538,6 +538,9 @@ function renderExpand(r) {
   const sectionSociety = `
     <div class="expand-section">
       <h4>📐 Society & Charges</h4>
+      ${field('Affordable',
+              r.affordable == null ? null : (r.affordable ? 'Yes' : 'No'),
+              r.affordable === true ? 'green' : (r.affordable === false ? 'amber' : ''))}
       ${editableNum('Society Age (years)',     'society_age_years',     r.society_age_years,     { uid: r.uid })}
       ${editableNum('Total Units in Society',  'total_units',           r.total_units,           { uid: r.uid, isInt: true })}
       ${editableNum('Total Floors in Tower',   'total_floors_tower',    r.total_floors_tower,    { uid: r.uid, isInt: true })}

@@ -274,6 +274,28 @@ function hasCol(allCols, name) {
   return allCols.includes(name);
 }
 
+// `master_socities` is owned externally (not created by INIT_SQL), so it may be
+// absent on some deployments. Cache — once per cold start — whether the table and
+// the two columns we LEFT JOIN on (society_name, affordable) exist, so /api/list
+// can fold in the affordable flag without risking a crash where the table is missing.
+let _masterSocietiesCache = null;
+
+async function masterSocietiesHasAffordable() {
+  if (_masterSocietiesCache !== null) return _masterSocietiesCache;
+  try {
+    const { rows } = await pool.query(`
+      SELECT column_name FROM information_schema.columns
+      WHERE table_name = 'master_socities'
+    `);
+    const cols = rows.map(r => r.column_name);
+    _masterSocietiesCache = cols.includes('society_name') && cols.includes('affordable');
+  } catch (err) {
+    console.warn('[masterSocietiesHasAffordable]', err.message);
+    _masterSocietiesCache = false;
+  }
+  return _masterSocietiesCache;
+}
+
 // Quote and project a property column only if it exists, with an alias. Used to
 // build SELECT lists tolerantly so the dashboard doesn't crash if backend-form
 // hasn't shipped a particular ALTER yet.
@@ -287,6 +309,7 @@ module.exports = {
   logActivity,
   getPropertiesColumns,
   hasCol,
+  masterSocietiesHasAffordable,
   projectIfExists,
   DEMAND_STATUSES,
   SUPPLY_READY_STATUSES,

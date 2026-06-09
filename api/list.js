@@ -1,4 +1,4 @@
-const { pool, getPropertiesColumns, hasCol, SUPPLY_READY_STATUSES } = require('./_db');
+const { pool, getPropertiesColumns, hasCol, masterSocietiesHasAffordable, SUPPLY_READY_STATUSES } = require('./_db');
 const { requireAuth, setCors } = require('./_auth');
 
 // Typed projection list shared by both sides of the UNION ALL. Each tuple is:
@@ -139,6 +139,7 @@ module.exports = async (req, res) => {
 
   try {
     const allCols = await getPropertiesColumns();
+    const hasAffordable = await masterSocietiesHasAffordable();
 
     const { search, city, source, poc, dateField, from, to,
             page, limit: rawLimit } = req.query;
@@ -228,8 +229,24 @@ module.exports = async (req, res) => {
     const limitParamIdx = baseParams.length + outerParams.length + 1;
     const offsetParamIdx = baseParams.length + outerParams.length + 2;
 
+    // master_socities.affordable (BOOLEAN) folded in by matching society_name
+    // (case-insensitive, trimmed). LATERAL + LIMIT 1 keeps it a 1:1 lookup so a
+    // duplicate society_name in the master table can't multiply demand rows.
+    // Skipped entirely (projected NULL) where the externally-owned table is absent.
+    const affordableSelect = hasAffordable
+      ? 'ms.affordable AS affordable,'
+      : 'NULL::boolean AS affordable,';
+    const affordableJoin = hasAffordable
+      ? `LEFT JOIN LATERAL (
+             SELECT affordable FROM master_socities ms
+             WHERE LOWER(TRIM(ms.society_name)) = LOWER(TRIM(u.society_name))
+             LIMIT 1
+           ) ms ON TRUE`
+      : '';
+
     const rowsSql = `${baseCte}
       SELECT u.*,
+             ${affordableSelect}
              dd.listing_price          AS listing_price,
              COALESCE(dd.demand_status, 'Buyer Visit') AS demand_status,
              COALESCE(dd.availability_status, 'Available') AS availability_status,
@@ -247,6 +264,7 @@ module.exports = async (req, res) => {
              dd.updated_at
       FROM unified u
       LEFT JOIN demand_details dd ON dd.uid = u.uid
+      ${affordableJoin}
       ${outerWhere}
       ORDER BY COALESCE(u.ama_date, u.key_handover_date) DESC NULLS LAST
       LIMIT $${limitParamIdx} OFFSET $${offsetParamIdx}`;
