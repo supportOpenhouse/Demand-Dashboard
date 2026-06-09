@@ -14,6 +14,7 @@ const state = {
     city: '',
     source: '',
     poc: '',
+    affordable: '',
     dateField: 'ama_date',
     from: '',
     to: '',
@@ -214,6 +215,7 @@ function bindUI() {
   $('#filterCity').addEventListener('change', (e) => { state.filters.city = e.target.value; loadData(); });
   $('#filterSource').addEventListener('change', (e) => { state.filters.source = e.target.value; loadData(); });
   $('#filterPoc').addEventListener('change', (e) => { state.filters.poc = e.target.value; loadData(); });
+  $('#filterAffordable').addEventListener('change', (e) => { state.filters.affordable = e.target.value; loadData(); });
   $('#filterDateField').addEventListener('change', (e) => { state.filters.dateField = e.target.value; loadData(); });
   $('#filterFrom').addEventListener('change', (e) => { state.filters.from = e.target.value; loadData(); });
   $('#filterTo').addEventListener('change', (e) => { state.filters.to = e.target.value; loadData(); });
@@ -225,12 +227,13 @@ function bindUI() {
   });
 
   $('#clearAllBtn').addEventListener('click', () => {
-    state.filters = { search: '', city: '', source: '', poc: '',
+    state.filters = { search: '', city: '', source: '', poc: '', affordable: '',
                       dateField: 'ama_date', from: '', to: '' };
     $('#searchInput').value = '';
     $('#filterCity').value = '';
     $('#filterSource').value = '';
     $('#filterPoc').value = '';
+    $('#filterAffordable').value = '';
     $('#filterDateField').value = 'ama_date';
     $('#filterFrom').value = '';
     $('#filterTo').value = '';
@@ -312,6 +315,7 @@ async function loadData() {
   if (f.city) q.set('city', f.city);
   if (f.source) q.set('source', f.source);
   if (f.poc) q.set('poc', f.poc);
+  if (f.affordable) q.set('affordable', f.affordable);
   if (f.dateField) q.set('dateField', f.dateField);
   if (f.from) q.set('from', f.from);
   if (f.to) q.set('to', f.to);

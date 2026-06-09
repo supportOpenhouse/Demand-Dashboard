@@ -141,7 +141,7 @@ module.exports = async (req, res) => {
     const allCols = await getPropertiesColumns();
     const hasAffordable = await masterSocietiesHasAffordable();
 
-    const { search, city, source, poc, dateField, from, to,
+    const { search, city, source, poc, affordable, dateField, from, to,
             page, limit: rawLimit } = req.query;
 
     // Real-side gate: only properties whose ap_details.status is supply-ready.
@@ -164,6 +164,14 @@ module.exports = async (req, res) => {
     if (poc) {
       outerParams.push(poc);
       outerConditions.push(`u.poc = $${baseParams.length + outerParams.length}`);
+    }
+    // Affordable filter ('yes' / 'no') resolves against the master_socities
+    // LEFT JOIN added below, so it only applies where that table is available.
+    // 'yes' → affordable = true; 'no' → affordable = false (societies with no
+    // master row are NULL and fall out of both filtered views, as expected).
+    if (hasAffordable && (affordable === 'yes' || affordable === 'no')) {
+      outerParams.push(affordable === 'yes');
+      outerConditions.push(`ms.affordable = $${baseParams.length + outerParams.length}`);
     }
 
     // Date range filter — `dateField` lets the caller pick which timestamp to filter on.
@@ -198,6 +206,22 @@ module.exports = async (req, res) => {
     const propsProjection = buildPropertiesProjection(allCols);
     const legacyProjection = buildLegacyProjection();
 
+    // master_socities.affordable (BOOLEAN) folded in by matching society_name
+    // (case-insensitive, trimmed). LATERAL + LIMIT 1 keeps it a 1:1 lookup so a
+    // duplicate society_name in the master table can't multiply demand rows.
+    // Skipped entirely (projected NULL) where the externally-owned table is absent.
+    // Shared by the count and rows queries so the affordable filter applies to both.
+    const affordableSelect = hasAffordable
+      ? 'ms.affordable AS affordable,'
+      : 'NULL::boolean AS affordable,';
+    const affordableJoin = hasAffordable
+      ? `LEFT JOIN LATERAL (
+             SELECT affordable FROM master_socities ms
+             WHERE LOWER(TRIM(ms.society_name)) = LOWER(TRIM(u.society_name))
+             LIMIT 1
+           ) ms ON TRUE`
+      : '';
+
     // CTE encapsulates the UNION ALL of real + legacy, then outer SELECT applies
     // demand_details join, filters, ordering and pagination uniformly across both.
     // Real side: INNER JOIN ap_details + status filter — properties without an
@@ -222,27 +246,13 @@ module.exports = async (req, res) => {
     const countSql = `${baseCte}
       SELECT COUNT(*) FROM unified u
       LEFT JOIN demand_details dd ON dd.uid = u.uid
+      ${affordableJoin}
       ${outerWhere}`;
     const countResult = await pool.query(countSql, [...baseParams, ...outerParams]);
     const totalCount = parseInt(countResult.rows[0].count);
 
     const limitParamIdx = baseParams.length + outerParams.length + 1;
     const offsetParamIdx = baseParams.length + outerParams.length + 2;
-
-    // master_socities.affordable (BOOLEAN) folded in by matching society_name
-    // (case-insensitive, trimmed). LATERAL + LIMIT 1 keeps it a 1:1 lookup so a
-    // duplicate society_name in the master table can't multiply demand rows.
-    // Skipped entirely (projected NULL) where the externally-owned table is absent.
-    const affordableSelect = hasAffordable
-      ? 'ms.affordable AS affordable,'
-      : 'NULL::boolean AS affordable,';
-    const affordableJoin = hasAffordable
-      ? `LEFT JOIN LATERAL (
-             SELECT affordable FROM master_socities ms
-             WHERE LOWER(TRIM(ms.society_name)) = LOWER(TRIM(u.society_name))
-             LIMIT 1
-           ) ms ON TRUE`
-      : '';
 
     const rowsSql = `${baseCte}
       SELECT u.*,
