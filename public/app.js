@@ -3,7 +3,10 @@ const state = {
   user: null,
   rows: [],
   total: 0,
-  grandTotal: 0,
+  // Pool count restricted to the current City scope (no other filters).
+  // Drives the header subtitle and the count-badge denominator so they
+  // stay in sync with the header's scope label.
+  scopeTotal: 0,
   openUid: null,
   sortKey: null,
   sortDir: 'desc',
@@ -339,15 +342,15 @@ async function loadData() {
 
     state.rows = data.data;
     state.total = data.total;
-    if (typeof data.grandTotal === 'number') state.grandTotal = data.grandTotal;
+    if (typeof data.scopeTotal === 'number') state.scopeTotal = data.scopeTotal;
     if (data.distinct) state.distinct = data.distinct;
     populateFilterDropdowns();
     renderTable();
-    // Header subtitle shows the absolute pool size (grandTotal) so it stays
-    // stable as filters are applied; the count badge below the filter bar
-    // surfaces the filtered numerator over the same denominator.
+    // Header subtitle shows the City scope's full count (other filters don't
+    // affect this denominator), so "All Cities · 182" or "Noida · 35" stays
+    // coherent with the scope label. The badge below uses the same denominator.
     $('#headerSub').textContent =
-      (state.filters.city || 'All Cities') + ' · ' + (state.grandTotal ?? state.total) + ' Properties';
+      (state.filters.city || 'All Cities') + ' · ' + state.scopeTotal + ' Properties';
   } catch (e) {
     console.error(e);
     showToast('Network error', 'error');
@@ -404,7 +407,7 @@ function renderTable() {
     return;
   }
   $('#emptyBox').style.display = 'none';
-  $('#countBadge').textContent = `${rows.length} of ${state.grandTotal ?? state.total} properties`;
+  $('#countBadge').textContent = `${rows.length} of ${state.scopeTotal} properties`;
 
   body.innerHTML = rows.map(r => renderRow(r)).join('');
 
