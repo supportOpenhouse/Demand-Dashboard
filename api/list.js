@@ -272,21 +272,20 @@ module.exports = async (req, res) => {
     const totalCount = parseInt(countResult.rows[0].count);
 
     // Scope total — count of the unified pool restricted to the city scope
-    // ONLY (no source/poc/affordable/status/date/search filters applied). This
-    // is the denominator the dashboard header + count badge display so the
-    // count matches the header's scope label ("All Cities" → full pool;
-    // "Noida" → all Noida properties). Other filters narrow the badge
-    // numerator without touching this denominator.
-    const scopeConditions = [];
-    const scopeParams = [];
+    // ONLY (no source/poc/affordable/status/date/search filters applied).
+    // Drives the header subtitle's first number when a city is picked
+    // ("Noida · 35 of 182 Properties"). Skipped when no city is set since
+    // it would equal grandTotal.
+    const grandTotalSql = `${baseCte} SELECT COUNT(*) FROM unified u`;
+    const grandTotalResult = await pool.query(grandTotalSql, baseParams);
+    const grandTotal = parseInt(grandTotalResult.rows[0].count);
+
+    let scopeTotal = grandTotal;
     if (city) {
-      scopeParams.push(city);
-      scopeConditions.push(`u.city = $${baseParams.length + scopeParams.length}`);
+      const scopeSql = `${baseCte} SELECT COUNT(*) FROM unified u WHERE u.city = $${baseParams.length + 1}`;
+      const scopeResult = await pool.query(scopeSql, [...baseParams, city]);
+      scopeTotal = parseInt(scopeResult.rows[0].count);
     }
-    const scopeWhere = scopeConditions.length ? `WHERE ${scopeConditions.join(' AND ')}` : '';
-    const scopeTotalSql = `${baseCte} SELECT COUNT(*) FROM unified u ${scopeWhere}`;
-    const scopeTotalResult = await pool.query(scopeTotalSql, [...baseParams, ...scopeParams]);
-    const scopeTotal = parseInt(scopeTotalResult.rows[0].count);
 
     const limitParamIdx = baseParams.length + outerParams.length + 1;
     const offsetParamIdx = baseParams.length + outerParams.length + 2;
@@ -341,6 +340,7 @@ module.exports = async (req, res) => {
       count: rows.length,
       total: totalCount,
       scopeTotal,
+      grandTotal,
       page: pageNum,
       pageSize,
       totalPages: Math.ceil(totalCount / pageSize),

@@ -3,10 +3,12 @@ const state = {
   user: null,
   rows: [],
   total: 0,
-  // Pool count restricted to the current City scope (no other filters).
-  // Drives the header subtitle and the count-badge denominator so they
-  // stay in sync with the header's scope label.
+  // City-scoped pool count (no other filters). Drives the badge denominator
+  // and the city-scoped half of the header subtitle.
   scopeTotal: 0,
+  // Full pool count (no filters at all). Drives the "of N" tail of the
+  // header subtitle so users see how the city scope compares to the whole.
+  grandTotal: 0,
   openUid: null,
   sortKey: null,
   sortDir: 'desc',
@@ -343,14 +345,18 @@ async function loadData() {
     state.rows = data.data;
     state.total = data.total;
     if (typeof data.scopeTotal === 'number') state.scopeTotal = data.scopeTotal;
+    if (typeof data.grandTotal === 'number') state.grandTotal = data.grandTotal;
     if (data.distinct) state.distinct = data.distinct;
     populateFilterDropdowns();
     renderTable();
-    // Header subtitle shows the City scope's full count (other filters don't
-    // affect this denominator), so "All Cities · 182" or "Noida · 35" stays
-    // coherent with the scope label. The badge below uses the same denominator.
-    $('#headerSub').textContent =
-      (state.filters.city || 'All Cities') + ' · ' + state.scopeTotal + ' Properties';
+    // Header subtitle: when a city is picked, show both the city scope and
+    // the grand total ("Noida · 35 of 182 Properties") so the user sees the
+    // share at a glance. Otherwise just the grand total. Other filters narrow
+    // the count badge below, not this denominator.
+    const sub = state.filters.city
+      ? `${state.filters.city} · ${state.scopeTotal} of ${state.grandTotal} Properties`
+      : `All Cities · ${state.grandTotal} Properties`;
+    $('#headerSub').textContent = sub;
   } catch (e) {
     console.error(e);
     showToast('Network error', 'error');
