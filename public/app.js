@@ -3,6 +3,7 @@ const state = {
   user: null,
   rows: [],
   total: 0,
+  grandTotal: 0,
   openUid: null,
   sortKey: null,
   sortDir: 'desc',
@@ -338,11 +339,15 @@ async function loadData() {
 
     state.rows = data.data;
     state.total = data.total;
+    if (typeof data.grandTotal === 'number') state.grandTotal = data.grandTotal;
     if (data.distinct) state.distinct = data.distinct;
     populateFilterDropdowns();
     renderTable();
+    // Header subtitle shows the absolute pool size (grandTotal) so it stays
+    // stable as filters are applied; the count badge below the filter bar
+    // surfaces the filtered numerator over the same denominator.
     $('#headerSub').textContent =
-      (state.filters.city || 'All Cities') + ' · ' + state.total + ' Properties';
+      (state.filters.city || 'All Cities') + ' · ' + (state.grandTotal ?? state.total) + ' Properties';
   } catch (e) {
     console.error(e);
     showToast('Network error', 'error');
@@ -399,7 +404,7 @@ function renderTable() {
     return;
   }
   $('#emptyBox').style.display = 'none';
-  $('#countBadge').textContent = `${rows.length} of ${state.total} properties`;
+  $('#countBadge').textContent = `${rows.length} of ${state.grandTotal ?? state.total} properties`;
 
   body.innerHTML = rows.map(r => renderRow(r)).join('');
 

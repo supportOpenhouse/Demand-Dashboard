@@ -271,6 +271,14 @@ module.exports = async (req, res) => {
     const countResult = await pool.query(countSql, [...baseParams, ...outerParams]);
     const totalCount = parseInt(countResult.rows[0].count);
 
+    // Grand total — count of the full unified pool (supply-ready gate only,
+    // no outer filters applied). Used by the dashboard header subtitle and the
+    // count-badge denominator so picking a filter narrows the numerator while
+    // the user can still see the absolute pool size they're slicing through.
+    const grandTotalSql = `${baseCte} SELECT COUNT(*) FROM unified u`;
+    const grandTotalResult = await pool.query(grandTotalSql, baseParams);
+    const grandTotal = parseInt(grandTotalResult.rows[0].count);
+
     const limitParamIdx = baseParams.length + outerParams.length + 1;
     const offsetParamIdx = baseParams.length + outerParams.length + 2;
 
@@ -323,6 +331,7 @@ module.exports = async (req, res) => {
       success: true,
       count: rows.length,
       total: totalCount,
+      grandTotal,
       page: pageNum,
       pageSize,
       totalPages: Math.ceil(totalCount / pageSize),
