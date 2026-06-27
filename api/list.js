@@ -141,8 +141,14 @@ module.exports = async (req, res) => {
     const allCols = await getPropertiesColumns();
     const hasAffordable = await masterSocietiesHasAffordable();
 
-    const { search, city, source, poc, affordable, dateField, from, to,
-            page, limit: rawLimit } = req.query;
+    const { search, city, source, poc, affordable, availability, occupancy,
+            dateField, from, to, page, limit: rawLimit } = req.query;
+
+    // Status filters — independent dropdowns, applied as an AND so users can
+    // narrow by both the availability pill (Available/Booked/Sold) and the
+    // occupancy subtitle (Vacant/Tenant/Owner Staying) at the same time.
+    const VALID_AVAIL = ['Available', 'Booked', 'Sold'];
+    const VALID_OCC   = ['Vacant', 'Tenant', 'Owner Staying'];
 
     // Real-side gate: only properties whose ap_details.status is supply-ready.
     // These params occupy the first N placeholders; outer-WHERE filters follow.
@@ -172,6 +178,20 @@ module.exports = async (req, res) => {
     if (hasAffordable && (affordable === 'yes' || affordable === 'no')) {
       outerParams.push(affordable === 'yes');
       outerConditions.push(`ms.affordable = $${baseParams.length + outerParams.length}`);
+    }
+    // Availability → demand_details.availability_status. demand_details is
+    // LEFT JOINed and may be NULL — rows without a demand_details row are
+    // treated as 'Available' downstream via COALESCE, so we match the same way.
+    if (availability && VALID_AVAIL.includes(availability)) {
+      outerParams.push(availability);
+      outerConditions.push(`COALESCE(dd.availability_status, 'Available') = $${baseParams.length + outerParams.length}`);
+    }
+    // Occupancy → unit-level. The dashboard renders the Status subtitle as
+    // possession_status with occupancy_status as fallback, so the filter
+    // matches the same way.
+    if (occupancy && VALID_OCC.includes(occupancy)) {
+      outerParams.push(occupancy);
+      outerConditions.push(`COALESCE(u.possession_status, u.occupancy_status) = $${baseParams.length + outerParams.length}`);
     }
 
     // Date range filter — `dateField` lets the caller pick which timestamp to filter on.
