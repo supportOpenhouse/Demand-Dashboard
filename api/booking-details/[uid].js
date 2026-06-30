@@ -151,10 +151,8 @@ function validate(body) {
     else clean.booking_amount_split_1 = n1;
     if (isNaN(n2) || n2 < 0) errors.push('booking_amount_split_2 must be a non-negative number');
     else clean.booking_amount_split_2 = n2;
-    // Reject when method_1 === method_2 (split into the same instrument makes no sense)
-    if (clean.booking_amount_method && clean.booking_amount_method === clean.booking_amount_method_2) {
-      errors.push('Split payment methods must be different');
-    }
+    // Both legs may use the same instrument (e.g. two separate UPI transfers) —
+    // the only constraint is that the two amounts total the received amount.
     // Sum must equal booking_amount_received (allow 1 paisa tolerance for float rounding).
     if (clean.booking_amount_received != null && !isNaN(n1) && !isNaN(n2)) {
       const sum = n1 + n2;

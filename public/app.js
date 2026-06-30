@@ -1781,11 +1781,8 @@ function validateBookingForm(form) {
     required.push('booking_amount_method_2', 'booking_amount_split_1');
   }
   const missing = required.filter(k => !form[k] && form[k] !== 0);
-  // In split mode the two methods must be different.
-  if (bookingState.payMode === 'split' && form.booking_amount_method &&
-      form.booking_amount_method_2 && form.booking_amount_method === form.booking_amount_method_2) {
-    missing.push('different payment methods (Method 1 and Method 2 must differ)');
-  }
+  // The two legs may use the same instrument (e.g. two separate UPI transfers),
+  // so identical methods are allowed — only the split amounts are constrained.
   return missing;
 }
 
