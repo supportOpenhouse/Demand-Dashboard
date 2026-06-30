@@ -145,8 +145,13 @@ function buildBookingEmail({ property, booking, submittedBy, submittedByName }) 
 
   // ── Letter body. Variables ───────────────────────────────────────────────
   const addressee = firstName(b.buyer_name) || 'Buyer';
+  // Property identifier mirrors the dashboard's "{tower}-{unit}" format (e.g.
+  // "A-203"). Either part may be blank, so filter before joining — that avoids
+  // both the dangling-dash artifact and silently dropping the unit when the
+  // (nullable) tower is absent.
+  const towerUnit = [p.tower_no, p.unit_no].filter(v => v != null && v !== '').join('-');
   const propertyAddress = [
-    p.tower_no && `${p.unit_no} -`,
+    towerUnit,
     p.society_name,
     p.locality,
     p.city,
