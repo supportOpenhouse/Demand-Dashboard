@@ -3,15 +3,21 @@ const { requireAuth, canEdit, setCors } = require('../_auth');
 
 // Pipeline tracking (demand_status + 8 stage dates) was removed from the UI.
 // Schema columns remain but are no longer writable through this endpoint.
-// availability_status (Available/Booked/Sold) is editable by admin + manager,
-// strict enum-validated. Once a Booked submission has been mailed, the
-// booking_details locked flag (checked elsewhere) prevents further status
-// changes for managers — admins keep full edit rights.
+// availability_status (Available/Booked/Sold/Dead) — Available/Booked/Sold are
+// editable by admin + manager; 'Dead' is admin-only (soft-delete: once a unit
+// is Dead it's hidden from viewers + managers by /api/list, so allowing them
+// to set it would immediately lose the row from their view). Strict enum
+// validation. Once a Booked submission has been mailed, the booking_details
+// locked flag (checked elsewhere) prevents further status changes for
+// managers — admins keep full edit rights.
 const EDITOR_FIELDS = ['internal_remarks', 'availability_status'];
 const ADMIN_ONLY_FIELDS = ['listing_price'];
 const TEXT_FIELDS = ['internal_remarks'];
 const ENUM_FIELDS = {
-  availability_status: ['Available', 'Booked', 'Sold'],
+  availability_status: ['Available', 'Booked', 'Sold', 'Dead'],
+};
+const ADMIN_ONLY_ENUM_VALUES = {
+  availability_status: ['Dead'],
 };
 const MAX_LEN = 5000;
 
@@ -65,6 +71,28 @@ module.exports = async (req, res) => {
             success: false,
             error: `${field} must be one of: ${ENUM_FIELDS[field].join(', ')}`,
           });
+        }
+        // Admin-only values (e.g. availability_status = 'Dead'). Also blocks
+        // non-admins from clearing an existing Dead value, since they can't
+        // see the row via /api/list — checked further below against the
+        // current DB value.
+        if ((ADMIN_ONLY_ENUM_VALUES[field] || []).includes(val) && !isAdmin) {
+          return res.status(403).json({
+            success: false,
+            error: `Only admins can set ${field} to "${val}"`,
+          });
+        }
+        if (field === 'availability_status' && !isAdmin) {
+          const { rows: cur } = await pool.query(
+            `SELECT availability_status FROM demand_details WHERE uid = $1`,
+            [uid]
+          );
+          if (cur.length && cur[0].availability_status === 'Dead') {
+            return res.status(403).json({
+              success: false,
+              error: 'Only admins can change status on a Dead unit',
+            });
+          }
         }
         // Lockout: once a Booked submission has been mailed, managers can't
         // change availability_status (admins still can). Check booking_details

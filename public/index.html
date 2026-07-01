@@ -57,6 +57,8 @@
       <option value="Available">Available</option>
       <option value="Booked">Booked</option>
       <option value="Sold">Sold</option>
+      <!-- Dead is admin-only; removed from the DOM for non-admins in renderUserMenu. -->
+      <option value="Dead" data-admin-only>Dead</option>
     </select>
     <select class="filter-select" id="filterOccupancy">
       <option value="">All Occupancy</option>

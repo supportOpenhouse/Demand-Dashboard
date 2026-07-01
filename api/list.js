@@ -145,10 +145,15 @@ module.exports = async (req, res) => {
             dateField, from, to, page, limit: rawLimit } = req.query;
 
     // Status filters — independent dropdowns, applied as an AND so users can
-    // narrow by both the availability pill (Available/Booked/Sold) and the
-    // occupancy subtitle (Vacant/Tenant/Owner Staying) at the same time.
-    const VALID_AVAIL = ['Available', 'Booked', 'Sold'];
+    // narrow by both the availability pill (Available/Booked/Sold/Dead) and
+    // the occupancy subtitle (Vacant/Tenant/Owner Staying) at the same time.
+    // 'Dead' is a soft-delete: rows carrying it are hidden from viewers +
+    // managers by the visibility gate below (`hideDead`) so only admins can
+    // actually see Dead rows or filter by them.
+    const VALID_AVAIL = ['Available', 'Booked', 'Sold', 'Dead'];
     const VALID_OCC   = ['Vacant', 'Tenant', 'Owner Staying'];
+    const hideDead    = user.role !== 'admin';
+    const notDeadSql  = `COALESCE(dd.availability_status, 'Available') <> 'Dead'`;
 
     // Real-side gate: only properties whose ap_details.status is supply-ready.
     // These params occupy the first N placeholders; outer-WHERE filters follow.
@@ -182,10 +187,14 @@ module.exports = async (req, res) => {
     // Availability → demand_details.availability_status. demand_details is
     // LEFT JOINed and may be NULL — rows without a demand_details row are
     // treated as 'Available' downstream via COALESCE, so we match the same way.
+    // For non-admins, filtering on 'Dead' would return zero rows anyway thanks
+    // to the visibility gate; the dropdown option is stripped in the UI too.
     if (availability && VALID_AVAIL.includes(availability)) {
       outerParams.push(availability);
       outerConditions.push(`COALESCE(dd.availability_status, 'Available') = $${baseParams.length + outerParams.length}`);
     }
+    // Visibility gate: non-admins never see Dead units in any query below.
+    if (hideDead) outerConditions.push(notDeadSql);
     // Occupancy → unit-level. The dashboard renders the Status subtitle as
     // possession_status with occupancy_status as fallback, so the filter
     // matches the same way.
@@ -275,14 +284,24 @@ module.exports = async (req, res) => {
     // ONLY (no source/poc/affordable/status/date/search filters applied).
     // Drives the header subtitle's first number when a city is picked
     // ("Noida · 35 of 182 Properties"). Skipped when no city is set since
-    // it would equal grandTotal.
-    const grandTotalSql = `${baseCte} SELECT COUNT(*) FROM unified u`;
+    // it would equal grandTotal. Dead-unit visibility gate applied for
+    // non-admins so the denominator matches what they can actually see.
+    const totalsExtraWhere = hideDead ? `WHERE ${notDeadSql}` : '';
+    const grandTotalSql = `${baseCte}
+      SELECT COUNT(*) FROM unified u
+      LEFT JOIN demand_details dd ON dd.uid = u.uid
+      ${totalsExtraWhere}`;
     const grandTotalResult = await pool.query(grandTotalSql, baseParams);
     const grandTotal = parseInt(grandTotalResult.rows[0].count);
 
     let scopeTotal = grandTotal;
     if (city) {
-      const scopeSql = `${baseCte} SELECT COUNT(*) FROM unified u WHERE u.city = $${baseParams.length + 1}`;
+      const scopeWhereParts = [`u.city = $${baseParams.length + 1}`];
+      if (hideDead) scopeWhereParts.push(notDeadSql);
+      const scopeSql = `${baseCte}
+        SELECT COUNT(*) FROM unified u
+        LEFT JOIN demand_details dd ON dd.uid = u.uid
+        WHERE ${scopeWhereParts.join(' AND ')}`;
       const scopeResult = await pool.query(scopeSql, [...baseParams, city]);
       scopeTotal = parseInt(scopeResult.rows[0].count);
     }

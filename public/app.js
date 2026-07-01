@@ -96,11 +96,14 @@ function fmtSource(v) {
 
 // Demand-side availability. Drives the colored pill in the main row's
 // "Status" column AND the dropdown in the expand panel's Property header.
-const AVAILABILITY_OPTIONS = ['Available', 'Booked', 'Sold'];
+// 'Dead' is admin-only: only admins can pick it, and rows with it are hidden
+// from /api/list for viewers + managers (backend-enforced).
+const AVAILABILITY_OPTIONS = ['Available', 'Booked', 'Sold', 'Dead'];
 const AVAILABILITY_CLASS = {
   'Available': 'avail-green',
   'Booked':    'avail-amber',
   'Sold':      'avail-red',
+  'Dead':      'avail-gray',
 };
 function renderAvailabilityPill(value) {
   const v = value || 'Available';
@@ -109,13 +112,16 @@ function renderAvailabilityPill(value) {
 }
 
 // Inline status selector for the Property section header. Posts to
-// /api/demand-details via the delegated change handler.
+// /api/demand-details via the delegated change handler. 'Dead' is only
+// exposed to admins — the backend also enforces this, but hiding the option
+// avoids UX confusion for managers.
 function renderAvailabilityHeaderControl(r) {
   const current = r.availability_status || 'Available';
   const cls = AVAILABILITY_CLASS[current] || 'avail-green';
-  const opts = AVAILABILITY_OPTIONS.map(o =>
-    `<option value="${esc(o)}"${o === current ? ' selected' : ''}>${esc(o)}</option>`
-  ).join('');
+  const opts = AVAILABILITY_OPTIONS
+    .filter(o => o !== 'Dead' || isAdmin() || current === 'Dead')
+    .map(o => `<option value="${esc(o)}"${o === current ? ' selected' : ''}>${esc(o)}</option>`)
+    .join('');
   return `
     <span class="avail-header-control">
       <select class="inline-select avail-select ${cls}"
@@ -201,6 +207,12 @@ function renderUserMenu() {
     $('#userAvatar').src = `data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='32' height='32' viewBox='0 0 32 32'><circle cx='16' cy='16' r='16' fill='%234f46e5'/><text x='16' y='21' text-anchor='middle' fill='white' font-family='Inter' font-size='14' font-weight='600'>${initial}</text></svg>`;
   }
   if (isAdmin()) $('#manageUsersBtn').style.display = 'inline-flex';
+  // Strip any admin-only options from filter dropdowns for non-admins so they
+  // can't select filters that would return zero rows for them (Dead units are
+  // hidden server-side).
+  if (!isAdmin()) {
+    $$('option[data-admin-only]').forEach(opt => opt.remove());
+  }
 }
 
 // ── UI bindings ────────────────────────────────────────────────────────
@@ -463,8 +475,11 @@ function renderRow(r) {
               title="View remarks history">📜</button>`;
   }
 
+  // Dead units (admin-only) get a light-red row wash so they stand out from
+  // live inventory. The class is also applied to the expand row for continuity.
+  const deadCls = (r.availability_status === 'Dead') ? 'dead' : '';
   const dataRow = `
-    <tr class="data-row ${isOpen ? 'open' : ''}" data-uid="${esc(r.uid)}">
+    <tr class="data-row ${isOpen ? 'open' : ''} ${deadCls}" data-uid="${esc(r.uid)}">
       <td><span class="toggle-arrow">▶</span></td>
       <td>
         <div class="prop-cell">
@@ -493,7 +508,7 @@ function renderRow(r) {
     </tr>`;
 
   const expandRow = `
-    <tr class="expand-row ${isOpen ? 'open' : ''}" data-uid-expand="${esc(r.uid)}">
+    <tr class="expand-row ${isOpen ? 'open' : ''} ${deadCls}" data-uid-expand="${esc(r.uid)}">
       <td colspan="11">${isOpen ? renderExpand(r) : ''}</td>
     </tr>`;
 
@@ -992,14 +1007,14 @@ document.addEventListener('change', (e) => {
 });
 
 // Update all DOM nodes tied to a uid's availability_status: header select color,
-// main row pill, and Submit Details button visibility.
+// main row pill, row-level Dead highlight, and Submit Details button visibility.
 function syncAvailabilityUI(uid, value) {
   const cls = AVAILABILITY_CLASS[value] || 'avail-green';
 
   // Header select
   const sel = document.querySelector(`select.avail-select[data-uid="${cssEscape(uid)}"]`);
   if (sel) {
-    sel.classList.remove('avail-green', 'avail-amber', 'avail-red');
+    sel.classList.remove('avail-green', 'avail-amber', 'avail-red', 'avail-gray');
     sel.classList.add(cls);
   }
 
@@ -1010,7 +1025,10 @@ function syncAvailabilityUI(uid, value) {
   if (row) {
     const pill = row.querySelector('.avail-pill');
     if (pill) pill.outerHTML = renderAvailabilityPill(value);
+    row.classList.toggle('dead', value === 'Dead');
   }
+  const expandRow = document.querySelector(`tr.expand-row[data-uid-expand="${cssEscape(uid)}"]`);
+  if (expandRow) expandRow.classList.toggle('dead', value === 'Dead');
 
   // Submit Details row visibility — rendered on its own line below the section
   // header. Already present in the DOM for editors (display:none until Booked);

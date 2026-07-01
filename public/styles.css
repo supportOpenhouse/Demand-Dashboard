@@ -138,6 +138,14 @@ tbody tr.data-row:hover { background: #f0f2ff; }
 tbody tr.data-row.open  { background: #e0e4ff; }
 tbody tr.data-row td    { padding: 10px 12px; vertical-align: middle; }
 
+/* Dead units (admin-only visibility) — highlight the whole row in a light
+   red wash so they're immediately distinguishable from live inventory. Wins
+   over hover/open backgrounds. Paired with .expand-row.dead for continuity. */
+tbody tr.data-row.dead,
+tbody tr.data-row.dead:hover,
+tbody tr.data-row.dead.open           { background: #fef2f2; }
+tbody tr.expand-row.dead td           { background: #fef2f2; }
+
 tbody tr.expand-row { display: none; }
 tbody tr.expand-row.open { display: table-row; }
 tbody tr.expand-row td {
@@ -189,6 +197,7 @@ tbody tr.expand-row td {
 .avail-pill.avail-green { background: #dcfce7; color: #166534; }
 .avail-pill.avail-amber { background: #fef3c7; color: #92400e; }
 .avail-pill.avail-red   { background: #fee2e2; color: #b91c1c; }
+.avail-pill.avail-gray  { background: #e5e7eb; color: #4b5563; }
 
 /* Availability dropdown in the Property section header — same color codes. */
 .avail-header-control {
@@ -210,6 +219,7 @@ tbody tr.expand-row td {
 .avail-select.avail-green { background-color: #dcfce7; color: #166534; }
 .avail-select.avail-amber { background-color: #fef3c7; color: #92400e; }
 .avail-select.avail-red   { background-color: #fee2e2; color: #b91c1c; }
+.avail-select.avail-gray  { background-color: #e5e7eb; color: #4b5563; }
 .avail-select:focus       { outline: 2px solid rgba(99,102,241,.4); outline-offset: 1px; }
 
 /* Submit Details button — appears only when status === Booked. */
