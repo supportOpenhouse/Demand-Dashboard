@@ -1458,6 +1458,7 @@ const bookingState = {
   fixedRecipients: [],
   paymentMethods: [],
   payMode: 'single',  // 'single' | 'split'
+  previewMode: 'buyer', // 'buyer' | 'cp' — which mail Step 3 is showing/sending
   form: {},
 };
 
@@ -1473,13 +1474,18 @@ async function openBookingModal(uid) {
   // Reset the Send button — sendBookingMail() leaves it as "✓ Sent" / disabled
   // on success to prevent races, so re-opening the modal must restore it.
   const sendBtn = $('#bookingSendBtn');
-  if (sendBtn) { sendBtn.disabled = false; sendBtn.textContent = '📨 Send Mail'; }
+  if (sendBtn) { sendBtn.disabled = false; sendBtn.textContent = '📨 Send Buyer Mail'; }
+  const cpSendBtn = $('#bookingSendCpBtn');
+  if (cpSendBtn) { cpSendBtn.disabled = false; cpSendBtn.textContent = '📨 Send CP Mail'; }
   bookingState.recipients = [];
   bookingState.brokers = [];
   bookingState.fixedRecipients = [];
   bookingState.paymentMethods = [];
   bookingState.payMode = 'single';
+  bookingState.previewMode = 'buyer';
   applyPayMode('single');
+  setBF('source', 'CP');
+  applySource('CP');
   updateAtsPctHint();
 
   // Everything we can render from local state (no network) goes FIRST so the
@@ -1586,6 +1592,13 @@ async function openBookingModal(uid) {
     setBF('booking_amount_method_2', l.booking_amount_method_2);
     setBF('booking_amount_split_1', l.booking_amount_split_1);
     setBF('booking_amount_split_2', l.booking_amount_split_2);
+    setBF('source', l.source || 'CP');
+    setBF('brokerage_amount', l.brokerage_amount);
+    setBF('brokerage_timing', l.brokerage_timing);
+    setBF('brokerage_ats_amount', l.brokerage_ats_amount);
+    setBF('brokerage_registry_amount', l.brokerage_registry_amount);
+    applySource(l.source || 'CP');
+    applyBrokerageTiming();
     setBF('ats_timeline', l.ats_timeline);
     setBF('registry_timeline', l.registry_timeline);
     setBF('booking_amount_forfeitable', l.booking_amount_forfeitable === true ? 'Yes' : l.booking_amount_forfeitable === false ? 'No' : '');
@@ -1744,6 +1757,67 @@ function recomputeSplitTwo() {
   s2El.value = remainder;
 }
 
+// Current Source select value ('CP' | 'Direct'), defaulting to 'CP'.
+function currentSource() {
+  const el = document.querySelector('#bookingModal [data-bf="source"]');
+  return (el && el.value) || 'CP';
+}
+
+// Clears a booking field's value and refreshes its lakhs/crores hint (if any).
+function clearBF(field) {
+  const el = document.querySelector(`#bookingModal [data-bf="${cssEscape(field)}"]`);
+  if (el) { el.value = ''; updateAmountHint(el); }
+}
+
+// Toggles Source-dependent UI: the brokerage amount label ('paid' vs 'collected'),
+// the CP-only payment-schedule block, and the footer's CP buttons. In Direct mode
+// the CP-only fields are cleared so they aren't submitted.
+function applySource(mode) {
+  document.querySelectorAll('#bookingModal [data-source-show]').forEach(el => {
+    el.style.display = el.dataset.sourceShow === mode ? '' : 'none';
+  });
+  document.querySelectorAll('#bookingModal [data-source-label]').forEach(el => {
+    el.style.display = el.dataset.sourceLabel === mode ? '' : 'none';
+  });
+  if (mode === 'Direct') {
+    clearBF('brokerage_timing');
+    clearBF('brokerage_ats_amount');
+    clearBF('brokerage_registry_amount');
+  }
+  applyBrokerageTiming();
+  refreshBookingFooter();
+}
+
+// Reveals the ATS/Registry split inputs only when brokerage is payable at both;
+// clears them otherwise so a stale split isn't submitted.
+function applyBrokerageTiming() {
+  const timing = document.querySelector('#bookingModal [data-bf="brokerage_timing"]')?.value || '';
+  const split = document.querySelector('#bookingModal [data-brokerage-split]');
+  const show = timing === 'ATS & Registry' && currentSource() === 'CP';
+  if (split) split.style.display = show ? 'grid' : 'none';
+  if (!show) {
+    clearBF('brokerage_ats_amount');
+    clearBF('brokerage_registry_amount');
+  }
+}
+
+// Footer button visibility by step + previewMode + source. CP buttons only
+// appear when Source = CP; the Step-3 Send button matches the previewed mail.
+function refreshBookingFooter() {
+  const step = bookingState.step;
+  const isCp = currentSource() === 'CP';
+  $('#bookingBackBtn').style.display = step === 1 ? 'none' : '';
+  $('#bookingNextBtn').style.display = step === 1 ? '' : 'none';
+
+  const onDetails = step === 2;
+  $('#bookingPreviewBtn').style.display = onDetails ? '' : 'none';
+  $('#bookingPreviewCpBtn').style.display = (onDetails && isCp) ? '' : 'none';
+
+  const onPreview = step === 3;
+  $('#bookingSendBtn').style.display = (onPreview && bookingState.previewMode === 'buyer') ? '' : 'none';
+  $('#bookingSendCpBtn').style.display = (onPreview && bookingState.previewMode === 'cp') ? '' : 'none';
+}
+
 // Live rupee equivalent shown next to the Amount Payable at ATS (%) input.
 // e.g. consideration ₹1,27,00,000 × 10% → "= ₹12,70,000". Empty inputs → "= ₹—".
 function updateAtsPctHint() {
@@ -1768,11 +1842,9 @@ function goToBookingStep(step) {
     s.classList.toggle('done', n < step);
   });
 
-  // Footer button visibility
-  $('#bookingBackBtn').style.display = step === 1 ? 'none' : '';
-  $('#bookingPreviewBtn').style.display = step === 2 ? '' : 'none';
-  $('#bookingNextBtn').style.display = step === 3 ? 'none' : (step === 2 ? 'none' : '');
-  $('#bookingSendBtn').style.display = step === 3 ? '' : 'none';
+  // Footer button visibility — delegated so the buyer/CP button pairs stay in
+  // sync with the current step, previewed mail, and Source.
+  refreshBookingFooter();
 }
 
 // Collect form values into bookingState.form
@@ -1801,6 +1873,26 @@ function validateBookingForm(form) {
   const missing = required.filter(k => !form[k] && form[k] !== 0);
   // The two legs may use the same instrument (e.g. two separate UPI transfers),
   // so identical methods are allowed — only the split amounts are constrained.
+  return missing;
+}
+
+// Validate the brokerage fields before previewing/sending the CP (broker) mail.
+// Independent of the buyer-mail validation so the two flows never block each other.
+function validateCpForm(form) {
+  const missing = [];
+  const has = k => form[k] || form[k] === 0;
+  if (!has('brokerage_amount')) missing.push('Brokerage amount');
+  if (!form.brokerage_timing) missing.push('Brokerage payable (timing)');
+  if (form.brokerage_timing === 'ATS & Registry') {
+    if (!has('brokerage_ats_amount')) missing.push('Brokerage at ATS');
+    if (!has('brokerage_registry_amount')) missing.push('Brokerage at Registry');
+    const a = parseFloat(form.brokerage_ats_amount);
+    const r = parseFloat(form.brokerage_registry_amount);
+    const total = parseFloat(form.brokerage_amount);
+    if (!isNaN(a) && !isNaN(r) && !isNaN(total) && Math.abs((a + r) - total) > 0.01) {
+      missing.push(`ATS + Registry split must total the brokerage amount (${total})`);
+    }
+  }
   return missing;
 }
 
@@ -1892,7 +1984,7 @@ const EMAIL_RE_FE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
     if (e.target.id === 'bookingBackBtn') {
       if (bookingState.step > 1) goToBookingStep(bookingState.step - 1);
     }
-    // Preview (page 2 → server preview → page 3)
+    // Buyer Mail Preview (page 2 → server preview → page 3)
     if (e.target.id === 'bookingPreviewBtn') {
       const form = collectBookingForm();
       const missing = validateBookingForm(form);
@@ -1900,12 +1992,32 @@ const EMAIL_RE_FE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
         showToast('Missing required fields: ' + missing.join(', '), 'error');
         return;
       }
-      generateBookingPreview();
+      generateBookingPreview('buyer');
     }
-    // Send
+    // CP Mail Preview
+    if (e.target.id === 'bookingPreviewCpBtn') {
+      const form = collectBookingForm();
+      const missing = validateCpForm(form);
+      if (missing.length) {
+        showToast('CP mail — missing/invalid: ' + missing.join(', '), 'error');
+        return;
+      }
+      generateBookingPreview('cp');
+    }
+    // Send buyer / CP mail
     if (e.target.id === 'bookingSendBtn') {
-      sendBookingMail();
+      sendBookingMail('buyer');
     }
+    if (e.target.id === 'bookingSendCpBtn') {
+      sendBookingMail('cp');
+    }
+  });
+
+  // Source / brokerage-timing selects (change, not input, for <select>)
+  document.addEventListener('change', (e) => {
+    const field = e.target?.dataset?.bf;
+    if (field === 'source') applySource(e.target.value);
+    if (field === 'brokerage_timing') applyBrokerageTiming();
   });
 
   // Enter key on the "Add recipient" / "Add broker" inputs
@@ -1945,7 +2057,9 @@ const EMAIL_RE_FE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
   });
 })();
 
-async function generateBookingPreview() {
+async function generateBookingPreview(mode) {
+  mode = mode === 'cp' ? 'cp' : 'buyer';
+  bookingState.previewMode = mode;
   const form = collectBookingForm();
   try {
     const r = await fetch('/api/booking-details/' + encodeURIComponent(bookingState.uid), {
@@ -1953,7 +2067,7 @@ async function generateBookingPreview() {
       headers: { 'Content-Type': 'application/json' },
       credentials: 'include',
       body: JSON.stringify({
-        action: 'preview',
+        action: mode === 'cp' ? 'preview_cp' : 'preview',
         recipients: bookingState.recipients,
         broker_emails: bookingState.brokers,
         ...form,
@@ -1976,9 +2090,10 @@ async function generateBookingPreview() {
   }
 }
 
-async function sendBookingMail() {
+async function sendBookingMail(mode) {
+  const isCp = mode === 'cp';
   const form = bookingState.form;
-  const btn = $('#bookingSendBtn');
+  const btn = isCp ? $('#bookingSendCpBtn') : $('#bookingSendBtn');
   const original = btn.textContent;
   btn.disabled = true;
   btn.textContent = '⏳ Sending…';
@@ -1989,7 +2104,7 @@ async function sendBookingMail() {
       headers: { 'Content-Type': 'application/json' },
       credentials: 'include',
       body: JSON.stringify({
-        action: 'send',
+        action: isCp ? 'send_cp' : 'send',
         recipients: bookingState.recipients,
         broker_emails: bookingState.brokers,
         ...form,
@@ -2002,14 +2117,13 @@ async function sendBookingMail() {
       btn.textContent = original;
       return;
     }
-    showToast('Booking submitted and email sent', 'success');
-    // Keep the button disabled with a success label — the modal closes a
-    // moment later via classList.remove, but the lock prevents any
-    // double-click from racing a second send in between.
+    showToast(isCp ? 'CP (broker) mail sent' : 'Booking submitted and buyer email sent', 'success');
+    // Mark this mail as sent but KEEP the modal open, so the other mail can be
+    // sent in the same session (re-opening the modal is locked for managers once
+    // a mail has gone out). The disabled state prevents a double-send race.
     btn.textContent = '✓ Sent';
-    $('#bookingModal').classList.remove('open');
 
-    // Reflect lockout: refresh row state, sync UI.
+    // Either send marks the unit Booked.
     const row = state.rows.find(x => x.uid === bookingState.uid);
     if (row) row.availability_status = 'Booked';
     syncAvailabilityUI(bookingState.uid, 'Booked');

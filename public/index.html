@@ -208,6 +208,58 @@
       <div class="booking-page" data-page="2" style="display:none;">
         <div class="booking-property-summary" id="bookingPropertySummary"></div>
 
+        <!-- Source + brokerage. CP shows a payment schedule (and optional ATS/
+             Registry split) that feeds the separate broker mail; Direct only
+             asks the amount to be collected and sends no broker mail. -->
+        <div class="booking-source-block" style="margin-bottom:14px;">
+          <div class="form-grid" style="display:grid;grid-template-columns:200px 1fr;gap:12px;align-items:start;">
+            <div class="fg">
+              <label>Source <span class="req">*</span></label>
+              <select class="booking-input" data-bf="source">
+                <option value="CP">CP</option>
+                <option value="Direct">Direct</option>
+              </select>
+            </div>
+            <div class="fg">
+              <label>
+                <span data-source-label="CP">Brokerage to be paid (₹)</span>
+                <span data-source-label="Direct" style="display:none;">Brokerage to be collected (₹)</span>
+              </label>
+              <input type="number" min="0" step="1" class="booking-input booking-amount-input"
+                     data-bf="brokerage_amount" data-amount-hint="brokerage_amount">
+              <div class="amount-hint" data-amount-hint-for="brokerage_amount"></div>
+            </div>
+          </div>
+
+          <div data-source-show="CP" style="margin-top:10px;">
+            <div class="fg" style="max-width:340px;">
+              <label>Brokerage Payable</label>
+              <select class="booking-input" data-bf="brokerage_timing">
+                <option value="">Select…</option>
+                <option value="Registry Only">At the time of Registry Only</option>
+                <option value="ATS &amp; Registry">At the time of ATS &amp; Registry</option>
+              </select>
+            </div>
+            <div class="form-grid" data-brokerage-split
+                 style="display:none;grid-template-columns:1fr 1fr;gap:12px;margin-top:10px;">
+              <div class="fg">
+                <label>Brokerage at ATS (₹)</label>
+                <input type="number" min="0" step="1" class="booking-input booking-amount-input"
+                       data-bf="brokerage_ats_amount" data-amount-hint="brokerage_ats_amount">
+                <div class="amount-hint" data-amount-hint-for="brokerage_ats_amount"></div>
+              </div>
+              <div class="fg">
+                <label>Brokerage at Registry (₹)</label>
+                <input type="number" min="0" step="1" class="booking-input booking-amount-input"
+                       data-bf="brokerage_registry_amount" data-amount-hint="brokerage_registry_amount">
+                <div class="amount-hint" data-amount-hint-for="brokerage_registry_amount"></div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="booking-section-divider"></div>
+
         <div class="form-grid booking-form-grid">
           <div class="fg">
             <label>Buyer Name <span class="req">*</span></label>
@@ -323,9 +375,13 @@
         <button type="button" class="btn btn-ghost" id="bookingBackBtn" style="display:none;">← Back</button>
       </div>
       <div class="booking-foot-right">
-        <button type="button" class="btn btn-ghost" id="bookingPreviewBtn">Preview Mail</button>
+        <button type="button" class="btn btn-primary" id="bookingPreviewBtn" style="display:none;">👁 Buyer Mail Preview</button>
+        <button type="button" class="btn" id="bookingPreviewCpBtn"
+                style="display:none;background:#0d9488;border-color:#0d9488;color:#fff;">👁 CP Mail Preview</button>
         <button type="button" class="btn btn-primary" id="bookingNextBtn">Next →</button>
-        <button type="button" class="btn btn-primary" id="bookingSendBtn" style="display:none;">📨 Send Mail</button>
+        <button type="button" class="btn btn-primary" id="bookingSendBtn" style="display:none;">📨 Send Buyer Mail</button>
+        <button type="button" class="btn" id="bookingSendCpBtn"
+                style="display:none;background:#0d9488;border-color:#0d9488;color:#fff;">📨 Send CP Mail</button>
       </div>
     </div>
   </div>
