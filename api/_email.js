@@ -262,6 +262,91 @@ function buildBookingEmail({ property, booking, submittedBy, submittedByName }) 
   return { subject, html };
 }
 
+// Shared banner + card chrome so the broker mail matches the buyer mail's look
+// without duplicating (or touching) buildBookingEmail. `title` is the banner
+// heading; `bodyHtml` is the inner letter markup.
+function wrapEmailShell(title, bodyHtml) {
+  const baseUrl = process.env.PUBLIC_BASE_URL
+    || (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : '');
+  const logoUrl = baseUrl ? `${baseUrl.replace(/\/$/, '')}/logo_white.png` : '';
+  const logoCell = logoUrl
+    ? `<td align="right" valign="middle" style="padding:20px 24px;width:1%;white-space:nowrap;">
+         <img src="${logoUrl}" alt="Openhouse" width="44" height="44"
+              style="display:block;height:44px;width:auto;border:0;outline:none;text-decoration:none;">
+       </td>`
+    : '';
+  return `<!DOCTYPE html>
+<html><body style="margin:0;padding:0;background:#f5f6f8;font-family:Inter,Arial,sans-serif;color:#1a1d23;">
+  <div style="max-width:680px;margin:24px auto;background:#fff;border-radius:12px;overflow:hidden;box-shadow:0 1px 4px rgba(0,0,0,.06);">
+    <table role="presentation" cellpadding="0" cellspacing="0" border="0"
+           style="width:100%;background:#FF6B2B;color:#fff;border-collapse:collapse;">
+      <tr>
+        <td valign="middle" style="padding:20px 24px;">
+          <div style="font-size:11px;letter-spacing:.5px;text-transform:uppercase;opacity:.85;">Openhouse</div>
+          <div style="font-size:20px;font-weight:700;margin-top:4px;">${esc(title)}</div>
+        </td>
+        ${logoCell}
+      </tr>
+    </table>
+    <div style="padding:24px;font-size:14px;line-height:1.6;color:#1a1d23;">
+      ${bodyHtml}
+    </div>
+  </div>
+</body></html>`;
+}
+
+// Builds the broker-facing brokerage email (the "CP mail"). Separate from the
+// buyer letter — it carries the brokerage figure/schedule and is sent only to
+// brokers + CP RMs + internal, never the buyer. Only relevant when source==='CP'.
+function buildBrokerEmail({ property, booking, submittedByName, submittedBy }) {
+  const p = property || {};
+  const b = booking || {};
+
+  const towerUnit = [p.tower_no, p.unit_no].filter(v => v != null && v !== '').join('-');
+  const propertyAddress = [towerUnit, p.society_name, p.locality, p.city].filter(Boolean).join(', ');
+  const unitLabel = p.unit_no ? `Unit ${p.unit_no}` : 'Unit';
+  const societyLabel = p.society_name || 'Property';
+  const subject = `Brokerage Details — ${unitLabel}, ${societyLabel}`;
+
+  const buyerLine = b.buyer_name ? ` for buyer <strong>${esc(b.buyer_name)}</strong>` : '';
+  const signerName = submittedByName || submittedBy || 'Team Openhouse';
+
+  // Brokerage sentence — single (payable at registry) vs split (ATS + registry).
+  const isSplit = b.brokerage_timing === 'ATS & Registry'
+    && b.brokerage_ats_amount != null && b.brokerage_registry_amount != null;
+  const brokerageHtml = isSplit
+    ? `a total brokerage of <strong>${esc(inrLetter(b.brokerage_amount))}</strong>, payable
+       <strong>${esc(inrLetter(b.brokerage_ats_amount))}</strong> at the time of ATS and
+       <strong>${esc(inrLetter(b.brokerage_registry_amount))}</strong> at the time of Registry`
+    : `a brokerage of <strong>${esc(inrLetter(b.brokerage_amount))}</strong>, payable at the time of Registry`;
+
+  const bodyHtml = `
+    <p style="margin:0 0 14px;">Dear Partner,</p>
+
+    <p style="margin:0 0 14px;">
+      This is to confirm the booking of <strong>${esc(propertyAddress)}</strong>${buyerLine}.
+    </p>
+
+    <p style="margin:0 0 14px;">
+      As agreed, you will be entitled to ${brokerageHtml}.
+    </p>
+
+    ${b.other_conditions ? `
+      <p style="margin:0 0 14px;white-space:pre-wrap;">${esc(b.other_conditions)}</p>
+    ` : ''}
+
+    <p style="margin:0 0 14px;">
+      Please feel free to reach out if you have any questions or require further clarifications.
+    </p>
+
+    <p style="margin:0 0 4px;">Thanks &amp; Regards,</p>
+    <p style="margin:0 0 4px;"><strong>${esc(signerName)}</strong></p>
+    <p style="margin:0;"><a href="https://www.openhouse.in" style="color:#1d4ed8;text-decoration:underline;">www.openhouse.in</a></p>
+  `;
+
+  return { subject, html: wrapEmailShell('Brokerage Details', bodyHtml) };
+}
+
 async function sendMail({ to, subject, html }) {
   const transporter = getTransporter();
   const from = process.env.SMTP_FROM || process.env.SMTP_USER;
@@ -274,4 +359,4 @@ async function sendMail({ to, subject, html }) {
   return info;
 }
 
-module.exports = { buildBookingEmail, sendMail };
+module.exports = { buildBookingEmail, buildBrokerEmail, sendMail };

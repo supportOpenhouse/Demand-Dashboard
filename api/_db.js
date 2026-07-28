@@ -111,6 +111,22 @@ const INIT_SQL = `
   ALTER TABLE booking_details ADD COLUMN IF NOT EXISTS booking_amount_split_1  REAL;
   ALTER TABLE booking_details ADD COLUMN IF NOT EXISTS booking_amount_split_2  REAL;
 
+  -- Source + brokerage. "source" is the deal channel: 'CP' (channel partner /
+  -- broker involved) or 'Direct' (no CP). Drives a second, broker-only email:
+  --   • CP     → brokerage_amount is the amount to be PAID to the CP, payable
+  --              either 'Registry Only' or 'ATS & Registry'. For the latter the
+  --              amount is split into brokerage_ats_amount + brokerage_registry_amount.
+  --   • Direct → brokerage_amount is the amount to be COLLECTED; no timing/split,
+  --              and no broker email is sent.
+  -- cp_mail_sent_at is the send timestamp for the broker email (parallel to
+  -- mail_sent_at for the buyer email); NULL until the CP mail is sent.
+  ALTER TABLE booking_details ADD COLUMN IF NOT EXISTS source                    TEXT DEFAULT 'CP';
+  ALTER TABLE booking_details ADD COLUMN IF NOT EXISTS brokerage_amount          REAL;
+  ALTER TABLE booking_details ADD COLUMN IF NOT EXISTS brokerage_timing          TEXT;
+  ALTER TABLE booking_details ADD COLUMN IF NOT EXISTS brokerage_ats_amount      REAL;
+  ALTER TABLE booking_details ADD COLUMN IF NOT EXISTS brokerage_registry_amount REAL;
+  ALTER TABLE booking_details ADD COLUMN IF NOT EXISTS cp_mail_sent_at           TIMESTAMPTZ;
+
   -- legacy_properties: parallel to the properties table but OWNED by the
   -- demand dashboard. Holds property records that came in via legacy bulk
   -- import (CSV) and do not belong in the supply pipeline. The Supply Closure

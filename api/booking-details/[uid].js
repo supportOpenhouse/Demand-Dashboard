@@ -24,9 +24,11 @@
 
 const { pool, logActivity } = require('../_db');
 const { requireAuth, canEdit, setCors } = require('../_auth');
-const { buildBookingEmail, sendMail } = require('../_email');
+const { buildBookingEmail, buildBrokerEmail, sendMail } = require('../_email');
 
 const PAYMENT_METHODS = ['UPI', 'NEFT', 'IMPS', 'RTGS', 'Cheque', 'Cash', 'Other'];
+const SOURCES = ['CP', 'Direct'];
+const BROKERAGE_TIMINGS = ['Registry Only', 'ATS & Registry'];
 const SALUTATIONS = ['Mr.', 'Mrs.', 'Ms.', 'Dr.'];
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const ISO_DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
@@ -130,6 +132,53 @@ function validate(body) {
   }
   clean.broker_emails = [...new Set(brokers)];
 
+  // Source — deal channel. Defaults to 'CP' when omitted/blank.
+  if (body.source === undefined || body.source === null || body.source === '') {
+    clean.source = 'CP';
+  } else if (SOURCES.includes(String(body.source).trim())) {
+    clean.source = String(body.source).trim();
+  } else {
+    errors.push(`source must be one of: ${SOURCES.join(', ')}`);
+  }
+
+  // Brokerage amount — non-negative. Meaning depends on source: for CP it's the
+  // amount to be paid to the partner; for Direct it's the amount to be collected.
+  if (body.brokerage_amount === undefined || body.brokerage_amount === null || body.brokerage_amount === '') {
+    clean.brokerage_amount = null;
+  } else {
+    const n = parseFloat(body.brokerage_amount);
+    if (isNaN(n) || n < 0) errors.push('brokerage_amount must be a non-negative number');
+    else clean.brokerage_amount = n;
+  }
+
+  // Brokerage timing + split — only meaningful for CP. For Direct, forced null.
+  // Type-sanitized here; requiredness + sum are enforced only in the send_cp /
+  // preview_cp branch so the buyer flow is never blocked by brokerage state.
+  if (clean.source === 'Direct') {
+    clean.brokerage_timing = null;
+    clean.brokerage_ats_amount = null;
+    clean.brokerage_registry_amount = null;
+  } else {
+    if (body.brokerage_timing === undefined || body.brokerage_timing === null || body.brokerage_timing === '') {
+      clean.brokerage_timing = null;
+    } else if (BROKERAGE_TIMINGS.includes(String(body.brokerage_timing).trim())) {
+      clean.brokerage_timing = String(body.brokerage_timing).trim();
+    } else {
+      errors.push(`brokerage_timing must be one of: ${BROKERAGE_TIMINGS.join(', ')}`);
+    }
+    if (clean.brokerage_timing === 'ATS & Registry') {
+      for (const f of ['brokerage_ats_amount', 'brokerage_registry_amount']) {
+        if (body[f] === undefined || body[f] === null || body[f] === '') { clean[f] = null; continue; }
+        const n = parseFloat(body[f]);
+        if (isNaN(n) || n < 0) errors.push(`${f} must be a non-negative number`);
+        else clean[f] = n;
+      }
+    } else {
+      clean.brokerage_ats_amount = null;
+      clean.brokerage_registry_amount = null;
+    }
+  }
+
   // Split payment — optional second leg. If method_2 OR split_1 OR split_2 is
   // present, treat as a split and require all three. Else single (legs NULL).
   const m2 = body.booking_amount_method_2;
@@ -175,6 +224,21 @@ function effectiveRecipients(clean) {
     ...(clean.buyer_email ? [clean.buyer_email] : []),
     ...(clean.co_buyer_email ? [clean.co_buyer_email] : []),
   ];
+  const seen = new Set();
+  return all.filter(e => {
+    const k = String(e).toLowerCase();
+    if (seen.has(k)) return false;
+    seen.add(k);
+    return true;
+  });
+}
+
+// Recipient list for the broker (CP) mail = brokers + CP RMs + internal. The
+// `recipients` array already carries the CP RMs and the fixed internal addresses
+// (seeded as defaults in the modal). Buyer / co-buyer emails are deliberately
+// excluded so brokerage figures never reach the buyer.
+function cpRecipients(clean) {
+  const all = [...(clean.broker_emails || []), ...(clean.recipients || [])];
   const seen = new Set();
   return all.filter(e => {
     const k = String(e).toLowerCase();
@@ -268,6 +332,8 @@ module.exports = async (req, res) => {
         team: teamUsers.rows,
         fixedRecipients: FIXED,
         paymentMethods: PAYMENT_METHODS,
+        sources: SOURCES,
+        brokerageTimings: BROKERAGE_TIMINGS,
       });
     } catch (err) {
       console.error('[/api/booking-details GET]', err.message);
@@ -282,8 +348,8 @@ module.exports = async (req, res) => {
   }
 
   const { action } = req.body || {};
-  if (!['preview', 'send', 'save'].includes(action)) {
-    return res.status(400).json({ success: false, error: `action must be one of: preview, send, save` });
+  if (!['preview', 'send', 'save', 'preview_cp', 'send_cp'].includes(action)) {
+    return res.status(400).json({ success: false, error: `action must be one of: preview, send, save, preview_cp, send_cp` });
   }
 
   const { clean, errors } = validate(req.body);
@@ -305,6 +371,120 @@ module.exports = async (req, res) => {
       success: true, subject, html,
       recipients: effectiveRecipients(clean),
     });
+  }
+
+  // ── action: preview_cp — render the broker (CP) mail. No DB write, no send.
+  if (action === 'preview_cp') {
+    const { subject, html } = buildBrokerEmail({
+      property,
+      booking: clean,
+      submittedBy: user.email,
+      submittedByName: user.name || user.email,
+    });
+    return res.status(200).json({
+      success: true, subject, html,
+      recipients: cpRecipients(clean),
+    });
+  }
+
+  // ── action: send_cp — send the broker (CP) mail + persist brokerage. Separate
+  // from the buyer send; carries its own validation + cp_mail_sent_at timestamp.
+  if (action === 'send_cp') {
+    if (clean.source !== 'CP') {
+      return res.status(400).json({ success: false, error: 'CP mail is only available when Source is CP.' });
+    }
+    const cpErrors = [];
+    if (clean.brokerage_amount == null) cpErrors.push('Brokerage amount is required');
+    if (!clean.brokerage_timing) cpErrors.push('Brokerage timing is required');
+    if (clean.brokerage_timing === 'ATS & Registry') {
+      if (clean.brokerage_ats_amount == null) cpErrors.push('Brokerage at ATS is required');
+      if (clean.brokerage_registry_amount == null) cpErrors.push('Brokerage at Registry is required');
+      if (clean.brokerage_ats_amount != null && clean.brokerage_registry_amount != null && clean.brokerage_amount != null
+          && Math.abs((clean.brokerage_ats_amount + clean.brokerage_registry_amount) - clean.brokerage_amount) > 0.01) {
+        cpErrors.push(`Brokerage split (${clean.brokerage_ats_amount + clean.brokerage_registry_amount}) must total the brokerage amount (${clean.brokerage_amount})`);
+      }
+    }
+    const cpTo = cpRecipients(clean);
+    if (!cpTo.length) cpErrors.push('At least one CP recipient (broker or CP RM) is required');
+    if (cpErrors.length) return res.status(400).json({ success: false, error: cpErrors.join('; ') });
+
+    // Manager lockout: block a re-send once a CP mail has gone out for this uid.
+    if (user.role !== 'admin') {
+      const existing = await pool.query(
+        `SELECT 1 FROM booking_details WHERE uid = $1 AND cp_mail_sent_at IS NOT NULL LIMIT 1`,
+        [uid]
+      );
+      if (existing.rows.length) {
+        return res.status(403).json({
+          success: false,
+          error: 'A CP mail for this property has already been sent. Only admins can re-send.',
+        });
+      }
+    }
+
+    // Persist brokerage on the most recent booking row (usually the one the buyer
+    // send just created in this session); insert a fresh row if the CP mail is
+    // sent before the buyer mail.
+    let cpRowId;
+    const latest = await pool.query(
+      `SELECT id FROM booking_details WHERE uid = $1 ORDER BY created_at DESC LIMIT 1`,
+      [uid]
+    );
+    if (latest.rows.length) {
+      cpRowId = latest.rows[0].id;
+      await pool.query(
+        `UPDATE booking_details
+           SET source = $2, brokerage_amount = $3, brokerage_timing = $4,
+               brokerage_ats_amount = $5, brokerage_registry_amount = $6,
+               broker_emails = $7, recipients = $8, updated_at = NOW()
+         WHERE id = $1`,
+        [cpRowId, clean.source, clean.brokerage_amount, clean.brokerage_timing,
+         clean.brokerage_ats_amount, clean.brokerage_registry_amount,
+         JSON.stringify(clean.broker_emails || []), JSON.stringify(clean.recipients || [])]
+      );
+    } else {
+      const ins = await pool.query(
+        `INSERT INTO booking_details (
+           uid, source, brokerage_amount, brokerage_timing,
+           brokerage_ats_amount, brokerage_registry_amount, buyer_name,
+           recipients, broker_emails, submitted_by
+         ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) RETURNING id`,
+        [uid, clean.source, clean.brokerage_amount, clean.brokerage_timing,
+         clean.brokerage_ats_amount, clean.brokerage_registry_amount, clean.buyer_name,
+         JSON.stringify(clean.recipients || []), JSON.stringify(clean.broker_emails || []), user.email]
+      );
+      cpRowId = ins.rows[0].id;
+      await pool.query(
+        `INSERT INTO demand_details (uid, availability_status, updated_by)
+         VALUES ($1, 'Booked', $2)
+         ON CONFLICT (uid) DO UPDATE
+           SET availability_status = 'Booked', updated_by = $2, updated_at = NOW()`,
+        [uid, user.email]
+      );
+    }
+
+    const { subject, html } = buildBrokerEmail({
+      property,
+      booking: clean,
+      submittedBy: user.email,
+      submittedByName: user.name || user.email,
+    });
+    try {
+      await sendMail({ to: cpTo, subject, html });
+    } catch (err) {
+      console.error('[/api/booking-details POST send_cp]', err.message);
+      return res.status(500).json({
+        success: false,
+        error: 'Failed to send CP email: ' + err.message,
+        hint: 'The brokerage was saved but the broker email was not sent. An admin can retry.',
+      });
+    }
+    await pool.query(
+      `UPDATE booking_details SET cp_mail_sent_at = NOW(), updated_at = NOW() WHERE id = $1`,
+      [cpRowId]
+    );
+    logActivity(uid, 'booking_cp_mail', 'booking', user, { booking_id: cpRowId });
+    return res.status(200).json({ success: true, id: cpRowId, sent: true });
   }
 
   // ── action: save (draft) or send (full) — both write a row.
@@ -348,8 +528,11 @@ module.exports = async (req, res) => {
          booking_amount_method, booking_amount_method_2,
          booking_amount_split_1, booking_amount_split_2,
          ats_timeline, registry_timeline, booking_amount_forfeitable,
-         amount_on_ats_pct, other_conditions, recipients, broker_emails, submitted_by
-       ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20)
+         amount_on_ats_pct, other_conditions, recipients, broker_emails, submitted_by,
+         source, brokerage_amount, brokerage_timing,
+         brokerage_ats_amount, brokerage_registry_amount
+       ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20,
+                 $21, $22, $23, $24, $25)
        RETURNING id`,
       [
         uid, clean.buyer_salutation, clean.buyer_name, clean.co_buyer_name,
@@ -363,6 +546,8 @@ module.exports = async (req, res) => {
         JSON.stringify(clean.recipients || []),
         JSON.stringify(clean.broker_emails || []),
         user.email,
+        clean.source, clean.brokerage_amount, clean.brokerage_timing,
+        clean.brokerage_ats_amount, clean.brokerage_registry_amount,
       ]
     );
     insertedId = rows[0].id;
