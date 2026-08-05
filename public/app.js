@@ -1898,6 +1898,29 @@ function validateCpForm(form) {
 
 const EMAIL_RE_FE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
+// Fold any email still sitting in the "Add CP RM" / "Add CP" inputs (typed but
+// not committed with the + Add button) into the recipient / broker lists. Guards
+// the common miss where a user types an address, skips + Add, and sends without
+// it — which is why a CP/CP-RM address can silently not receive the mail.
+function flushPendingBookingInputs() {
+  const recEl = $('#bookingNewRecipient');
+  const rec = (recEl?.value || '').trim();
+  if (rec && EMAIL_RE_FE.test(rec) &&
+      !bookingState.recipients.some(e => e.toLowerCase() === rec.toLowerCase())) {
+    bookingState.recipients.push(rec);
+    if (recEl) recEl.value = '';
+    renderBookingRecipients();
+  }
+  const brkEl = $('#bookingNewBroker');
+  const brk = (brkEl?.value || '').trim().toLowerCase();
+  if (brk && EMAIL_RE_FE.test(brk) &&
+      !bookingState.brokers.some(b => b.toLowerCase() === brk)) {
+    bookingState.brokers.push(brk);
+    if (brkEl) brkEl.value = '';
+    renderBookingBrokers();
+  }
+}
+
 // Bind modal buttons (once)
 (function bindBookingModal() {
   document.addEventListener('click', (e) => {
@@ -1959,6 +1982,8 @@ const EMAIL_RE_FE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
     // Next
     if (e.target.id === 'bookingNextBtn') {
       if (bookingState.step === 1) {
+        // Commit any email typed but not yet + Added so it isn't dropped.
+        flushPendingBookingInputs();
         if (!bookingState.recipients.length) {
           showToast('At least one recipient is required', 'error');
           return;
@@ -2060,6 +2085,7 @@ const EMAIL_RE_FE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 async function generateBookingPreview(mode) {
   mode = mode === 'cp' ? 'cp' : 'buyer';
   bookingState.previewMode = mode;
+  flushPendingBookingInputs(); // catch any un-added CP RM / CP email before send
   const form = collectBookingForm();
   try {
     const r = await fetch('/api/booking-details/' + encodeURIComponent(bookingState.uid), {

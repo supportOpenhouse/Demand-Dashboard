@@ -138,18 +138,20 @@ function buildBookingEmail({ property, booking, submittedBy, submittedByName }) 
   const p = property || {};
   const b = booking || {};
 
+  // Property identifier mirrors the dashboard's "{tower}-{unit}" format (e.g.
+  // "A-203"). Either part may be blank, so filter before joining — that avoids
+  // both the dangling-dash artifact and silently dropping the unit when the
+  // (nullable) tower is absent. Used in both the subject and the letter body.
+  const towerUnit = [p.tower_no, p.unit_no].filter(v => v != null && v !== '').join('-');
+
   // Subject — buyer-facing tone, since the buyer is on the To line.
-  const unitLabel = p.unit_no ? `Unit ${p.unit_no}` : 'Unit';
+  const unitLabel = towerUnit ? `Unit ${towerUnit}` : 'Unit';
   const societyLabel = p.society_name || 'Property';
   const subject = `Booking Confirmation — ${unitLabel}, ${societyLabel}`;
 
   // ── Letter body. Variables ───────────────────────────────────────────────
-  const addressee = firstName(b.buyer_name) || 'Buyer';
-  // Property identifier mirrors the dashboard's "{tower}-{unit}" format (e.g.
-  // "A-203"). Either part may be blank, so filter before joining — that avoids
-  // both the dangling-dash artifact and silently dropping the unit when the
-  // (nullable) tower is absent.
-  const towerUnit = [p.tower_no, p.unit_no].filter(v => v != null && v !== '').join('-');
+  // Full buyer name in the greeting (e.g. "Dear Saurav Kumar,").
+  const addressee = (b.buyer_name && String(b.buyer_name).trim()) || 'Buyer';
   const propertyAddress = [
     towerUnit,
     p.society_name,
@@ -304,7 +306,7 @@ function buildBrokerEmail({ property, booking, submittedByName, submittedBy }) {
 
   const towerUnit = [p.tower_no, p.unit_no].filter(v => v != null && v !== '').join('-');
   const propertyAddress = [towerUnit, p.society_name, p.locality, p.city].filter(Boolean).join(', ');
-  const unitLabel = p.unit_no ? `Unit ${p.unit_no}` : 'Unit';
+  const unitLabel = towerUnit ? `Unit ${towerUnit}` : 'Unit';
   const societyLabel = p.society_name || 'Property';
   const subject = `Brokerage Details — ${unitLabel}, ${societyLabel}`;
 
