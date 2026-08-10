@@ -271,6 +271,19 @@ module.exports = async (req, res) => {
         FROM legacy_properties lp
       )`;
 
+    // Materialize a demand_details row for every property in the pool, so the
+    // table mirrors exactly what the dashboard shows — a unit rendered as
+    // "Available" has a real row saying 'Available', not a COALESCE default.
+    // Column defaults supply the values ('Available' / 'Buyer Visit' / '');
+    // updated_by stays NULL, which is what marks a row as never user-edited.
+    // ON CONFLICT makes it idempotent and self-healing: properties that enter
+    // the pool later (Supply flips ap_details.status) get their row on the
+    // next list load, with no cron or hook into the Supply app.
+    await pool.query(`${baseCte}
+      INSERT INTO demand_details (uid)
+      SELECT u.uid FROM unified u
+      ON CONFLICT (uid) DO NOTHING`, baseParams);
+
     // Total count across both halves, with filters applied.
     const countSql = `${baseCte}
       SELECT COUNT(*) FROM unified u
