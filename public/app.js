@@ -948,13 +948,21 @@ function collectImages(r) {
 // rows). We surface the live external listing_status and an Update Home action
 // in the Media section. Status is fetched lazily (one GET per row, on expand)
 // and cached in state.homeStatus so re-renders don't refetch.
+// Keyed by BOTH the update-API codes (CS/Rdy/Arc) and the get-home-details
+// labels (Coming soon/Ready/Archive), since the two endpoints speak different
+// vocabularies for the same states.
 const HOME_STATUS_META = {
-  CS:        { label: 'Coming Soon', bg: '#dbeafe', fg: '#1e40af' },
-  Rdy:       { label: 'Available',   bg: '#dcfce7', fg: '#166534' },
-  Ava:       { label: 'Available',   bg: '#dcfce7', fg: '#166534' },
-  Available: { label: 'Available',   bg: '#dcfce7', fg: '#166534' },
-  Sold:      { label: 'Sold',        bg: '#fee2e2', fg: '#991b1b' },
-  Arc:       { label: 'Archived',    bg: '#f3f4f6', fg: '#6b7280' },
+  CS:            { label: 'Coming Soon', bg: '#dbeafe', fg: '#1e40af' },
+  'Coming soon': { label: 'Coming Soon', bg: '#dbeafe', fg: '#1e40af' },
+  'Coming Soon': { label: 'Coming Soon', bg: '#dbeafe', fg: '#1e40af' },
+  Rdy:           { label: 'Available',   bg: '#dcfce7', fg: '#166534' },
+  Ready:         { label: 'Available',   bg: '#dcfce7', fg: '#166534' },
+  Ava:           { label: 'Available',   bg: '#dcfce7', fg: '#166534' },
+  Available:     { label: 'Available',   bg: '#dcfce7', fg: '#166534' },
+  Sold:          { label: 'Sold',        bg: '#fee2e2', fg: '#991b1b' },
+  Arc:           { label: 'Archived',    bg: '#f3f4f6', fg: '#6b7280' },
+  Archive:       { label: 'Archived',    bg: '#f3f4f6', fg: '#6b7280' },
+  Archived:      { label: 'Archived',    bg: '#f3f4f6', fg: '#6b7280' },
 };
 
 function homeStatusBadgeStyle(bg, fg) {
@@ -2263,6 +2271,47 @@ const UH_FACING_LABELS = { N: 'North', E: 'East', W: 'West', S: 'South', NE: 'No
 const UH_FURN_LABELS = { UF: 'Unfurnished', SF: 'Semi furnished', FF: 'Fully furnished' };
 const UH_AGE_LABELS = { y: 'Years', m: 'Months' };
 
+// get-home-details returns LABELS ("North", "Semi Furnished", "Years") but the
+// update API wants CODES ("N", "SF", "y"). These map a label (or an already-valid
+// code) back to the code used by the form's <option> values.
+const UH_FACING_CODE = { north: 'N', east: 'E', west: 'W', south: 'S', northeast: 'NE', northwest: 'NW', southeast: 'SE', southwest: 'SW' };
+const UH_FURN_CODE = { unfurnished: 'UF', 'semi furnished': 'SF', 'fully furnished': 'FF' };
+const UH_AGE_CODE = { years: 'y', year: 'y', months: 'm', month: 'm' };
+
+function uhToCode(map, labels, v) {
+  if (v == null || v === '') return '';
+  if (labels[v]) return v; // already a code
+  return map[String(v).trim().toLowerCase()] || '';
+}
+
+// Resolve a master-row id from a display label/reason (get-home-details gives
+// names, not ids). Case-insensitive match against the loaded masters list.
+function uhIdByLabel(mastersName, labelKeys, value) {
+  if (value == null) return null;
+  const norm = String(value).trim().toLowerCase();
+  const item = uhMastersArr(mastersName).find(x =>
+    labelKeys.some(k => x[k] && String(x[k]).trim().toLowerCase() === norm));
+  return item ? item.id : null;
+}
+
+// Turn an array of ids OR {id} OR {name}/{reason} into a list of master ids.
+function uhResolveIds(mastersName, labelKeys, arr) {
+  if (!Array.isArray(arr)) return [];
+  const out = [];
+  for (const el of arr) {
+    if (el == null) continue;
+    if (typeof el === 'number') { out.push(el); continue; }
+    if (typeof el === 'string') { const id = uhIdByLabel(mastersName, labelKeys, el); if (id != null) out.push(id); continue; }
+    if (typeof el === 'object') {
+      if (el.id != null) { out.push(el.id); continue; }
+      const lbl = labelKeys.map(k => el[k]).find(Boolean);
+      const id = uhIdByLabel(mastersName, labelKeys, lbl);
+      if (id != null) out.push(id);
+    }
+  }
+  return out;
+}
+
 // Master arrays tolerate camelCase (documented) or snake_case response keys.
 function uhMastersArr(name) {
   const m = updateHomeState.masters || {};
@@ -2364,19 +2413,47 @@ function renderUhChecks(containerId, items, labelKey) {
     : '<span class="field-val muted">None available</span>';
 }
 
+// Prefill the form from get-home-details. That payload speaks LABELS and NAMES
+// (e.g. facing "North", propertyType {name}, overlooking [{name}]) whereas the
+// update API and this form speak CODES and IDS — so every field is normalised
+// back to its code/id here.
 function prefillUhFromHome(home) {
   if (!home || typeof home !== 'object') return;
   const g = (...keys) => { for (const k of keys) { if (home[k] != null && home[k] !== '') return home[k]; } return null; };
-  const gid = (...keys) => { const v = g(...keys); return v == null ? null : (typeof v === 'object' ? v.id : v); };
 
   setUf('commission', g('commission'));
-  setUf('propertyTypeId', gid('propertyTypeId', 'property_type_id', 'propertyType', 'property_type'));
-  setUf('societyId', gid('societyId', 'society_id', 'society'));
-  setUf('layoutId', gid('layoutId', 'layout_id', 'layout'));
-  setUf('facing', g('facing'));
-  setUf('furnishingStatus', g('furnishingStatus', 'furnishing_status'));
+
+  // Property type — response gives { name } (no id); match name → masters id.
+  const pt = g('propertyType', 'property_type', 'propertyTypeId', 'property_type_id');
+  let ptId = null;
+  if (pt != null) ptId = (typeof pt === 'object')
+    ? (pt.id != null ? pt.id : uhIdByLabel('propertyTypes', ['name'], pt.name))
+    : (typeof pt === 'number' ? pt : uhIdByLabel('propertyTypes', ['name'], pt));
+  setUf('propertyTypeId', ptId);
+
+  // Society — response gives a nested object (name, no top-level id); match name
+  // against the city's societies from get-public-masters.
+  const soc = g('society', 'societyId', 'society_id');
+  let socId = null;
+  if (soc != null) {
+    if (typeof soc === 'object') {
+      socId = soc.id != null ? soc.id : null;
+      if (socId == null && soc.name) {
+        const m = (updateHomeState.societies || []).find(s => String(s.name || '').trim().toLowerCase() === String(soc.name).trim().toLowerCase());
+        if (m) socId = m.id;
+      }
+    } else if (typeof soc === 'number') socId = soc;
+  }
+  setUf('societyId', socId);
+
+  // Layout — response layout object carries no id, so it can't be prefilled.
+  const layout = g('layoutId', 'layout_id');
+  if (layout != null && typeof layout !== 'object') setUf('layoutId', layout);
+
+  setUf('facing', uhToCode(UH_FACING_CODE, UH_FACING_LABELS, g('facing')));
+  setUf('furnishingStatus', uhToCode(UH_FURN_CODE, UH_FURN_LABELS, g('furnishingStatus', 'furnishing_status')));
+  setUf('ageUnits', uhToCode(UH_AGE_CODE, UH_AGE_LABELS, g('ageUnits', 'age_units')));
   setUf('propertyAge', g('propertyAge', 'property_age'));
-  setUf('ageUnits', g('ageUnits', 'age_units'));
   setUf('naturalLightScore', g('naturalLightScore', 'natural_light_score'));
 
   const price = g('price', 'priceData', 'price_data');
@@ -2389,23 +2466,20 @@ function prefillUhFromHome(home) {
     setUf('parkingCovered', parking.covered);
     setUf('parkingOpen', parking.open);
   }
-  checkUhBoxes('uhOverlooking', g('overlooking', 'overlookingIds', 'overlooking_ids'));
-  checkUhBoxes('uhWhyChoose', g('whyChooseThisHome', 'whyChooseThisHomeIds', 'why_choose_this_home'));
-  checkUhBoxes('uhDocs', g('documentationAndLoan', 'documentationAndLoanIds', 'documentation_and_loan'));
 
-  const furn = g('furnishingData', 'furnishing_data', 'furnishing');
-  if (Array.isArray(furn)) {
-    updateHomeState.furnishing = furn
-      .filter(x => x && (x.name || x.count != null))
-      .map(x => ({ name: x.name || '', count: Number(x.count) || 0 }));
-    renderUhFurnishing();
-  }
+  checkUhBoxes('uhOverlooking', uhResolveIds('overlooking', ['name'], g('overlooking', 'overlookingIds', 'overlooking_ids')));
+  checkUhBoxes('uhWhyChoose', uhResolveIds('whyChooseThisHome', ['reason', 'name'], g('whyChooseThisHome', 'whyChooseThisHomeIds', 'why_choose_this_home')));
+  checkUhBoxes('uhDocs', uhResolveIds('documentationAndLoan', ['reason', 'name'], g('documentationAndLoan', 'documentationAndLoanIds', 'documentation_and_loan')));
+
+  // Furnishing items: get-home-details returns names WITHOUT counts, and the
+  // update API requires a count per item — so we can't safely prefill these
+  // (that would clobber real counts). Left empty; the user adds items + counts.
 }
 
-function checkUhBoxes(containerId, val) {
-  if (!Array.isArray(val)) return;
-  const ids = new Set(val.map(x => String(typeof x === 'object' ? x.id : x)));
-  document.querySelectorAll(`#${containerId} input[type=checkbox]`).forEach(c => { if (ids.has(String(c.value))) c.checked = true; });
+function checkUhBoxes(containerId, ids) {
+  if (!Array.isArray(ids)) return;
+  const set = new Set(ids.map(String));
+  document.querySelectorAll(`#${containerId} input[type=checkbox]`).forEach(c => { if (set.has(String(c.value))) c.checked = true; });
 }
 
 function renderUhFurnishing() {

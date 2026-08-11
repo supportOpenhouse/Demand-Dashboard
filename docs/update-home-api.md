@@ -4,6 +4,10 @@ Partial update for an existing home and publish it as **Coming Soon** (`listing_
 Used internally after AMS is signed — caller clicks "Updated Home" to move a home from **Archive (`Arc`)** to **Coming Soon (`CS`)** and refresh listing fields.
 
 > **Demand Dashboard note:** this dashboard stores the API key in the `X_DEMAND_DASHBOARD_KEY` env var and sends it as the `X-Demand-Dashboard-Key` header via server-side proxy routes under `/api/core-home/*`. The frontend never sees the key. The external property that a dashboard row maps to is `properties.core_home_id`.
+>
+> **Use `https://`.** The Cloud Run host 302-redirects `http`→`https`. Node's `fetch` follows the redirect but downgrades a redirected POST/PATCH to GET and drops the body, so an `http` base silently turns `update-home` into a no-op. `api/_core.js` defaults to the `https` base; override with `CORE_API_BASE_URL` if needed (keep it `https`).
+>
+> **`get-home-details` speaks labels, not codes.** It returns `listingStatus: "Ready"`, `facing: "North"`, `furnishingStatus: "Semi Furnished"`, `ageUnits: "Years"`, and `propertyType`/`overlooking`/`whyChooseThisHome`/`documentationAndLoan` as `{name}`/`{reason}` objects **without ids**. The Update Home modal maps these back to the codes/ids that `update-home` expects (name → masters id, label → code). `furnishings` come back as `[{name}]` with **no count**, so they are not prefilled (update requires a count per item).
 
 ## Staging server
 

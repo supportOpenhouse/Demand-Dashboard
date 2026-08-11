@@ -8,8 +8,11 @@
 //   CORE_API_BASE_URL       — override the API base; defaults to the staging host
 //                             documented in docs/update-home-api.md.
 
+// NOTE: must be https. The host 302-redirects http→https, and Node's fetch
+// downgrades a redirected POST/PATCH to GET and drops the body — so an http base
+// would silently turn update-home into a no-op GET.
 const CORE_BASE = (process.env.CORE_API_BASE_URL
-  || 'http://staging-561394753846.asia-south2.run.app/api/v1/oh').replace(/\/+$/, '');
+  || 'https://staging-561394753846.asia-south2.run.app/api/v1/oh').replace(/\/+$/, '');
 
 const CORE_KEY = process.env.X_DEMAND_DASHBOARD_KEY
   || process.env.DEMAND_DASHBOARD_API_KEY
