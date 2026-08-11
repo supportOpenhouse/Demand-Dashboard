@@ -387,6 +387,122 @@
   </div>
 </div>
 
+<!-- ── Update Home (external listing → Coming Soon) modal ── -->
+<div class="modal-overlay" id="updateHomeModal">
+  <div class="modal modal-wide">
+    <div class="modal-head">
+      <h3>
+        Update Home
+        <span id="updateHomeSubtitle" style="font-weight:400;color:#9ca3af;font-size:12px;margin-left:6px;"></span>
+      </h3>
+      <button class="modal-close" data-close="updateHomeModal">×</button>
+    </div>
+
+    <div class="modal-body" id="updateHomeBody">
+      <div id="updateHomeLoading" class="booking-loading-inline" style="display:none;">
+        <div class="spinner"></div> Loading home details…
+      </div>
+
+      <!-- Page 1: edit -->
+      <div class="uh-page" data-uh-page="1">
+        <div id="updateHomeCurrent"></div>
+
+        <div class="form-grid" style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
+          <div class="fg"><label>Commission</label>
+            <input type="text" class="booking-input" data-uf="commission" placeholder="e.g. 1.5"></div>
+          <div class="fg"><label>Property Type</label>
+            <select class="booking-input" data-uf="propertyTypeId"><option value="">Select…</option></select></div>
+          <div class="fg"><label>Society</label>
+            <select class="booking-input" data-uf="societyId"><option value="">Select…</option></select></div>
+          <div class="fg"><label>Layout ID</label>
+            <input type="number" min="0" step="1" class="booking-input" data-uf="layoutId" placeholder="existing layout id"></div>
+          <div class="fg"><label>Facing</label>
+            <select class="booking-input" data-uf="facing">
+              <option value="">Select…</option>
+              <option value="N">North</option><option value="E">East</option>
+              <option value="W">West</option><option value="S">South</option>
+              <option value="NE">Northeast</option><option value="NW">Northwest</option>
+              <option value="SE">Southeast</option><option value="SW">Southwest</option>
+            </select></div>
+          <div class="fg"><label>Furnishing Status</label>
+            <select class="booking-input" data-uf="furnishingStatus">
+              <option value="">Select…</option>
+              <option value="UF">Unfurnished</option>
+              <option value="SF">Semi furnished</option>
+              <option value="FF">Fully furnished</option>
+            </select></div>
+          <div class="fg"><label>Property Age</label>
+            <input type="number" min="0" max="40" step="1" class="booking-input" data-uf="propertyAge"></div>
+          <div class="fg"><label>Age Units</label>
+            <select class="booking-input" data-uf="ageUnits">
+              <option value="">Select…</option>
+              <option value="y">Years</option><option value="m">Months</option>
+            </select></div>
+          <div class="fg"><label>Natural Light Score (0–10)</label>
+            <input type="number" min="0" max="10" step="0.1" class="booking-input" data-uf="naturalLightScore"></div>
+        </div>
+
+        <div class="booking-section-divider"></div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
+          <div>
+            <div style="font-size:12px;font-weight:600;color:#374151;margin-bottom:6px;">Price</div>
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
+              <div class="fg"><label>Total (₹)</label>
+                <input type="number" min="0" step="1" class="booking-input" data-uf="priceTotal"></div>
+              <div class="fg"><label>Per sq ft (₹)</label>
+                <input type="number" min="0" step="1" class="booking-input" data-uf="pricePerSqFt"></div>
+            </div>
+          </div>
+          <div>
+            <div style="font-size:12px;font-weight:600;color:#374151;margin-bottom:6px;">Parking (0–9)</div>
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
+              <div class="fg"><label>Covered</label>
+                <input type="number" min="0" max="9" step="1" class="booking-input" data-uf="parkingCovered"></div>
+              <div class="fg"><label>Open</label>
+                <input type="number" min="0" max="9" step="1" class="booking-input" data-uf="parkingOpen"></div>
+            </div>
+          </div>
+        </div>
+
+        <div class="booking-section-divider"></div>
+        <div style="font-size:12px;font-weight:600;color:#374151;margin-bottom:6px;">Overlooking</div>
+        <div id="uhOverlooking" class="uh-checks" style="display:flex;flex-wrap:wrap;gap:8px 16px;"></div>
+        <div style="font-size:12px;font-weight:600;color:#374151;margin:12px 0 6px;">Why choose this home</div>
+        <div id="uhWhyChoose" class="uh-checks" style="display:flex;flex-wrap:wrap;gap:8px 16px;"></div>
+        <div style="font-size:12px;font-weight:600;color:#374151;margin:12px 0 6px;">Documentation &amp; Loan</div>
+        <div id="uhDocs" class="uh-checks" style="display:flex;flex-wrap:wrap;gap:8px 16px;"></div>
+
+        <div class="booking-section-divider"></div>
+        <div style="font-size:12px;font-weight:600;color:#374151;margin-bottom:6px;">Furnishing items</div>
+        <div id="uhFurnishingList"></div>
+        <div style="display:flex;gap:8px;margin-top:6px;">
+          <input type="text" class="booking-input" id="uhFurnishName" placeholder="Item name (e.g. ACs)" style="flex:2;">
+          <input type="number" min="1" step="1" class="booking-input" id="uhFurnishCount" placeholder="Count" style="flex:1;">
+          <button type="button" class="btn btn-ghost" id="uhFurnishAdd">+ Add</button>
+        </div>
+      </div>
+
+      <!-- Page 2: preview -->
+      <div class="uh-page" data-uh-page="2" style="display:none;">
+        <div style="background:#eff6ff;border:1px solid #bfdbfe;border-radius:8px;padding:10px 12px;margin-bottom:12px;font-size:13px;color:#1e40af;">
+          Publishing sets <strong>listing status = Coming Soon (CS)</strong> and the backend auto-adds a Coming Soon photo. Only the fields listed below will change.
+        </div>
+        <div id="updateHomePreview"></div>
+      </div>
+    </div>
+
+    <div class="modal-foot booking-foot">
+      <div class="booking-foot-left">
+        <button type="button" class="btn btn-ghost" id="uhBackBtn" style="display:none;">← Back</button>
+      </div>
+      <div class="booking-foot-right">
+        <button type="button" class="btn btn-primary" id="uhPreviewBtn">Preview →</button>
+        <button type="button" class="btn btn-primary" id="uhPublishBtn" style="display:none;">🚀 Publish (Coming Soon)</button>
+      </div>
+    </div>
+  </div>
+</div>
+
 <div class="toast" id="toast"></div>
 
 <script src="https://cdn.jsdelivr.net/npm/flatpickr@4.6.13/dist/flatpickr.min.js"></script>

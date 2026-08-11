@@ -14,6 +14,10 @@
     { "source": "/api/booking-details/:uid", "destination": "/api/booking-details/[uid]" },
     { "source": "/api/property-edits/:uid",  "destination": "/api/property-edits/[uid]" },
     { "source": "/api/remarks-history/:uid", "destination": "/api/remarks-history/[uid]" },
+    { "source": "/api/core-home/masters",         "destination": "/api/core-home/masters" },
+    { "source": "/api/core-home/public-masters",  "destination": "/api/core-home/public-masters" },
+    { "source": "/api/core-home/details",         "destination": "/api/core-home/details" },
+    { "source": "/api/core-home/update",          "destination": "/api/core-home/update" },
     { "source": "/login",                   "destination": "/login.html" },
     { "source": "/(.*)",                    "destination": "/index.html" }
   ]

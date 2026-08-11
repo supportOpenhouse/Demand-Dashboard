@@ -29,6 +29,9 @@ const state = {
   },
   // homeId (number) → string[] of image URLs, fetched from backend photos API.
   homePhotos: {},
+  // core_home_id → { loading } | { code, home } | { error } — external listing
+  // status, fetched lazily when a row is expanded (see fetchHomeStatus).
+  homeStatus: {},
 };
 
 // ── Helpers ────────────────────────────────────────────────────────────
@@ -688,6 +691,7 @@ function renderExpand(r) {
           ? `<a class="video-link-pill" href="${esc(r.video_link)}" target="_blank" rel="noopener">▶ Watch Video</a>`
           : '<span class="field-val muted">—</span>'}
       </div>
+      ${renderUpdateHomeBlock(r)}
       ${supplyRemarksField}
     </div>`;
 
@@ -939,6 +943,88 @@ function collectImages(r) {
   return all;
 }
 
+// ── External listing (Coming Soon) status + Update Home ─────────────────
+// A dashboard row links to an external "home" via core_home_id (null for legacy
+// rows). We surface the live external listing_status and an Update Home action
+// in the Media section. Status is fetched lazily (one GET per row, on expand)
+// and cached in state.homeStatus so re-renders don't refetch.
+const HOME_STATUS_META = {
+  CS:        { label: 'Coming Soon', bg: '#dbeafe', fg: '#1e40af' },
+  Rdy:       { label: 'Available',   bg: '#dcfce7', fg: '#166534' },
+  Ava:       { label: 'Available',   bg: '#dcfce7', fg: '#166534' },
+  Available: { label: 'Available',   bg: '#dcfce7', fg: '#166534' },
+  Sold:      { label: 'Sold',        bg: '#fee2e2', fg: '#991b1b' },
+  Arc:       { label: 'Archived',    bg: '#f3f4f6', fg: '#6b7280' },
+};
+
+function homeStatusBadgeStyle(bg, fg) {
+  return `display:inline-block;padding:2px 10px;border-radius:999px;font-size:12px;font-weight:600;background:${bg};color:${fg};`;
+}
+
+function renderHomeStatusBadge(entry) {
+  if (!entry || entry.loading) {
+    return `<span style="${homeStatusBadgeStyle('#f3f4f6', '#6b7280')}">⏳ Checking…</span>`;
+  }
+  if (entry.error) {
+    return `<span title="${esc(entry.error)}" style="${homeStatusBadgeStyle('#f3f4f6', '#6b7280')}">Status unavailable</span>`;
+  }
+  const m = HOME_STATUS_META[entry.code] || { label: entry.code || 'Unknown', bg: '#f3f4f6', fg: '#374151' };
+  return `<span style="${homeStatusBadgeStyle(m.bg, m.fg)}">${esc(m.label)}</span>`;
+}
+
+// Pulls the listing status out of the (loosely-typed) get-home-details payload.
+function extractListingStatus(home) {
+  if (!home || typeof home !== 'object') return null;
+  return home.listingStatus || home.listing_status || home.status
+      || (home.home && (home.home.listingStatus || home.home.listing_status)) || null;
+}
+
+async function fetchHomeStatus(coreHomeId, force) {
+  if (coreHomeId == null) return;
+  const cur = state.homeStatus[coreHomeId];
+  if (!force && cur && (cur.loading || cur.code)) return; // already loading/resolved
+  state.homeStatus[coreHomeId] = { loading: true };
+  updateHomeStatusBadge(coreHomeId);
+  try {
+    const r = await fetch('/api/core-home/details?id=' + encodeURIComponent(coreHomeId), { credentials: 'include' });
+    const data = await r.json();
+    state.homeStatus[coreHomeId] = (!r.ok || !data.success)
+      ? { error: data.error || ('HTTP ' + r.status) }
+      : { code: extractListingStatus(data.home), home: data.home };
+  } catch (e) {
+    state.homeStatus[coreHomeId] = { error: e.message };
+  }
+  updateHomeStatusBadge(coreHomeId);
+}
+
+function updateHomeStatusBadge(coreHomeId) {
+  document.querySelectorAll(`[data-home-status-for="${cssEscape(String(coreHomeId))}"]`).forEach(el => {
+    el.innerHTML = renderHomeStatusBadge(state.homeStatus[coreHomeId]);
+  });
+}
+
+// The Media-section block: live status badge + Update Home button. Only for
+// admin/manager, and only when the row is linked to a core home.
+function renderUpdateHomeBlock(r) {
+  if (!canEdit()) return '';
+  if (r.core_home_id == null) {
+    return `
+      <div class="field-row" style="margin-top:14px;">
+        <div class="field-lbl">Listing</div>
+        <span class="field-val muted">Not linked to a core home</span>
+      </div>`;
+  }
+  return `
+    <div class="update-home-row" style="margin-top:14px;display:flex;align-items:center;gap:12px;flex-wrap:wrap;">
+      <div class="field-lbl" style="min-width:auto;">Listing</div>
+      <span data-home-status-for="${esc(r.core_home_id)}">${renderHomeStatusBadge(state.homeStatus[r.core_home_id])}</span>
+      <button type="button" class="btn btn-primary"
+              data-update-home-uid="${esc(r.uid)}" data-core-home-id="${esc(r.core_home_id)}">
+        🏠 Update Home
+      </button>
+    </div>`;
+}
+
 // ── Inline edits ───────────────────────────────────────────────────────
 // All `change` events bubble to the document and are handled by the delegated
 // listener below. attachExpandHandlers only adds bindings that don't bubble
@@ -946,6 +1032,10 @@ function collectImages(r) {
 function attachExpandHandlers(uid) {
   const expandTr = document.querySelector(`tr.expand-row[data-uid-expand="${cssEscape(uid)}"]`);
   if (!expandTr) return;
+
+  // Lazy-load the external listing status for this row (cached in state).
+  const row = state.rows.find(x => x.uid === uid);
+  if (row && row.core_home_id != null && canEdit()) fetchHomeStatus(row.core_home_id);
 
   // Initialize flatpickr on date inputs so they display DD/MM/YYYY instead
   // of the browser-locale default (US locale renders <input type=date> as
@@ -2159,3 +2249,336 @@ async function sendBookingMail(mode) {
     btn.textContent = original;
   }
 }
+
+// ── Update Home modal (external listing → Coming Soon) ──────────────────
+// Flow: open → GET masters + societies + current home details (prefill) → user
+// edits the full field set → Preview (summary of what will change) → Publish,
+// which POSTs /api/core-home/update (forwarded upstream as PATCH, listing → CS).
+const updateHomeState = {
+  uid: null, coreHomeId: null, property: null,
+  masters: null, societies: [], furnishing: [], step: 1,
+};
+
+const UH_FACING_LABELS = { N: 'North', E: 'East', W: 'West', S: 'South', NE: 'Northeast', NW: 'Northwest', SE: 'Southeast', SW: 'Southwest' };
+const UH_FURN_LABELS = { UF: 'Unfurnished', SF: 'Semi furnished', FF: 'Fully furnished' };
+const UH_AGE_LABELS = { y: 'Years', m: 'Months' };
+
+// Master arrays tolerate camelCase (documented) or snake_case response keys.
+function uhMastersArr(name) {
+  const m = updateHomeState.masters || {};
+  const variants = ({
+    propertyTypes: ['propertyTypes', 'property_types'],
+    overlooking: ['overlooking'],
+    whyChooseThisHome: ['whyChooseThisHome', 'why_choose_this_home'],
+    documentationAndLoan: ['documentationAndLoan', 'documentation_and_loan'],
+  })[name] || [name];
+  for (const k of variants) if (Array.isArray(m[k])) return m[k];
+  return [];
+}
+
+function setUf(field, value) {
+  if (value == null) return;
+  const el = document.querySelector(`#updateHomeModal [data-uf="${cssEscape(field)}"]`);
+  if (el) el.value = value;
+}
+
+async function openUpdateHomeModal(uid) {
+  const row = state.rows.find(r => r.uid === uid);
+  if (!row) return;
+  if (row.core_home_id == null) { showToast('This property is not linked to a core home', 'error'); return; }
+
+  updateHomeState.uid = uid;
+  updateHomeState.coreHomeId = row.core_home_id;
+  updateHomeState.property = row;
+  updateHomeState.step = 1;
+  updateHomeState.furnishing = [];
+  updateHomeState.masters = null;
+  updateHomeState.societies = [];
+
+  document.querySelectorAll('#updateHomeModal [data-uf]').forEach(el => { el.value = ''; });
+  ['uhOverlooking', 'uhWhyChoose', 'uhDocs'].forEach(id => { const el = document.getElementById(id); if (el) el.innerHTML = ''; });
+  renderUhFurnishing();
+  $('#updateHomeCurrent').innerHTML = '';
+  $('#updateHomeSubtitle').textContent = `· ${row.society_name || ''} ${row.unit_no ? '· Unit ' + row.unit_no : ''}`;
+  const pubBtn = $('#uhPublishBtn'); if (pubBtn) { pubBtn.disabled = false; pubBtn.textContent = '🚀 Publish (Coming Soon)'; }
+  goToUhStep(1);
+  $('#updateHomeModal').classList.add('open');
+
+  $('#updateHomeLoading').style.display = '';
+  $('#uhPreviewBtn').disabled = true;
+  try {
+    const [mastersR, publicR, detailsR] = await Promise.all([
+      fetch('/api/core-home/masters', { credentials: 'include' }).then(r => r.json()).catch(e => ({ success: false, error: e.message })),
+      fetch('/api/core-home/public-masters?city=' + encodeURIComponent(row.city || ''), { credentials: 'include' }).then(r => r.json()).catch(e => ({ success: false, error: e.message })),
+      fetch('/api/core-home/details?id=' + encodeURIComponent(row.core_home_id), { credentials: 'include' }).then(r => r.json()).catch(e => ({ success: false, error: e.message })),
+    ]);
+    // Bail if the modal was closed or switched to another row during the fetch.
+    if (!$('#updateHomeModal').classList.contains('open') || updateHomeState.uid !== uid) return;
+
+    updateHomeState.masters = (mastersR && mastersR.success) ? mastersR.masters : {};
+    updateHomeState.societies = (publicR && publicR.success && publicR.publicMasters && publicR.publicMasters.societies) || [];
+    const home = (detailsR && detailsR.success) ? detailsR.home : null;
+
+    populateUhSelects();
+    populateUhChecks();
+    prefillUhFromHome(home);
+
+    const code = extractListingStatus(home);
+    $('#updateHomeCurrent').innerHTML =
+      `<div style="margin-bottom:14px;font-size:13px;color:#374151;">Current listing status: ${renderHomeStatusBadge(code ? { code } : { error: 'unknown' })}</div>`;
+    if (home) { state.homeStatus[row.core_home_id] = { code, home }; updateHomeStatusBadge(row.core_home_id); }
+    if (!mastersR.success) showToast('Could not load dropdown options: ' + (mastersR.error || ''), 'error');
+  } catch (e) {
+    showToast('Failed to load home data: ' + e.message, 'error');
+  } finally {
+    $('#updateHomeLoading').style.display = 'none';
+    $('#uhPreviewBtn').disabled = false;
+  }
+}
+
+function populateUhSelects() {
+  const ptSel = document.querySelector('#updateHomeModal [data-uf="propertyTypeId"]');
+  if (ptSel) ptSel.innerHTML = '<option value="">Select…</option>' +
+    uhMastersArr('propertyTypes').map(t => `<option value="${esc(t.id)}">${esc(t.name || t.label || ('#' + t.id))}</option>`).join('');
+  const socSel = document.querySelector('#updateHomeModal [data-uf="societyId"]');
+  if (socSel) socSel.innerHTML = '<option value="">Select…</option>' +
+    (updateHomeState.societies || []).map(s => `<option value="${esc(s.id)}">${esc(s.name || ('#' + s.id))}</option>`).join('');
+}
+
+function populateUhChecks() {
+  renderUhChecks('uhOverlooking', uhMastersArr('overlooking'), 'name');
+  renderUhChecks('uhWhyChoose', uhMastersArr('whyChooseThisHome'), 'reason');
+  renderUhChecks('uhDocs', uhMastersArr('documentationAndLoan'), 'reason');
+}
+
+function renderUhChecks(containerId, items, labelKey) {
+  const el = document.getElementById(containerId);
+  if (!el) return;
+  el.innerHTML = items.length
+    ? items.map(it => {
+        const label = it[labelKey] || it.name || it.reason || ('#' + it.id);
+        return `<label style="display:inline-flex;align-items:center;gap:5px;font-size:13px;cursor:pointer;">
+          <input type="checkbox" value="${esc(it.id)}"> ${esc(label)}
+        </label>`;
+      }).join('')
+    : '<span class="field-val muted">None available</span>';
+}
+
+function prefillUhFromHome(home) {
+  if (!home || typeof home !== 'object') return;
+  const g = (...keys) => { for (const k of keys) { if (home[k] != null && home[k] !== '') return home[k]; } return null; };
+  const gid = (...keys) => { const v = g(...keys); return v == null ? null : (typeof v === 'object' ? v.id : v); };
+
+  setUf('commission', g('commission'));
+  setUf('propertyTypeId', gid('propertyTypeId', 'property_type_id', 'propertyType', 'property_type'));
+  setUf('societyId', gid('societyId', 'society_id', 'society'));
+  setUf('layoutId', gid('layoutId', 'layout_id', 'layout'));
+  setUf('facing', g('facing'));
+  setUf('furnishingStatus', g('furnishingStatus', 'furnishing_status'));
+  setUf('propertyAge', g('propertyAge', 'property_age'));
+  setUf('ageUnits', g('ageUnits', 'age_units'));
+  setUf('naturalLightScore', g('naturalLightScore', 'natural_light_score'));
+
+  const price = g('price', 'priceData', 'price_data');
+  if (price && typeof price === 'object') {
+    setUf('priceTotal', price.total);
+    setUf('pricePerSqFt', price.perSqFt != null ? price.perSqFt : price.per_sq_ft);
+  }
+  const parking = g('parking', 'parkingData', 'parking_data');
+  if (parking && typeof parking === 'object') {
+    setUf('parkingCovered', parking.covered);
+    setUf('parkingOpen', parking.open);
+  }
+  checkUhBoxes('uhOverlooking', g('overlooking', 'overlookingIds', 'overlooking_ids'));
+  checkUhBoxes('uhWhyChoose', g('whyChooseThisHome', 'whyChooseThisHomeIds', 'why_choose_this_home'));
+  checkUhBoxes('uhDocs', g('documentationAndLoan', 'documentationAndLoanIds', 'documentation_and_loan'));
+
+  const furn = g('furnishingData', 'furnishing_data', 'furnishing');
+  if (Array.isArray(furn)) {
+    updateHomeState.furnishing = furn
+      .filter(x => x && (x.name || x.count != null))
+      .map(x => ({ name: x.name || '', count: Number(x.count) || 0 }));
+    renderUhFurnishing();
+  }
+}
+
+function checkUhBoxes(containerId, val) {
+  if (!Array.isArray(val)) return;
+  const ids = new Set(val.map(x => String(typeof x === 'object' ? x.id : x)));
+  document.querySelectorAll(`#${containerId} input[type=checkbox]`).forEach(c => { if (ids.has(String(c.value))) c.checked = true; });
+}
+
+function renderUhFurnishing() {
+  const el = $('#uhFurnishingList');
+  if (!el) return;
+  el.innerHTML = updateHomeState.furnishing.map((f, i) => `
+    <div class="recipient-chip" style="margin:2px 4px 2px 0;">
+      <span class="recipient-email">${esc(f.name)} × ${esc(f.count)}</span>
+      <button type="button" class="recipient-remove" data-uh-furnish-idx="${i}" title="Remove">×</button>
+    </div>`).join('');
+}
+
+function addUhFurnishing() {
+  const nameEl = $('#uhFurnishName'), countEl = $('#uhFurnishCount');
+  const name = (nameEl?.value || '').trim();
+  const count = parseInt(countEl?.value, 10);
+  if (!name) { showToast('Furnishing item name is required', 'error'); return; }
+  if (isNaN(count) || count < 1) { showToast('Count must be a whole number ≥ 1', 'error'); return; }
+  updateHomeState.furnishing.push({ name, count });
+  if (nameEl) nameEl.value = '';
+  if (countEl) countEl.value = '';
+  renderUhFurnishing();
+}
+
+// Build the camelCase update body — only fields the user actually filled in.
+function collectUhForm() {
+  const body = { homeId: Number(updateHomeState.coreHomeId), listingStatus: 'CS' };
+  const val = f => { const el = document.querySelector(`#updateHomeModal [data-uf="${cssEscape(f)}"]`); return el ? el.value.trim() : ''; };
+  const setStr = (k, f) => { const v = val(f); if (v !== '') body[k] = v; };
+  const setNum = (k, f) => { const v = val(f); if (v !== '') body[k] = Number(v); };
+
+  setStr('commission', 'commission');
+  setNum('propertyTypeId', 'propertyTypeId');
+  setNum('societyId', 'societyId');
+  setNum('layoutId', 'layoutId');
+  setStr('facing', 'facing');
+  setStr('furnishingStatus', 'furnishingStatus');
+  setNum('propertyAge', 'propertyAge');
+  setStr('ageUnits', 'ageUnits');
+  setNum('naturalLightScore', 'naturalLightScore');
+
+  const pt = val('priceTotal'), pp = val('pricePerSqFt');
+  if (pt !== '' || pp !== '') {
+    body.priceData = {};
+    if (pt !== '') body.priceData.total = Number(pt);
+    if (pp !== '') body.priceData.perSqFt = Number(pp);
+  }
+  const pc = val('parkingCovered'), po = val('parkingOpen');
+  if (pc !== '' || po !== '') {
+    body.parkingData = { covered: pc !== '' ? Number(pc) : 0, open: po !== '' ? Number(po) : 0 };
+  }
+
+  const checks = (containerId, key) => {
+    const ids = Array.from(document.querySelectorAll(`#${containerId} input[type=checkbox]:checked`)).map(c => Number(c.value));
+    if (ids.length) body[key] = ids;
+  };
+  checks('uhOverlooking', 'overlookingIds');
+  checks('uhWhyChoose', 'whyChooseThisHomeIds');
+  checks('uhDocs', 'documentationAndLoanIds');
+
+  if (updateHomeState.furnishing.length) {
+    body.furnishingData = updateHomeState.furnishing.map(f => ({ name: f.name, count: f.count }));
+  }
+  return body;
+}
+
+function uhLabelForId(mastersName, id, labelKeys) {
+  const item = uhMastersArr(mastersName).find(x => String(x.id) === String(id));
+  if (!item) return '#' + id;
+  for (const k of labelKeys) if (item[k]) return item[k];
+  return '#' + id;
+}
+function uhSocietyLabel(id) {
+  const s = (updateHomeState.societies || []).find(x => String(x.id) === String(id));
+  return s ? (s.name || ('#' + id)) : ('#' + id);
+}
+function uhIdsLabels(mastersName, labelKey, ids) {
+  return ids.map(id => uhLabelForId(mastersName, id, [labelKey, 'name', 'reason'])).join(', ');
+}
+
+function buildUhPreview(body) {
+  const rows = [];
+  const push = (label, valHtml) => rows.push(
+    `<div style="display:flex;justify-content:space-between;gap:16px;padding:6px 0;border-bottom:1px solid #f1f5f9;">
+       <span style="color:#6b7280;">${esc(label)}</span>
+       <span style="font-weight:600;text-align:right;">${valHtml}</span>
+     </div>`);
+
+  push('Listing status', renderHomeStatusBadge({ code: 'CS' }));
+  if ('commission' in body) push('Commission', esc(body.commission));
+  if ('propertyTypeId' in body) push('Property type', esc(uhLabelForId('propertyTypes', body.propertyTypeId, ['name'])));
+  if ('societyId' in body) push('Society', esc(uhSocietyLabel(body.societyId)));
+  if ('layoutId' in body) push('Layout ID', esc(body.layoutId));
+  if ('facing' in body) push('Facing', esc(UH_FACING_LABELS[body.facing] || body.facing));
+  if ('furnishingStatus' in body) push('Furnishing status', esc(UH_FURN_LABELS[body.furnishingStatus] || body.furnishingStatus));
+  if ('propertyAge' in body || 'ageUnits' in body) {
+    push('Property age', esc(`${body.propertyAge != null ? body.propertyAge : ''} ${UH_AGE_LABELS[body.ageUnits] || body.ageUnits || ''}`.trim()));
+  }
+  if ('naturalLightScore' in body) push('Natural light score', esc(body.naturalLightScore));
+  if (body.priceData) push('Price', esc(`Total ₹${body.priceData.total != null ? body.priceData.total : '—'}${body.priceData.perSqFt != null ? ` · ₹${body.priceData.perSqFt}/sqft` : ''}`));
+  if (body.parkingData) push('Parking', esc(`Covered ${body.parkingData.covered} · Open ${body.parkingData.open}`));
+  if (body.overlookingIds) push('Overlooking', esc(uhIdsLabels('overlooking', 'name', body.overlookingIds)));
+  if (body.whyChooseThisHomeIds) push('Why choose', esc(uhIdsLabels('whyChooseThisHome', 'reason', body.whyChooseThisHomeIds)));
+  if (body.documentationAndLoanIds) push('Documentation & loan', esc(uhIdsLabels('documentationAndLoan', 'reason', body.documentationAndLoanIds)));
+  if (body.furnishingData) push('Furnishing items', esc(body.furnishingData.map(f => `${f.name} ×${f.count}`).join(', ')));
+
+  if (rows.length === 1) {
+    rows.push('<div style="color:#6b7280;padding:8px 0;">No other fields changed — this will only publish the home as Coming Soon.</div>');
+  }
+  return rows.join('');
+}
+
+function goToUhStep(step) {
+  updateHomeState.step = step;
+  document.querySelectorAll('#updateHomeModal .uh-page').forEach(p => {
+    p.style.display = (parseInt(p.dataset.uhPage, 10) === step) ? '' : 'none';
+  });
+  $('#uhBackBtn').style.display = step === 1 ? 'none' : '';
+  $('#uhPreviewBtn').style.display = step === 1 ? '' : 'none';
+  $('#uhPublishBtn').style.display = step === 2 ? '' : 'none';
+}
+
+async function publishUpdateHome() {
+  const body = collectUhForm();
+  const btn = $('#uhPublishBtn');
+  const original = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = '⏳ Publishing…';
+  try {
+    const r = await fetch('/api/core-home/update', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'include',
+      body: JSON.stringify(body),
+    });
+    const data = await r.json();
+    if (!r.ok || !data.success) {
+      showToast(data.error || 'Update failed', 'error');
+      btn.disabled = false;
+      btn.textContent = original;
+      return;
+    }
+    showToast('Home published as Coming Soon', 'success');
+    state.homeStatus[updateHomeState.coreHomeId] = { code: 'CS', home: data.home };
+    updateHomeStatusBadge(updateHomeState.coreHomeId);
+    $('#updateHomeModal').classList.remove('open');
+  } catch (e) {
+    showToast('Network error: ' + e.message, 'error');
+    btn.disabled = false;
+    btn.textContent = original;
+  }
+}
+
+// Bind Update Home controls once (delegated).
+(function bindUpdateHomeModal() {
+  document.addEventListener('click', (e) => {
+    const openBtn = e.target.closest('[data-update-home-uid]');
+    if (openBtn) { openUpdateHomeModal(openBtn.dataset.updateHomeUid); return; }
+    if (e.target.id === 'uhFurnishAdd') { addUhFurnishing(); return; }
+    const rmF = e.target.closest('[data-uh-furnish-idx]');
+    if (rmF) { updateHomeState.furnishing.splice(parseInt(rmF.dataset.uhFurnishIdx, 10), 1); renderUhFurnishing(); return; }
+    if (e.target.id === 'uhPreviewBtn') {
+      $('#updateHomePreview').innerHTML = buildUhPreview(collectUhForm());
+      goToUhStep(2);
+      return;
+    }
+    if (e.target.id === 'uhBackBtn') { goToUhStep(1); return; }
+    if (e.target.id === 'uhPublishBtn') { publishUpdateHome(); return; }
+  });
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' && (e.target.id === 'uhFurnishName' || e.target.id === 'uhFurnishCount')) {
+      e.preventDefault();
+      addUhFurnishing();
+    }
+  });
+})();
