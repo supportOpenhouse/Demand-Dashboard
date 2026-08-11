@@ -7,6 +7,8 @@
 //                             header (falls back to DEMAND_DASHBOARD_API_KEY).
 //   CORE_API_BASE_URL       — override the API base; defaults to the staging host
 //                             documented in docs/update-home-api.md.
+
+const CORE_BASE = (process.env.CORE_API_BASE_URL
   || 'http://staging-561394753846.asia-south2.run.app/api/v1/oh').replace(/\/+$/, '');
 
 const CORE_KEY = process.env.X_DEMAND_DASHBOARD_KEY
