@@ -2373,8 +2373,10 @@ async function openUpdateHomeModal(uid) {
     prefillUhFromHome(home);
 
     const code = extractListingStatus(home);
+    // floor is read-only context (update-home doesn't accept it); 0 = ground floor.
+    const floor = home && home.floor != null && home.floor !== '' ? home.floor : null;
     $('#updateHomeCurrent').innerHTML =
-      `<div style="margin-bottom:14px;font-size:13px;color:#374151;">Current listing status: ${renderHomeStatusBadge(code ? { code } : { error: 'unknown' })}</div>`;
+      `<div style="margin-bottom:14px;font-size:13px;color:#374151;">Current listing status: ${renderHomeStatusBadge(code ? { code } : { error: 'unknown' })}${floor != null ? `<span style="margin-left:12px;color:#6b7280;">Floor: <strong>${esc(floor === 0 ? 'Ground' : floor)}</strong></span>` : ''}</div>`;
     if (home) { state.homeStatus[row.core_home_id] = { code, home }; updateHomeStatusBadge(row.core_home_id); }
     if (!mastersR.success) showToast('Could not load dropdown options: ' + (mastersR.error || ''), 'error');
   } catch (e) {
