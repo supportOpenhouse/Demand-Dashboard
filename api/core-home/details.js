@@ -18,5 +18,8 @@ module.exports = async (req, res) => {
 
   const { ok, status, data } = await coreFetch('/get-home-details/', { query: { id } });
   if (!ok) return res.status(status).json({ success: false, error: data.error || `Upstream ${status}` });
-  return res.status(200).json({ success: true, home: data });
+  // Upstream wraps the payload as { home: {...} } — unwrap so clients always get
+  // the home object itself (prefill reads top-level keys like home.commission).
+  const home = (data && typeof data.home === 'object' && data.home !== null) ? data.home : data;
+  return res.status(200).json({ success: true, home });
 };
