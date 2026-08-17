@@ -9,14 +9,14 @@ Used internally after AMS is signed — caller clicks "Updated Home" to move a h
 >
 > **`get-home-details` speaks labels, not codes.** It returns `listingStatus: "Ready"`, `facing: "North"`, `furnishingStatus: "Semi Furnished"`, `ageUnits: "Years"`, and `propertyType`/`overlooking`/`whyChooseThisHome`/`documentationAndLoan` as `{name}`/`{reason}` objects **without ids**. The Update Home modal maps these back to the codes/ids that `update-home` expects (name → masters id, label → code). `furnishings` come back as `[{name}]` with **no count**, so they are not prefilled (update requires a count per item).
 
-## Staging server
+## Production server
 
-Base URL: `http://staging-561394753846.asia-south2.run.app/api/v1/oh`
+Base URL: `https://backend-prod-561394753846.asia-south2.run.app/api/v1/oh`
 
 Examples:
 
-- `PATCH http://staging-561394753846.asia-south2.run.app/api/v1/oh/update-home/`
-- `GET http://staging-561394753846.asia-south2.run.app/api/v1/oh/home-form-masters/`
+- `PATCH https://backend-prod-561394753846.asia-south2.run.app/api/v1/oh/update-home/`
+- `GET https://backend-prod-561394753846.asia-south2.run.app/api/v1/oh/home-form-masters/`
 
 ---
 
@@ -125,7 +125,7 @@ Do **not** send labels like `"Ready"` or `"North"` — only codes.
 
 ## Endpoints
 
-Base (staging): `http://staging-561394753846.asia-south2.run.app/api/v1/oh`
+Base (production): `https://backend-prod-561394753846.asia-south2.run.app/api/v1/oh`
 Base (local docker): `http://localhost:8080/api/v1/oh`
 
 ### A) Load form masters

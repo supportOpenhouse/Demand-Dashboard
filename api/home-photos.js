@@ -1,6 +1,6 @@
 const { requireAuth, setCors } = require('./_auth');
 
-const PHOTOS_URL = 'http://backend-prod-561394753846.asia-south2.run.app/api/v1/oh/get-homes-photo/';
+const PHOTOS_URL = 'https://backend-prod-561394753846.asia-south2.run.app/api/v1/oh/get-homes-photo/';
 
 module.exports = async (req, res) => {
   setCors(res);
