@@ -527,6 +527,19 @@ function toggleRow(uid) {
 function renderExpand(r) {
   const cantEditPrice = !isAdmin();
 
+  // Acquisition price — the price Openhouse acquires the unit at. Read-only
+  // here: the canonical source is `properties.guaranteed_sale_price` in the
+  // openhouse-internal DB, owned by the Transaction dashboard's acquisition-price
+  // approval flow. Already projected by /api/list (UNIFIED_COLS) and returned by
+  // /api/detail via `p.*`, so no query change is needed. Legacy rows carry the
+  // same column. The source column is free-text lakhs on the Transaction side,
+  // so fall back to the raw string when it isn't numeric.
+  const acqRaw = r.guaranteed_sale_price;
+  const acqPriceField = field(
+    'Acquisition Price (Lakhs)',
+    toLakhs(acqRaw) || (acqRaw != null && acqRaw !== '' ? String(acqRaw) : '')
+  );
+
   // Listing price input — admin-only; editor/viewer see read-only.
   const listingPriceField = `
     <div class="field-row">
@@ -563,6 +576,7 @@ function renderExpand(r) {
         ${availHeaderControl}
       </h4>
       ${submitDetailsRow}
+      ${field('OH ID', r.uid)}
       ${field('Society', r.society_name)}
       ${field('Unit No', r.unit_no)}
       ${field('Tower', r.tower_no)}
@@ -610,6 +624,7 @@ function renderExpand(r) {
   const sectionPossession = `
     <div class="expand-section">
       <h4>🔑 Possession & Listing</h4>
+      ${acqPriceField}
       ${listingPriceField}
       ${isViewer() ? '' : field('Date of AMA', fmtDate(r.ama_date))}
       ${field('Key Handover Status', r.key_handover_date ? 'Done' : 'Pending', r.key_handover_date ? 'green' : 'amber')}
