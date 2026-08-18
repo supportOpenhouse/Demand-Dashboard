@@ -349,6 +349,14 @@ module.exports = async (req, res) => {
 
     const { rows } = await pool.query(rowsSql, [...baseParams, ...outerParams, pageSize, offset]);
 
+    // Acquisition price (properties.guaranteed_sale_price) is admin-only — our
+    // cost basis, not something manager/viewer should see. Hiding it in the UI
+    // isn't enough since the raw row lands in the browser, so drop the column
+    // from the payload for everyone but admin.
+    if (user.role !== 'admin') {
+      for (const r of rows) delete r.guaranteed_sale_price;
+    }
+
     // Distinct values for filter dropdowns — pulled from the full unified pool
     // (no outer filter conditions applied here) so picking one filter never
     // strips options from another. The CTE still applies the supply-ready gate.

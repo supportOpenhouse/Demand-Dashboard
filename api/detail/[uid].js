@@ -1,6 +1,15 @@
 const { pool, SUPPLY_READY_STATUSES } = require('../_db');
 const { requireAuth, setCors } = require('../_auth');
 
+// Acquisition price (guaranteed_sale_price) is admin-only — our cost basis, not
+// something manager/viewer should see. Both SELECTs use `p.*` / `lp.*`, so the
+// column has to be dropped from the response rather than left out of the query.
+// Mirrors the same strip in /api/list.
+function stripAdminOnly(row, user) {
+  if (user.role !== 'admin') delete row.guaranteed_sale_price;
+  return row;
+}
+
 // GET /api/detail/:uid
 //
 // Tries the supply-pipeline `properties` table first; if not found there,
@@ -48,6 +57,7 @@ module.exports = async (req, res) => {
       const row = realRes.rows[0];
       row.owner_name = row.owner_broker_name;
       row.poc = row.assigned_by;
+      stripAdminOnly(row, user);
       return res.status(200).json({ success: true, data: row });
     }
 
@@ -74,6 +84,7 @@ module.exports = async (req, res) => {
       const row = legacyRes.rows[0];
       row.owner_name = row.owner_broker_name;
       row.poc = row.assigned_by;
+      stripAdminOnly(row, user);
       return res.status(200).json({ success: true, data: row });
     }
 

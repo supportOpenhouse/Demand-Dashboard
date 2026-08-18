@@ -534,8 +534,12 @@ function renderExpand(r) {
   // /api/detail via `p.*`, so no query change is needed. Legacy rows carry the
   // same column. The source column is free-text lakhs on the Transaction side,
   // so fall back to the raw string when it isn't numeric.
+  //
+  // Admin-only, and hidden outright (not shown as "— admin only" the way Listing
+  // Price is) — manager/viewer must not see our cost basis at all. The API strips
+  // the column for non-admins too, so this isn't the only gate.
   const acqRaw = r.guaranteed_sale_price;
-  const acqPriceField = field(
+  const acqPriceField = !isAdmin() ? '' : field(
     'Acquisition Price (Lakhs)',
     toLakhs(acqRaw) || (acqRaw != null && acqRaw !== '' ? String(acqRaw) : '')
   );
