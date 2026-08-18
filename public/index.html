@@ -134,7 +134,13 @@
         <button class="btn btn-primary" id="addUserBtn">Add</button>
       </div>
       <div class="add-user-error" id="addUserError"></div>
-      <div class="sec-title">All Users</div>
+      <div class="sec-title sec-title-row">
+        <span>All Users</span>
+        <button class="btn-force-logout-all" id="forceLogoutAllBtn"
+                title="Sign out every other user — invalidates all their current sessions">
+          🚪 Force logout all
+        </button>
+      </div>
       <div class="users-list" id="usersList"></div>
     </div>
   </div>

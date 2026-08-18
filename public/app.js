@@ -295,6 +295,7 @@ function bindUI() {
     if (e.target === o) o.classList.remove('open');
   }));
   $('#addUserBtn').addEventListener('click', addUser);
+  $('#forceLogoutAllBtn').addEventListener('click', forceLogoutAll);
 
   // Sticky-top height variable so sticky thead aligns under it.
   // ResizeObserver re-fires whenever the filter bar wraps onto more lines.
@@ -1480,6 +1481,30 @@ async function loadUsers() {
       else { showToast('User removed', 'success'); await loadUsers(); }
     });
   });
+}
+
+// Bulk force-logout. Invalidates every other user's session at once — same
+// mechanism as the per-row 🚪 button, applied across the table server-side.
+// Two-step confirm because it is disruptive and there is no undo: everyone
+// signed in is bounced to the login screen on their next request.
+async function forceLogoutAll() {
+  const btn = $('#forceLogoutAllBtn');
+  if (!confirm('Force logout ALL other users?\n\nEvery signed-in user except you will be signed out immediately and must sign in again. This cannot be undone.')) return;
+
+  btn.disabled = true;
+  try {
+    const r = await fetch('/api/users/force-logout-all', {
+      method: 'POST', credentials: 'include',
+    });
+    const data = await r.json();
+    if (!data.success) {
+      showToast(data.error || 'Failed to force logout all', 'error');
+    } else {
+      showToast(`Signed out ${data.count} user${data.count === 1 ? '' : 's'}`, 'success');
+    }
+  } finally {
+    btn.disabled = false;
+  }
 }
 
 function avatarFallback(u) {

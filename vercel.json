@@ -5,6 +5,7 @@
     { "source": "/api/auth/logout",         "destination": "/api/auth/logout" },
     { "source": "/api/auth/me",             "destination": "/api/auth/me" },
     { "source": "/api/users",               "destination": "/api/users/index" },
+    { "source": "/api/users/force-logout-all", "destination": "/api/users/force-logout-all" },
     { "source": "/api/users/:id/force-logout", "destination": "/api/users/[id]/force-logout" },
     { "source": "/api/users/:id",           "destination": "/api/users/[id]" },
     { "source": "/api/home-photos",          "destination": "/api/home-photos" },
