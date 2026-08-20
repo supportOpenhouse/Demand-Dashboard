@@ -15,7 +15,7 @@ const UNIFIED_COLS = [
   ['society_name',              'society_name',              'society_name',              'TEXT'],
   ['unit_no',                   'unit_no',                   'unit_no',                   'TEXT'],
   ['tower_no',                  'tower_no',                  'tower_no',                  'TEXT'],
-  ['floor',                     'floor',                     'floor',                     'INTEGER'],
+  ['floor',                     'floor',                     'floor',                     'TEXT'],  // properties.floor is TEXT and holds 'Top'/'Ground' — never cast it to INTEGER
   ['city',                      'city',                      'city',                      'TEXT'],
   ['locality',                  'locality',                  'locality',                  'TEXT'],
   ['source',                    'source',                    'source',                    'TEXT'],
