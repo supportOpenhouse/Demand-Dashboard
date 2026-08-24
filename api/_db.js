@@ -291,25 +291,40 @@ function hasCol(allCols, name) {
 }
 
 // `master_societies` is owned externally (not created by INIT_SQL), so it may be
-// absent on some deployments. Cache — once per cold start — whether the table and
-// the two columns we LEFT JOIN on (society_name, affordable) exist, so /api/list
-// can fold in the affordable flag without risking a crash where the table is missing.
-let _masterSocietiesCache = null;
+// absent on some deployments. Cache its column list once per cold start so the
+// LEFT JOIN in /api/list can fold in per-society attributes (affordable flag,
+// micro-market) without risking a crash where the table or a column is missing.
+// Empty array = table absent or unreadable, which disables every dependent feature.
+let _masterSocietiesCols = null;
 
-async function masterSocietiesHasAffordable() {
-  if (_masterSocietiesCache !== null) return _masterSocietiesCache;
+async function masterSocietiesColumns() {
+  if (_masterSocietiesCols !== null) return _masterSocietiesCols;
   try {
     const { rows } = await pool.query(`
       SELECT column_name FROM information_schema.columns
       WHERE table_name = 'master_societies'
     `);
-    const cols = rows.map(r => r.column_name);
-    _masterSocietiesCache = cols.includes('society_name') && cols.includes('affordable');
+    _masterSocietiesCols = rows.map(r => r.column_name);
   } catch (err) {
-    console.warn('[masterSocietiesHasAffordable]', err.message);
-    _masterSocietiesCache = false;
+    console.warn('[masterSocietiesColumns]', err.message);
+    _masterSocietiesCols = [];
   }
-  return _masterSocietiesCache;
+  return _masterSocietiesCols;
+}
+
+// society_name is the join key, so every lookup needs it present alongside the
+// column actually being read.
+async function masterSocietiesHasAffordable() {
+  const cols = await masterSocietiesColumns();
+  return cols.includes('society_name') && cols.includes('affordable');
+}
+
+// micro_market: the sub-city area a society sits in (e.g. "Sector 150", "Dwarka
+// Expressway"). Same column the Direct Inventory app reads for its micro-market
+// geometry, so the naming stays consistent across dashboards.
+async function masterSocietiesHasMicroMarket() {
+  const cols = await masterSocietiesColumns();
+  return cols.includes('society_name') && cols.includes('micro_market');
 }
 
 // Quote and project a property column only if it exists, with an alias. Used to
@@ -326,6 +341,7 @@ module.exports = {
   getPropertiesColumns,
   hasCol,
   masterSocietiesHasAffordable,
+  masterSocietiesHasMicroMarket,
   projectIfExists,
   DEMAND_STATUSES,
   SUPPLY_READY_STATUSES,

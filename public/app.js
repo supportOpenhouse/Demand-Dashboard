@@ -14,10 +14,13 @@ const state = {
   sortDir: 'desc',
   // Distinct filter values from the full supply-ready pool. Populated by /api/list
   // so the dropdowns stay stable regardless of currently-selected filters.
-  distinct: { cities: [], sources: [], pocs: [] },
+  // micromarketsByCity narrows the micromarket dropdown once a city is picked;
+  // micromarkets is the flat fallback used when no city is selected.
+  distinct: { cities: [], sources: [], pocs: [], micromarkets: [], micromarketsByCity: {} },
   filters: {
     search: '',
     city: '',
+    micromarket: '',
     source: '',
     poc: '',
     affordable: '',
@@ -235,7 +238,16 @@ function bindUI() {
     searchTimer = setTimeout(() => { state.filters.search = e.target.value; loadData(); }, 300);
   });
 
-  $('#filterCity').addEventListener('change', (e) => { state.filters.city = e.target.value; loadData(); });
+  $('#filterCity').addEventListener('change', (e) => {
+    state.filters.city = e.target.value;
+    // A micromarket belongs to one city, so switching city usually strands the
+    // current pick — clear it rather than sending a pair that matches nothing.
+    if (state.filters.micromarket && !micromarketsFor(state.filters.city).includes(state.filters.micromarket)) {
+      state.filters.micromarket = '';
+    }
+    loadData();
+  });
+  $('#filterMicromarket').addEventListener('change', (e) => { state.filters.micromarket = e.target.value; loadData(); });
   $('#filterSource').addEventListener('change', (e) => { state.filters.source = e.target.value; loadData(); });
   $('#filterPoc').addEventListener('change', (e) => { state.filters.poc = e.target.value; loadData(); });
   $('#filterAffordable').addEventListener('change', (e) => { state.filters.affordable = e.target.value; loadData(); });
@@ -252,11 +264,12 @@ function bindUI() {
   });
 
   $('#clearAllBtn').addEventListener('click', () => {
-    state.filters = { search: '', city: '', source: '', poc: '', affordable: '',
+    state.filters = { search: '', city: '', micromarket: '', source: '', poc: '', affordable: '',
                       availability: '', occupancy: '',
                       dateField: 'ama_date', from: '', to: '' };
     $('#searchInput').value = '';
     $('#filterCity').value = '';
+    $('#filterMicromarket').value = '';
     $('#filterSource').value = '';
     $('#filterPoc').value = '';
     $('#filterAffordable').value = '';
@@ -342,6 +355,7 @@ async function loadData() {
   const q = new URLSearchParams();
   if (f.search) q.set('search', f.search);
   if (f.city) q.set('city', f.city);
+  if (f.micromarket) q.set('micromarket', f.micromarket);
   if (f.source) q.set('source', f.source);
   if (f.poc) q.set('poc', f.poc);
   if (f.affordable) q.set('affordable', f.affordable);
@@ -381,10 +395,22 @@ async function loadData() {
   }
 }
 
+// Micromarket options for a city — the full list when no city is picked.
+// Falls back to the flat list if the backend couldn't resolve per-city buckets
+// (master_societies missing the micro_market column projects NULL throughout).
+function micromarketsFor(city) {
+  const byCity = state.distinct.micromarketsByCity || {};
+  if (city) return byCity[city] || [];
+  return state.distinct.micromarkets || [];
+}
+
 function populateFilterDropdowns() {
   // Pull from state.distinct (full supply-ready pool) — picking one filter
-  // never strips options from the others.
+  // never strips options from the others. Micromarket is the one exception:
+  // it's a strict sub-division of city, so it narrows to the selected city.
   fillSelect('#filterCity', state.distinct.cities || [], state.filters.city, 'All Cities');
+  fillSelect('#filterMicromarket', micromarketsFor(state.filters.city),
+             state.filters.micromarket, 'All Micromarkets');
   // Sources show short labels (D, C) but the underlying option value stays
   // raw ("Direct", "CP") so the server-side filter still matches the column.
   fillSelect('#filterSource', state.distinct.sources || [], state.filters.source, 'All Sources', fmtSource);

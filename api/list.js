@@ -1,4 +1,5 @@
-const { pool, getPropertiesColumns, hasCol, masterSocietiesHasAffordable, SUPPLY_READY_STATUSES } = require('./_db');
+const { pool, getPropertiesColumns, hasCol, masterSocietiesHasAffordable,
+        masterSocietiesHasMicroMarket, SUPPLY_READY_STATUSES } = require('./_db');
 const { requireAuth, setCors } = require('./_auth');
 
 // Typed projection list shared by both sides of the UNION ALL. Each tuple is:
@@ -140,8 +141,9 @@ module.exports = async (req, res) => {
   try {
     const allCols = await getPropertiesColumns();
     const hasAffordable = await masterSocietiesHasAffordable();
+    const hasMicroMarket = await masterSocietiesHasMicroMarket();
 
-    const { search, city, source, poc, affordable, availability, occupancy,
+    const { search, city, source, poc, affordable, micromarket, availability, occupancy,
             dateField, from, to, page, limit: rawLimit } = req.query;
 
     // Status filters — independent dropdowns, applied as an AND so users can
@@ -183,6 +185,13 @@ module.exports = async (req, res) => {
     if (hasAffordable && (affordable === 'yes' || affordable === 'no')) {
       outerParams.push(affordable === 'yes');
       outerConditions.push(`ms.affordable = $${baseParams.length + outerParams.length}`);
+    }
+    // Micro-market — the sub-city area, resolved through the same master_societies
+    // LATERAL join as `affordable`. Matched trimmed/case-insensitively because the
+    // master table is hand-maintained and its casing isn't consistent.
+    if (hasMicroMarket && micromarket) {
+      outerParams.push(micromarket.trim().toLowerCase());
+      outerConditions.push(`LOWER(TRIM(ms.micro_market)) = $${baseParams.length + outerParams.length}`);
     }
     // Availability → demand_details.availability_status. demand_details is
     // LEFT JOINed and may be NULL — rows without a demand_details row are
@@ -235,17 +244,24 @@ module.exports = async (req, res) => {
     const propsProjection = buildPropertiesProjection(allCols);
     const legacyProjection = buildLegacyProjection();
 
-    // master_societies.affordable (BOOLEAN) folded in by matching society_name
-    // (case-insensitive, trimmed). LATERAL + LIMIT 1 keeps it a 1:1 lookup so a
-    // duplicate society_name in the master table can't multiply demand rows.
-    // Skipped entirely (projected NULL) where the externally-owned table is absent.
-    // Shared by the count and rows queries so the affordable filter applies to both.
-    const affordableSelect = hasAffordable
-      ? 'ms.affordable AS affordable,'
-      : 'NULL::boolean AS affordable,';
-    const affordableJoin = hasAffordable
+    // Per-society attributes from master_societies (affordable flag, micro-market)
+    // folded in by matching society_name (case-insensitive, trimmed). LATERAL +
+    // LIMIT 1 keeps it a 1:1 lookup so a duplicate society_name in the master table
+    // can't multiply demand rows. Each column is projected only where it exists —
+    // the table is owned externally and may be absent or lag a column on some
+    // deployments — with NULL standing in otherwise, which also disables the
+    // corresponding filter above. Shared by the count, rows and distinct queries so
+    // both filters narrow the badge count and the dropdowns alike.
+    const msCols = [
+      hasAffordable  ? 'affordable'   : null,
+      hasMicroMarket ? 'micro_market' : null,
+    ].filter(Boolean);
+    const msSelect =
+      (hasAffordable  ? 'ms.affordable AS affordable,'      : 'NULL::boolean AS affordable,') +
+      (hasMicroMarket ? ' ms.micro_market AS micro_market,' : ' NULL::text AS micro_market,');
+    const msJoin = msCols.length
       ? `LEFT JOIN LATERAL (
-             SELECT affordable FROM master_societies ms
+             SELECT ${msCols.join(', ')} FROM master_societies ms
              WHERE LOWER(TRIM(ms.society_name)) = LOWER(TRIM(u.society_name))
              LIMIT 1
            ) ms ON TRUE`
@@ -288,7 +304,7 @@ module.exports = async (req, res) => {
     const countSql = `${baseCte}
       SELECT COUNT(*) FROM unified u
       LEFT JOIN demand_details dd ON dd.uid = u.uid
-      ${affordableJoin}
+      ${msJoin}
       ${outerWhere}`;
     const countResult = await pool.query(countSql, [...baseParams, ...outerParams]);
     const totalCount = parseInt(countResult.rows[0].count);
@@ -324,7 +340,7 @@ module.exports = async (req, res) => {
 
     const rowsSql = `${baseCte}
       SELECT u.*,
-             ${affordableSelect}
+             ${msSelect}
              dd.listing_price          AS listing_price,
              COALESCE(dd.demand_status, 'Buyer Visit') AS demand_status,
              COALESCE(dd.availability_status, 'Available') AS availability_status,
@@ -342,7 +358,7 @@ module.exports = async (req, res) => {
              dd.updated_at
       FROM unified u
       LEFT JOIN demand_details dd ON dd.uid = u.uid
-      ${affordableJoin}
+      ${msJoin}
       ${outerWhere}
       ORDER BY COALESCE(u.ama_date, u.key_handover_date) DESC NULLS LAST
       LIMIT $${limitParamIdx} OFFSET $${offsetParamIdx}`;
@@ -361,18 +377,41 @@ module.exports = async (req, res) => {
     // (no outer filter conditions applied here) so picking one filter never
     // strips options from another. The CTE still applies the supply-ready gate.
     const distinctSql = `${baseCte}
-      SELECT DISTINCT u.city, u.source, u.poc FROM unified u`;
+      SELECT DISTINCT u.city, u.source, u.poc, ${hasMicroMarket ? 'ms.micro_market' : 'NULL::text AS micro_market'}
+      FROM unified u
+      ${msJoin}`;
     const distinctRows = await pool.query(distinctSql, baseParams);
     const cities = new Set(), sources = new Set(), pocs = new Set();
+    // Micro-markets are deduped case-insensitively (Map keyed on the lowercased
+    // name, first-seen casing wins) because master_societies is hand-maintained
+    // and the same area can appear as "Sector 150" and "sector 150" — which would
+    // otherwise show as two identical-looking dropdown entries. The filter matches
+    // case-insensitively too, so either casing selects the same rows.
+    // They're also bucketed by city: a micro-market belongs to exactly one city,
+    // so the frontend narrows its dropdown once a city is picked rather than
+    // listing every area across the country.
+    const micromarkets = new Map();
+    const micromarketsByCity = {};
     for (const r of distinctRows.rows) {
       if (r.city) cities.add(r.city);
       if (r.source) sources.add(r.source);
       if (r.poc) pocs.add(r.poc);
+      const mm = (r.micro_market || '').trim();
+      if (mm) {
+        const key = mm.toLowerCase();
+        if (!micromarkets.has(key)) micromarkets.set(key, mm);
+        if (r.city) (micromarketsByCity[r.city] ||= new Map()).set(key, micromarkets.get(key));
+      }
     }
+    const sortedNames = (map) => [...map.values()].sort((a, b) => a.localeCompare(b));
     const distinct = {
       cities:  [...cities].sort(),
       sources: [...sources].sort(),
       pocs:    [...pocs].sort(),
+      micromarkets: sortedNames(micromarkets),
+      micromarketsByCity: Object.fromEntries(
+        Object.entries(micromarketsByCity).map(([c, map]) => [c, sortedNames(map)])
+      ),
     };
 
     res.status(200).json({
