@@ -7,9 +7,9 @@ const { requireAuth, canEdit, setCors } = require('../_auth');
 // editable by admin + manager; 'Dead' is admin-only (soft-delete: once a unit
 // is Dead it's hidden from viewers + managers by /api/list, so allowing them
 // to set it would immediately lose the row from their view). Strict enum
-// validation. Once a Booked submission has been mailed, the booking_details
-// locked flag (checked elsewhere) prevents further status changes for
-// managers — admins keep full edit rights.
+// validation. Changing status on a unit that already has a mailed booking is
+// the cancellation/rebooking case — permitted for managers and admins alike,
+// and flagged as after_booking on the activity log.
 const EDITOR_FIELDS = ['internal_remarks', 'availability_status'];
 const ADMIN_ONLY_FIELDS = ['listing_price'];
 const TEXT_FIELDS = ['internal_remarks'];
@@ -41,6 +41,19 @@ module.exports = async (req, res) => {
 
     const updates = {};
     const isAdmin = user.role === 'admin';
+    // Set when availability_status is changed on a unit that already has a
+    // mailed booking (cancellation / rebooking). Recorded on the audit log.
+    let afterBookingOverride = false;
+    // Previous availability_status, read before the write so the log can show
+    // the actual transition (e.g. Booked → Available) rather than just the new value.
+    let prevAvailability = null;
+    if (req.body.availability_status !== undefined) {
+      const { rows: prev } = await pool.query(
+        `SELECT availability_status FROM demand_details WHERE uid = $1`,
+        [uid]
+      );
+      if (prev.length) prevAvailability = prev[0].availability_status;
+    }
 
     for (const field of [...EDITOR_FIELDS, ...ADMIN_ONLY_FIELDS]) {
       if (req.body[field] === undefined) continue;
@@ -82,36 +95,25 @@ module.exports = async (req, res) => {
             error: `Only admins can set ${field} to "${val}"`,
           });
         }
-        if (field === 'availability_status' && !isAdmin) {
-          const { rows: cur } = await pool.query(
-            `SELECT availability_status FROM demand_details WHERE uid = $1`,
-            [uid]
-          );
-          if (cur.length && cur[0].availability_status === 'Dead') {
-            return res.status(403).json({
-              success: false,
-              error: 'Only admins can change status on a Dead unit',
-            });
-          }
+        if (field === 'availability_status' && !isAdmin && prevAvailability === 'Dead') {
+          return res.status(403).json({
+            success: false,
+            error: 'Only admins can change status on a Dead unit',
+          });
         }
-        // Lockout: once a Booked submission has been mailed, managers can't
-        // change availability_status (admins still can). Check booking_details
-        // for a row with mail_sent_at not null. Wrapped to tolerate the
-        // booking_details table not existing yet (pre-Phase-2 deploys).
-        if (field === 'availability_status' && !isAdmin) {
+        // A status change on a unit that already has a mailed booking is a
+        // cancellation/rebooking. Managers may do it (same as admins), but it's
+        // flagged on the audit log so the override is traceable. Wrapped to
+        // tolerate the booking_details table not existing yet (pre-Phase-2 deploys).
+        if (field === 'availability_status') {
           try {
-            const { rows: locked } = await pool.query(
+            const { rows: booked } = await pool.query(
               `SELECT 1 FROM booking_details WHERE uid = $1 AND mail_sent_at IS NOT NULL LIMIT 1`,
               [uid]
             );
-            if (locked.length) {
-              return res.status(403).json({
-                success: false,
-                error: 'This property has a submitted booking. Only admins can change status.',
-              });
-            }
+            if (booked.length) afterBookingOverride = true;
           } catch (e) {
-            // booking_details table not yet created — no lockout applies.
+            // booking_details table not yet created — nothing to flag.
             if (!/relation .*booking_details.* does not exist/i.test(e.message)) throw e;
           }
         }
@@ -159,7 +161,14 @@ module.exports = async (req, res) => {
         field === 'listing_price'         ? 'price'
         : field === 'availability_status' ? 'availability'
         :                                   'text';
-      logActivity(uid, 'demand_update', category, user, { field, value });
+      const details = { field, value };
+      if (field === 'availability_status') {
+        details.previous = prevAvailability;
+        // Flags a status change made after a booking mail already went out —
+        // i.e. a cancellation or rebooking, worth surfacing in the audit trail.
+        if (afterBookingOverride) details.after_booking = true;
+      }
+      logActivity(uid, 'demand_update', category, user, details);
     }
 
     res.status(200).json({ success: true, data: rows[0] });

@@ -1144,6 +1144,23 @@ document.addEventListener('change', (e) => {
   // select AND the main row's Status pill, and show/hide the Submit Details
   // button without re-rendering the row.
   if (el.dataset.field === 'availability_status') {
+    const row = state.rows.find(x => x.uid === uid);
+    const prev = row ? (row.availability_status || 'Available') : null;
+
+    // Releasing a booked unit is the cancellation case — a mail has usually
+    // already gone out to the buyer. Confirm before saving, and put the select
+    // back if the user backs out so the UI never shows an unsaved status.
+    if (prev === 'Booked' && el.value === 'Available' && !confirm(
+      'Release this unit back to Available?\n\n' +
+      'It is currently Booked and a booking may already have been mailed to the buyer. ' +
+      'The existing booking record is kept as history, and this change is recorded in the activity log against your account.\n\n' +
+      'You can submit a fresh booking for the unit afterwards.'
+    )) {
+      el.value = prev;
+      syncAvailabilityUI(uid, prev);
+      return;
+    }
+
     syncAvailabilityUI(uid, el.value);
   }
 
@@ -1786,11 +1803,11 @@ async function openBookingModal(uid) {
     refreshAllAmountHints();
   }
 
-  // If a prior booking has been mailed and the user isn't admin, block.
-  if (data.locked && state.user.role !== 'admin') {
-    showToast('Booking already submitted. Only admins can re-submit.', 'error');
-    $('#bookingModal').classList.remove('open');
-    return;
+  // A prior booking was already mailed. Re-submitting is the cancellation /
+  // rebooking case — allowed for managers and admins — so warn rather than
+  // block; the new submission is saved as a fresh row and the old one is kept.
+  if (data.locked) {
+    showToast('This unit already has a submitted booking. Submitting again records a rebooking.', 'warn');
   }
 
   renderBookingRecipients();
@@ -2313,8 +2330,8 @@ async function sendBookingMail(mode) {
     }
     showToast(isCp ? 'CP (broker) mail sent' : 'Booking submitted and buyer email sent', 'success');
     // Mark this mail as sent but KEEP the modal open, so the other mail can be
-    // sent in the same session (re-opening the modal is locked for managers once
-    // a mail has gone out). The disabled state prevents a double-send race.
+    // sent in the same session against the row this send just created. The
+    // disabled state prevents a double-send race.
     btn.textContent = '✓ Sent';
 
     // Either send marks the unit Booked.

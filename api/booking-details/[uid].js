@@ -15,9 +15,11 @@
 //                      if we want to add a "Save Draft" button later. Currently
 //                      not exposed in the UI, kept here for future extension.
 //
-// Admin + manager only. After mail_sent_at is set, the row is considered
-// locked for managers (admins can still re-submit a fresh row, treated as a
-// new submission rather than an edit).
+// Admin + manager only. Re-submitting after mail_sent_at is set is the
+// cancellation/rebooking case: allowed for both roles, and always inserted as a
+// fresh row so earlier bookings survive as history. The repeat is recorded on
+// the audit log as booking_resent / booking_cp_mail_resent with a count of the
+// prior mailed bookings.
 //
 // All writes wrapped in a transaction; mail send happens AFTER commit so a
 // failed send doesn't leave an orphan unsent row in the DB.
@@ -408,26 +410,24 @@ module.exports = async (req, res) => {
     if (!cpTo.length) cpErrors.push('At least one CP recipient (broker or CP RM) is required');
     if (cpErrors.length) return res.status(400).json({ success: false, error: cpErrors.join('; ') });
 
-    // Manager lockout: block a re-send once a CP mail has gone out for this uid.
-    if (user.role !== 'admin') {
-      const existing = await pool.query(
-        `SELECT 1 FROM booking_details WHERE uid = $1 AND cp_mail_sent_at IS NOT NULL LIMIT 1`,
-        [uid]
-      );
-      if (existing.rows.length) {
-        return res.status(403).json({
-          success: false,
-          error: 'A CP mail for this property has already been sent. Only admins can re-send.',
-        });
-      }
-    }
+    // A repeat CP mail is the rebooking case (new buyer, new brokerage) —
+    // allowed for managers and admins alike. Counted for the audit log.
+    const priorCp = await pool.query(
+      `SELECT COUNT(*)::int AS n FROM booking_details WHERE uid = $1 AND cp_mail_sent_at IS NOT NULL`,
+      [uid]
+    );
+    const priorCpCount = priorCp.rows[0].n;
 
     // Persist brokerage on the most recent booking row (usually the one the buyer
     // send just created in this session); insert a fresh row if the CP mail is
-    // sent before the buyer mail.
+    // sent before the buyer mail. A latest row whose CP mail already went out
+    // belongs to a completed booking — a repeat send is a rebooking, so it gets
+    // its own row rather than overwriting that history.
     let cpRowId;
     const latest = await pool.query(
-      `SELECT id FROM booking_details WHERE uid = $1 ORDER BY created_at DESC LIMIT 1`,
+      `SELECT id FROM booking_details
+        WHERE uid = $1 AND cp_mail_sent_at IS NULL
+        ORDER BY created_at DESC LIMIT 1`,
       [uid]
     );
     if (latest.rows.length) {
@@ -483,7 +483,11 @@ module.exports = async (req, res) => {
       `UPDATE booking_details SET cp_mail_sent_at = NOW(), updated_at = NOW() WHERE id = $1`,
       [cpRowId]
     );
-    logActivity(uid, 'booking_cp_mail', 'booking', user, { booking_id: cpRowId });
+    logActivity(uid, priorCpCount ? 'booking_cp_mail_resent' : 'booking_cp_mail', 'booking', user, {
+      booking_id: cpRowId,
+      // >0 means a CP mail had already gone out for this unit — a rebooking.
+      prior_cp_mails: priorCpCount,
+    });
     return res.status(200).json({ success: true, id: cpRowId, sent: true });
   }
 
@@ -499,20 +503,15 @@ module.exports = async (req, res) => {
     return res.status(400).json({ success: false, error: 'At least one recipient is required to send mail.' });
   }
 
-  // Manager lockout: if a prior booking for this uid is already mailed and
-  // user is manager (not admin), block further bookings. Admins can re-submit.
-  if (user.role !== 'admin') {
-    const existing = await pool.query(
-      `SELECT 1 FROM booking_details WHERE uid = $1 AND mail_sent_at IS NOT NULL LIMIT 1`,
-      [uid]
-    );
-    if (existing.rows.length) {
-      return res.status(403).json({
-        success: false,
-        error: 'A booking for this property has already been submitted. Only admins can re-submit.',
-      });
-    }
-  }
+  // Re-submission after a mailed booking is the cancellation/rebooking case:
+  // allowed for managers and admins alike, and inserted as a fresh row so the
+  // earlier booking stays intact as history. Counted here so the audit log can
+  // record which attempt this is.
+  const priorSent = await pool.query(
+    `SELECT COUNT(*)::int AS n FROM booking_details WHERE uid = $1 AND mail_sent_at IS NOT NULL`,
+    [uid]
+  );
+  const priorSentCount = priorSent.rows[0].n;
 
   // Insert booking row. Email sending happens AFTER the transaction commits
   // so we don't lose track of in-flight bookings if SMTP fails.
@@ -607,10 +606,13 @@ module.exports = async (req, res) => {
     [insertedId]
   );
 
-  logActivity(uid, 'booking_sent', 'booking', user, {
+  logActivity(uid, priorSentCount ? 'booking_resent' : 'booking_sent', 'booking', user, {
     booking_id: insertedId,
     recipients: mailTo,
     subject,
+    // >0 means this is a rebooking after a cancellation; the prior bookings
+    // remain in booking_details as history.
+    prior_bookings: priorSentCount,
   });
 
   return res.status(200).json({ success: true, id: insertedId, sent: true });
