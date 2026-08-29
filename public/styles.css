@@ -88,6 +88,49 @@ body {
   font-family: 'Inter', sans-serif; outline: none; cursor: pointer;
 }
 .filter-select:focus { border-color: #6366f1; background: #fff; }
+
+/* Multi-select filter (micromarket): a .filter-select-styled toggle plus a
+   checkbox popover, so several values can be active at once. */
+.multiselect { position: relative; display: inline-block; }
+.multiselect-toggle {
+  display: inline-flex; align-items: center; gap: 6px;
+  max-width: 220px; text-align: left;
+}
+.multiselect-toggle .multiselect-caret { color: #9ca3af; font-size: 9px; }
+.multiselect-toggle > span:first-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.multiselect.active .multiselect-toggle { border-color: #a5b4fc; background: #eef2ff; color: #4f46e5; }
+.multiselect-panel {
+  display: none; position: absolute; left: 0; top: 30px; z-index: 300;
+  background: #fff; border: 1px solid #e4e7ec; border-radius: 10px;
+  box-shadow: 0 8px 30px rgba(0,0,0,.12);
+  width: 260px; padding: 8px;
+}
+.multiselect.open .multiselect-panel { display: block; }
+.multiselect-search {
+  width: 100%; box-sizing: border-box;
+  padding: 5px 8px; border: 1px solid #e4e7ec; border-radius: 6px;
+  font-family: 'Inter', sans-serif; font-size: 11px; color: #374151; outline: none;
+}
+.multiselect-search:focus { border-color: #6366f1; }
+.multiselect-actions {
+  display: flex; gap: 12px; padding: 7px 2px 6px;
+  border-bottom: 1px solid #f1f3f5; margin-bottom: 4px;
+}
+.multiselect-actions button {
+  background: none; border: none; padding: 0; cursor: pointer;
+  font-family: 'Inter', sans-serif; font-size: 10px; font-weight: 600;
+  text-transform: uppercase; letter-spacing: .4px; color: #6366f1;
+}
+.multiselect-actions button:hover { text-decoration: underline; }
+.multiselect-options { max-height: 260px; overflow-y: auto; }
+.multiselect-option {
+  display: flex; align-items: center; gap: 8px;
+  padding: 5px 6px; border-radius: 6px; cursor: pointer;
+  font-size: 12px; color: #374151;
+}
+.multiselect-option:hover { background: #f3f4f6; }
+.multiselect-option input { margin: 0; cursor: pointer; accent-color: #6366f1; }
+.multiselect-empty { padding: 10px 6px; font-size: 11px; color: #9ca3af; font-style: italic; }
 .date-filter-group {
   display: flex; align-items: center; gap: 6px;
   flex-basis: 100%; padding-top: 6px; margin-top: 4px;

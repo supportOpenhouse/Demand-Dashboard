@@ -20,7 +20,8 @@ const state = {
   filters: {
     search: '',
     city: '',
-    micromarket: '',
+    // Multi-select: array of selected micromarket names. Empty = no restriction.
+    micromarket: [],
     source: '',
     poc: '',
     affordable: '',
@@ -240,14 +241,14 @@ function bindUI() {
 
   $('#filterCity').addEventListener('change', (e) => {
     state.filters.city = e.target.value;
-    // A micromarket belongs to one city, so switching city usually strands the
-    // current pick — clear it rather than sending a pair that matches nothing.
-    if (state.filters.micromarket && !micromarketsFor(state.filters.city).includes(state.filters.micromarket)) {
-      state.filters.micromarket = '';
-    }
+    // A micromarket belongs to one city, so switching city strands picks from the
+    // old one — drop those rather than sending pairs that match nothing. Any pick
+    // that also exists in the new city survives.
+    const stillValid = micromarketsFor(state.filters.city);
+    state.filters.micromarket = state.filters.micromarket.filter(m => stillValid.includes(m));
     loadData();
   });
-  $('#filterMicromarket').addEventListener('change', (e) => { state.filters.micromarket = e.target.value; loadData(); });
+  bindMicromarketFilter();
   $('#filterSource').addEventListener('change', (e) => { state.filters.source = e.target.value; loadData(); });
   $('#filterPoc').addEventListener('change', (e) => { state.filters.poc = e.target.value; loadData(); });
   $('#filterAffordable').addEventListener('change', (e) => { state.filters.affordable = e.target.value; loadData(); });
@@ -264,12 +265,12 @@ function bindUI() {
   });
 
   $('#clearAllBtn').addEventListener('click', () => {
-    state.filters = { search: '', city: '', micromarket: '', source: '', poc: '', affordable: '',
+    state.filters = { search: '', city: '', micromarket: [], source: '', poc: '', affordable: '',
                       availability: '', occupancy: '',
                       dateField: 'ama_date', from: '', to: '' };
     $('#searchInput').value = '';
     $('#filterCity').value = '';
-    $('#filterMicromarket').value = '';
+    $('#filterMicromarketSearch').value = '';
     $('#filterSource').value = '';
     $('#filterPoc').value = '';
     $('#filterAffordable').value = '';
@@ -355,7 +356,9 @@ async function loadData() {
   const q = new URLSearchParams();
   if (f.search) q.set('search', f.search);
   if (f.city) q.set('city', f.city);
-  if (f.micromarket) q.set('micromarket', f.micromarket);
+  // Repeated param (?micromarket=A&micromarket=B) rather than a delimited string,
+  // so a name containing the delimiter could never split into two filters.
+  f.micromarket.forEach(m => q.append('micromarket', m));
   if (f.source) q.set('source', f.source);
   if (f.poc) q.set('poc', f.poc);
   if (f.affordable) q.set('affordable', f.affordable);
@@ -404,13 +407,111 @@ function micromarketsFor(city) {
   return state.distinct.micromarkets || [];
 }
 
+// ── Micromarket multi-select ───────────────────────────────────────────
+// A checkbox popover instead of a native <select> so several areas can be
+// active at once. Options come from state.distinct, narrowed to the selected
+// city; selections live in state.filters.micromarket as an array of names.
+
+// Reloading on every checkbox tick would fire a request per click while the user
+// is still picking, so ticks coalesce into one load shortly after they stop.
+let mmApplyTimer = null;
+function applyMicromarketFilter() {
+  clearTimeout(mmApplyTimer);
+  mmApplyTimer = setTimeout(loadData, 300);
+}
+
+function bindMicromarketFilter() {
+  const wrap = $('#filterMicromarketWrap');
+
+  $('#filterMicromarketBtn').addEventListener('click', (e) => {
+    e.stopPropagation();
+    const opening = !wrap.classList.contains('open');
+    wrap.classList.toggle('open', opening);
+    $('#filterMicromarketBtn').setAttribute('aria-expanded', String(opening));
+    if (opening) $('#filterMicromarketSearch').focus();
+  });
+
+  // Clicks inside the panel must not bubble to the document handler that closes it.
+  $('#filterMicromarketPanel').addEventListener('click', (e) => e.stopPropagation());
+  document.addEventListener('click', () => closeMicromarketPanel());
+  document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeMicromarketPanel(); });
+
+  // Search narrows the visible options only — it never changes what's selected,
+  // so a filtered-out pick stays active.
+  $('#filterMicromarketSearch').addEventListener('input', renderMicromarketOptions);
+
+  $('#filterMicromarketOptions').addEventListener('change', (e) => {
+    const cb = e.target.closest('input[type="checkbox"]');
+    if (!cb) return;
+    const name = cb.value;
+    const picked = new Set(state.filters.micromarket);
+    cb.checked ? picked.add(name) : picked.delete(name);
+    state.filters.micromarket = [...picked];
+    updateMicromarketLabel();
+    applyMicromarketFilter();
+  });
+
+  // Select all / Clear act on what's currently visible, so they compose with the
+  // search box ("Dwarka" → Select all → every Dwarka area).
+  wrap.querySelectorAll('[data-mm-action]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const visible = visibleMicromarkets();
+      const picked = new Set(state.filters.micromarket);
+      visible.forEach(m => btn.dataset.mmAction === 'all' ? picked.add(m) : picked.delete(m));
+      state.filters.micromarket = [...picked];
+      renderMicromarketOptions();
+      applyMicromarketFilter();
+    });
+  });
+}
+
+function closeMicromarketPanel() {
+  const wrap = $('#filterMicromarketWrap');
+  if (!wrap || !wrap.classList.contains('open')) return;
+  wrap.classList.remove('open');
+  $('#filterMicromarketBtn').setAttribute('aria-expanded', 'false');
+}
+
+// Options matching the search box, within the current city scope.
+function visibleMicromarkets() {
+  const q = ($('#filterMicromarketSearch').value || '').trim().toLowerCase();
+  const all = micromarketsFor(state.filters.city);
+  return q ? all.filter(m => m.toLowerCase().includes(q)) : all;
+}
+
+function renderMicromarketOptions() {
+  const box = $('#filterMicromarketOptions');
+  const picked = new Set(state.filters.micromarket);
+  const visible = visibleMicromarkets();
+
+  box.innerHTML = visible.length
+    ? visible.map(m => `
+        <label class="multiselect-option">
+          <input type="checkbox" value="${esc(m)}"${picked.has(m) ? ' checked' : ''}>
+          <span>${esc(m)}</span>
+        </label>`).join('')
+    : '<div class="multiselect-empty">No micromarkets found</div>';
+
+  updateMicromarketLabel();
+}
+
+// Toggle text mirrors the other filters when nothing or one thing is picked, and
+// collapses to a count beyond that — names are too long to list in a filter bar.
+function updateMicromarketLabel() {
+  const picked = state.filters.micromarket;
+  $('#filterMicromarketLabel').textContent =
+    picked.length === 0 ? 'All Micromarkets'
+    : picked.length === 1 ? picked[0]
+    : `${picked.length} Micromarkets`;
+  $('#filterMicromarketWrap').classList.toggle('active', picked.length > 0);
+}
+
 function populateFilterDropdowns() {
   // Pull from state.distinct (full supply-ready pool) — picking one filter
   // never strips options from the others. Micromarket is the one exception:
   // it's a strict sub-division of city, so it narrows to the selected city.
   fillSelect('#filterCity', state.distinct.cities || [], state.filters.city, 'All Cities');
-  fillSelect('#filterMicromarket', micromarketsFor(state.filters.city),
-             state.filters.micromarket, 'All Micromarkets');
+  renderMicromarketOptions();
   // Sources show short labels (D, C) but the underlying option value stays
   // raw ("Direct", "CP") so the server-side filter still matches the column.
   fillSelect('#filterSource', state.distinct.sources || [], state.filters.source, 'All Sources', fmtSource);

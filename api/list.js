@@ -143,8 +143,17 @@ module.exports = async (req, res) => {
     const hasAffordable = await masterSocietiesHasAffordable();
     const hasMicroMarket = await masterSocietiesHasMicroMarket();
 
-    const { search, city, source, poc, affordable, micromarket, availability, occupancy,
+    const { search, city, source, poc, affordable, availability, occupancy,
             dateField, from, to, page, limit: rawLimit } = req.query;
+
+    // Micromarket is multi-select, sent as a repeated param
+    // (?micromarket=A&micromarket=B). A comma-delimited single value is also
+    // accepted so a hand-written URL still works. Normalized to lowercase here
+    // because the master table's casing is inconsistent.
+    const micromarketFilter = [].concat(req.query.micromarket || [])
+      .flatMap(v => String(v).split(','))
+      .map(v => v.trim().toLowerCase())
+      .filter(Boolean);
 
     // Status filters — independent dropdowns, applied as an AND so users can
     // narrow by both the availability pill (Available/Booked/Sold/Dead) and
@@ -187,11 +196,11 @@ module.exports = async (req, res) => {
       outerConditions.push(`ms.affordable = $${baseParams.length + outerParams.length}`);
     }
     // Micro-market — the sub-city area, resolved through the same master_societies
-    // LATERAL join as `affordable`. Matched trimmed/case-insensitively because the
-    // master table is hand-maintained and its casing isn't consistent.
-    if (hasMicroMarket && micromarket) {
-      outerParams.push(micromarket.trim().toLowerCase());
-      outerConditions.push(`LOWER(TRIM(ms.micro_market)) = $${baseParams.length + outerParams.length}`);
+    // LATERAL join as `affordable`. Several may be selected at once, so this is an
+    // ANY() over the normalized names rather than an equality test.
+    if (hasMicroMarket && micromarketFilter.length) {
+      outerParams.push(micromarketFilter);
+      outerConditions.push(`LOWER(TRIM(ms.micro_market)) = ANY($${baseParams.length + outerParams.length}::text[])`);
     }
     // Availability → demand_details.availability_status. demand_details is
     // LEFT JOINed and may be NULL — rows without a demand_details row are

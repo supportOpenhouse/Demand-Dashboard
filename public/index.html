@@ -45,7 +45,24 @@
   <div class="filter-bar">
     <span class="filter-label">Filters:</span>
     <select class="filter-select" id="filterCity"><option value="">All Cities</option></select>
-    <select class="filter-select" id="filterMicromarket"><option value="">All Micromarkets</option></select>
+    <!-- Micromarket is multi-select, so it's a checkbox popover rather than a
+         native <select> (which can only carry one value per filter round-trip). -->
+    <div class="multiselect" id="filterMicromarketWrap">
+      <button type="button" class="filter-select multiselect-toggle" id="filterMicromarketBtn"
+              aria-haspopup="true" aria-expanded="false">
+        <span id="filterMicromarketLabel">All Micromarkets</span>
+        <span class="multiselect-caret">▾</span>
+      </button>
+      <div class="multiselect-panel" id="filterMicromarketPanel">
+        <input type="text" class="multiselect-search" id="filterMicromarketSearch"
+               placeholder="Search micromarkets…" autocomplete="off">
+        <div class="multiselect-actions">
+          <button type="button" data-mm-action="all">Select all</button>
+          <button type="button" data-mm-action="none">Clear</button>
+        </div>
+        <div class="multiselect-options" id="filterMicromarketOptions"></div>
+      </div>
+    </div>
     <select class="filter-select" id="filterSource"><option value="">All Sources</option></select>
     <select class="filter-select" id="filterPoc"><option value="">All POCs</option></select>
     <select class="filter-select" id="filterAffordable">
