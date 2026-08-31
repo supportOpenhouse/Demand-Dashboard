@@ -2633,6 +2633,7 @@ async function openUpdateHomeModal(uid) {
     populateUhChecks();
     prefillUhFromHome(home);
     applyUhDefaults(row, home);
+    fillUhNewLayoutForm(row);
 
     const code = extractListingStatus(home);
     // floor is read-only context (update-home doesn't accept it); 0 = ground floor.
@@ -2808,22 +2809,35 @@ function uhLocalLayoutMatch(spec) {
   }) || null;
 }
 
-// Seed the panel from the unit's own supply data.
+// Seed the panel from the unit's own supply data. Runs when the modal loads so
+// the form is ready before it is ever opened, and again on each toggle — it only
+// ever writes into blank inputs, so re-running never clobbers an edit.
 function fillUhNewLayoutForm(row) {
   if (!row) return;
   const beds = Number(extractBedrooms(row.configuration));
-  const sup = Number(row.super_area || row.area_sqft);
-  const set = (id, v) => { const el = document.getElementById(id); if (el && v != null && v !== '' && !Number.isNaN(v)) el.value = v; };
-  set('uhNlBeds', Number.isFinite(beds) ? beds : '');
-  set('uhNlBaths', row.bathrooms);
-  set('uhNlBalc', row.balconies);
-  set('uhNlSuper', Number.isFinite(sup) ? Math.round(sup) : '');
-  set('uhNlCarpet', row.carpet_area != null ? Math.round(Number(row.carpet_area)) : '');
-  const nameEl = document.getElementById('uhNlName');
-  if (nameEl && !nameEl.value) {
-    nameEl.value = [Number.isFinite(beds) ? beds + ' BHK' : '', Number.isFinite(sup) ? Math.round(sup) + ' sqft' : '']
-      .filter(Boolean).join(' — ');
-  }
+  const sup  = Number(row.super_area || row.area_sqft);
+  const carp = Number(row.carpet_area);
+
+  const set = (id, v) => {
+    const el = document.getElementById(id);
+    if (!el) return;
+    if (String(el.value).trim() !== '') return;          // never overwrite an edit
+    if (v == null || v === '' || (typeof v === 'number' && !Number.isFinite(v))) return;
+    el.value = v;
+  };
+
+  set('uhNlBeds',   Number.isFinite(beds) ? beds : null);
+  set('uhNlBaths',  row.bathrooms != null && row.bathrooms !== '' ? Number(row.bathrooms) : null);
+  set('uhNlBalc',   row.balconies != null && row.balconies !== '' ? Number(row.balconies) : null);
+  set('uhNlSuper',  Number.isFinite(sup) && sup > 0 ? Math.round(sup) : null);
+  set('uhNlCarpet', Number.isFinite(carp) && carp > 0 ? Math.round(carp) : null);
+
+  // Name it the way the layout dropdown labels things, so a created layout reads
+  // consistently with the ones already there.
+  set('uhNlName', [
+    Number.isFinite(beds) ? beds + ' BHK' : '',
+    Number.isFinite(sup) && sup > 0 ? Math.round(sup) + ' sqft' : '',
+  ].filter(Boolean).join(' — ') || null);
 }
 
 function uhNewLayoutSpec() {
