@@ -2814,24 +2814,37 @@ function uhFuzzyIds(mastersName, labelKeys, values) {
   return out;
 }
 
-// "1 Open" / "2 Covered" / "1 Covered, 1 Open" -> { covered, open }.
+// Parking free-text -> { covered, open }, or null when nothing is recognisable.
+//
+// The supply form writes "Closed" for a covered slot ("1 Closed"), not
+// "Covered" — both spellings occur in the data, along with stilt/basement/
+// garage for the same thing and uncovered as a synonym for open.
+//
+// Returns null rather than {0,0} for unparseable text ("Yes", "Available"),
+// because writing zeros would assert "this unit has no parking" when we simply
+// could not tell — the operator fills it in instead.
+const UH_PARK_OPEN = /^(open|uncovered)$/;
+const UH_PARK_WORD = /(\d+)\s*(covered|closed|uncovered|open|stilt|basement|garage)/g;
+
 function uhParseParking(text) {
+  const s = String(text == null ? '' : text).toLowerCase();
+  if (!s.trim()) return null;
+
   const out = { covered: 0, open: 0 };
-  const s = String(text || '').toLowerCase();
-  if (!s) return out;
-  let m, re = /(\d+)\s*(covered|open|stilt|basement)/g;
-  let matched = false;
-  while ((m = re.exec(s)) !== null) {
+  let m, matched = false;
+  UH_PARK_WORD.lastIndex = 0;   // module-scope regex with /g keeps state
+  while ((m = UH_PARK_WORD.exec(s)) !== null) {
     matched = true;
     const n = parseInt(m[1], 10);
-    if (m[2] === 'open') out.open += n; else out.covered += n;
+    if (UH_PARK_OPEN.test(m[2])) out.open += n; else out.covered += n;
   }
-  // Bare "Covered" / "Open" with no leading count means one.
-  if (!matched) {
-    if (/open/.test(s)) out.open = 1;
-    else if (/covered|stilt|basement/.test(s)) out.covered = 1;
-  }
-  return out;
+  if (matched) return out;
+
+  // A bare word with no leading count means one of that kind. Check the
+  // "uncovered" branch first — it contains "covered" as a substring.
+  if (/uncovered|open/.test(s)) return { covered: 0, open: 1 };
+  if (/covered|closed|stilt|basement|garage/.test(s)) return { covered: 1, open: 0 };
+  return null;
 }
 
 // Balcony Facing renders as "Room · Facing · View"; the View (last part) is what
@@ -2942,8 +2955,10 @@ function applyUhDefaults(row, home) {
   }
 
   const parking = uhParseParking(row.parking);
-  setUfIfEmpty('parkingCovered', Math.min(parking.covered, 9));
-  setUfIfEmpty('parkingOpen', Math.min(parking.open, 9));
+  if (parking) {
+    setUfIfEmpty('parkingCovered', Math.min(parking.covered, 9));
+    setUfIfEmpty('parkingOpen', Math.min(parking.open, 9));
+  }
 
   checkUhBoxesIfEmpty('uhOverlooking', uhFuzzyIds('overlooking', ['name'], uhBalconyViews(row.balcony_details)));
   checkUhBoxesIfEmpty('uhWhyChoose', uhFuzzyIds('whyChooseThisHome', ['reason', 'name'], UH_DEFAULT_WHY_CHOOSE));
