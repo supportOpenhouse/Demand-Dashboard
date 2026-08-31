@@ -2532,12 +2532,17 @@ async function openUpdateHomeModal(uid) {
   updateHomeState.masters = null;
   updateHomeState.societies = [];
   updateHomeState.layouts = [];
+  updateHomeState.floorPlanUrl = null;      // newly uploaded, pending publish
+  updateHomeState.floorPlanCurrent = null;  // what the home already has
 
   document.querySelectorAll('#updateHomeModal [data-uf]').forEach(el => { el.value = ''; });
   const laySelReset = document.querySelector('#updateHomeModal [data-uf="layoutId"]');
   if (laySelReset) laySelReset.innerHTML = '<option value="">Select…</option>';
   ['uhOverlooking', 'uhWhyChoose', 'uhDocs'].forEach(id => { const el = document.getElementById(id); if (el) el.innerHTML = ''; });
   renderUhFurnishing();
+  renderUhFloorPlan();
+  const fpFile = $('#uhFloorPlanFile'); if (fpFile) fpFile.value = '';
+  const fpStatus = $('#uhFloorPlanStatus'); if (fpStatus) fpStatus.textContent = '';
   $('#updateHomeCurrent').innerHTML = '';
   $('#updateHomeSubtitle').textContent = `· ${row.society_name || ''} ${row.unit_no ? '· Unit ' + row.unit_no : ''}`;
   const pubBtn = $('#uhPublishBtn'); if (pubBtn) { pubBtn.disabled = false; pubBtn.textContent = '🚀 Publish (Coming Soon)'; }
@@ -2559,6 +2564,8 @@ async function openUpdateHomeModal(uid) {
     updateHomeState.societies = (publicR && publicR.success && publicR.publicMasters && publicR.publicMasters.societies) || [];
     const home = (detailsR && detailsR.success) ? detailsR.home : null;
     updateHomeState.layouts = uhCollectLayouts(home);
+    updateHomeState.floorPlanCurrent = uhFloorPlanFromHome(home);
+    renderUhFloorPlan();
 
     populateUhSelects();
     populateUhChecks();
@@ -2640,6 +2647,74 @@ function uhCollectLayouts(home) {
   const socLayouts = (home && home.society && home.society.layouts) || [];
   if (Array.isArray(socLayouts)) socLayouts.forEach(add);
   return out;
+}
+
+// The floor plan is a HomePhoto identified by altText containing "floor plan"
+// (case-insensitive — production carries both "Floor plan" and "Floor Plan").
+// Deliberately NOT matched on tags: the tags on these rows are room names and
+// are frequently wrong (one sampled floor plan is tagged "Balcony View").
+function uhFloorPlanFromHome(home) {
+  const photos = (home && home.homePhotos) || [];
+  if (!Array.isArray(photos)) return null;
+  const hit = photos.find(p => p && /floor\s*plan/i.test(String(p.altText || '')));
+  return hit && hit.image ? hit.image : null;
+}
+
+// Shows the current plan, or the pending upload that will replace it on publish.
+function renderUhFloorPlan() {
+  const el = $('#uhFloorPlan');
+  if (!el) return;
+  const pending = updateHomeState.floorPlanUrl;
+  const current = updateHomeState.floorPlanCurrent;
+  const url = pending || current;
+  if (!url) {
+    el.innerHTML = '<span class="field-val muted">No floor plan on this home yet.</span>';
+  } else {
+    el.innerHTML = `
+      <div style="display:flex;align-items:center;gap:10px;">
+        <img src="${esc(url)}" alt="Floor plan" data-uh-floorplan="${esc(url)}"
+             style="height:64px;width:auto;max-width:190px;object-fit:contain;border:1px solid #e5e7eb;border-radius:6px;cursor:zoom-in;background:#fff;">
+        <span style="font-size:12px;color:${pending ? '#b45309' : '#6b7280'};">
+          ${pending ? 'New plan — replaces the current one when you publish' : 'Current floor plan'}
+        </span>
+      </div>`;
+  }
+  const clearBtn = $('#uhFloorPlanClear');
+  if (clearBtn) clearBtn.style.display = pending ? '' : 'none';
+}
+
+// Reads the picked file, ships it to our Cloudinary proxy, and keeps the
+// returned URL until publish — nothing is written to the home until then.
+async function uploadUhFloorPlan(file) {
+  const statusEl = $('#uhFloorPlanStatus');
+  const setStatus = (t, err) => { if (statusEl) { statusEl.textContent = t; statusEl.style.color = err ? '#b91c1c' : '#6b7280'; } };
+  if (!file) return;
+  if (file.size > 3 * 1024 * 1024) {
+    setStatus(`That file is ${(file.size / 1024 / 1024).toFixed(1)} MB. Max 3 MB — please compress it.`, true);
+    return;
+  }
+  setStatus('Uploading…');
+  try {
+    const dataUrl = await new Promise((resolve, reject) => {
+      const fr = new FileReader();
+      fr.onload = () => resolve(fr.result);
+      fr.onerror = () => reject(new Error('Could not read that file'));
+      fr.readAsDataURL(file);
+    });
+    const r = await fetch('/api/core-home/floor-plan', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'include',
+      body: JSON.stringify({ dataUrl }),
+    });
+    const data = await r.json();
+    if (!r.ok || !data.success) { setStatus(data.error || 'Upload failed', true); return; }
+    updateHomeState.floorPlanUrl = data.url;
+    setStatus('Uploaded — publish to attach it to this home.');
+    renderUhFloorPlan();
+  } catch (e) {
+    setStatus(e.message, true);
+  }
 }
 
 // Prefill the form from get-home-details. That payload speaks LABELS and NAMES
@@ -2779,6 +2854,8 @@ function collectUhForm() {
   checks('uhWhyChoose', 'whyChooseThisHomeIds');
   checks('uhDocs', 'documentationAndLoanIds');
 
+  if (updateHomeState.floorPlanUrl) body.floorPlanUrl = updateHomeState.floorPlanUrl;
+
   if (updateHomeState.furnishing.length) {
     body.furnishingData = updateHomeState.furnishing.map(f => ({ name: f.name, count: f.count }));
   }
@@ -2811,6 +2888,7 @@ function buildUhPreview(body) {
   if ('commission' in body) push('Commission', esc(body.commission));
   if ('propertyTypeId' in body) push('Property type', esc(uhLabelForId('propertyTypes', body.propertyTypeId, ['name'])));
   if ('societyId' in body) push('Society', esc(uhSocietyLabel(body.societyId)));
+  if ('floorPlanUrl' in body) push('Floor plan', updateHomeState.floorPlanCurrent ? 'Replaces the existing plan' : 'New plan attached');
   if ('layoutId' in body) push('Layout', esc(uhLayoutLabel(
     (updateHomeState.layouts || []).find(l => String(l.id) === String(body.layoutId))
   ) || ('#' + body.layoutId)));
@@ -2880,6 +2958,17 @@ async function publishUpdateHome() {
     const openBtn = e.target.closest('[data-update-home-uid]');
     if (openBtn) { openUpdateHomeModal(openBtn.dataset.updateHomeUid); return; }
     if (e.target.id === 'uhFurnishAdd') { addUhFurnishing(); return; }
+    // Zoom the floor plan in the existing lightbox.
+    const fpImg = e.target.closest('[data-uh-floorplan]');
+    if (fpImg) { openLightbox([fpImg.dataset.uhFloorplan], 0); return; }
+    // Drop a pending upload — the home's existing plan is untouched.
+    if (e.target.id === 'uhFloorPlanClear') {
+      updateHomeState.floorPlanUrl = null;
+      const f = $('#uhFloorPlanFile'); if (f) f.value = '';
+      const st = $('#uhFloorPlanStatus'); if (st) st.textContent = '';
+      renderUhFloorPlan();
+      return;
+    }
     const rmF = e.target.closest('[data-uh-furnish-idx]');
     if (rmF) { updateHomeState.furnishing.splice(parseInt(rmF.dataset.uhFurnishIdx, 10), 1); renderUhFurnishing(); return; }
     if (e.target.id === 'uhPreviewBtn') {
@@ -2889,6 +2978,9 @@ async function publishUpdateHome() {
     }
     if (e.target.id === 'uhBackBtn') { goToUhStep(1); return; }
     if (e.target.id === 'uhPublishBtn') { publishUpdateHome(); return; }
+  });
+  document.addEventListener('change', (e) => {
+    if (e.target.id === 'uhFloorPlanFile') uploadUhFloorPlan(e.target.files && e.target.files[0]);
   });
   document.addEventListener('keydown', (e) => {
     if (e.key === 'Enter' && (e.target.id === 'uhFurnishName' || e.target.id === 'uhFurnishCount')) {
