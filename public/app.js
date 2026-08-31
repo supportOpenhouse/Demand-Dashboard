@@ -2531,8 +2531,11 @@ async function openUpdateHomeModal(uid) {
   updateHomeState.furnishing = [];
   updateHomeState.masters = null;
   updateHomeState.societies = [];
+  updateHomeState.layouts = [];
 
   document.querySelectorAll('#updateHomeModal [data-uf]').forEach(el => { el.value = ''; });
+  const laySelReset = document.querySelector('#updateHomeModal [data-uf="layoutId"]');
+  if (laySelReset) laySelReset.innerHTML = '<option value="">Select…</option>';
   ['uhOverlooking', 'uhWhyChoose', 'uhDocs'].forEach(id => { const el = document.getElementById(id); if (el) el.innerHTML = ''; });
   renderUhFurnishing();
   $('#updateHomeCurrent').innerHTML = '';
@@ -2555,6 +2558,7 @@ async function openUpdateHomeModal(uid) {
     updateHomeState.masters = (mastersR && mastersR.success) ? mastersR.masters : {};
     updateHomeState.societies = (publicR && publicR.success && publicR.publicMasters && publicR.publicMasters.societies) || [];
     const home = (detailsR && detailsR.success) ? detailsR.home : null;
+    updateHomeState.layouts = uhCollectLayouts(home);
 
     populateUhSelects();
     populateUhChecks();
@@ -2582,6 +2586,9 @@ function populateUhSelects() {
   const socSel = document.querySelector('#updateHomeModal [data-uf="societyId"]');
   if (socSel) socSel.innerHTML = '<option value="">Select…</option>' +
     (updateHomeState.societies || []).map(s => `<option value="${esc(s.id)}">${esc(s.name || ('#' + s.id))}</option>`).join('');
+  const laySel = document.querySelector('#updateHomeModal [data-uf="layoutId"]');
+  if (laySel) laySel.innerHTML = '<option value="">Select…</option>' +
+    (updateHomeState.layouts || []).map(l => `<option value="${esc(l.id)}">${esc(uhLayoutLabel(l))}</option>`).join('');
 }
 
 function populateUhChecks() {
@@ -2603,6 +2610,38 @@ function renderUhChecks(containerId, items, labelKey) {
     : '<span class="field-val muted">None available</span>';
 }
 
+// Layout option label — name plus the areas we match on, so two same-named
+// layouts ("3 BHK" twice) are still tellable apart in the dropdown.
+function uhLayoutLabel(l) {
+  if (!l) return '';
+  const bits = [];
+  const beds = Array.isArray(l.bedrooms) ? l.bedrooms.length : null;
+  if (beds) bits.push(beds + ' bed');
+  if (l.superBuiltUp) bits.push(l.superBuiltUp + ' sup');
+  if (l.carpet) bits.push(l.carpet + ' carpet');
+  const name = l.name || ('Layout #' + l.id);
+  return bits.length ? `${name} · ${bits.join(' · ')}` : name;
+}
+
+// Candidate layouts for the dropdown: the society's master list UNION the home's
+// own current layout. The union is deliberate — upstream `society.layouts` is
+// still under-populated (societies with 2 BHK + 3 BHK in use commonly list only
+// one), so without it the home's existing layout would be missing from its own
+// dropdown and unpickable. update-home accepts either, so both are valid:
+// "must be on home.society.layouts OR already be this home's current layout".
+function uhCollectLayouts(home) {
+  const out = [], seen = new Set();
+  const add = (l) => {
+    if (!l || l.id == null || seen.has(String(l.id))) return;
+    seen.add(String(l.id));
+    out.push(l);
+  };
+  add(home && home.layout);
+  const socLayouts = (home && home.society && home.society.layouts) || [];
+  if (Array.isArray(socLayouts)) socLayouts.forEach(add);
+  return out;
+}
+
 // Prefill the form from get-home-details. That payload speaks LABELS and NAMES
 // (e.g. facing "North", propertyType {name}, overlooking [{name}]) whereas the
 // update API and this form speak CODES and IDS — so every field is normalised
@@ -2621,8 +2660,8 @@ function prefillUhFromHome(home) {
     : (typeof pt === 'number' ? pt : uhIdByLabel('propertyTypes', ['name'], pt));
   setUf('propertyTypeId', ptId);
 
-  // Society — response gives a nested object (name, no top-level id); match name
-  // against the city's societies from get-public-masters.
+  // Society — the payload now carries a numeric society.id, so that wins. The
+  // name match is kept only as a fallback for older/partial payloads.
   const soc = g('society', 'societyId', 'society_id');
   let socId = null;
   if (soc != null) {
@@ -2636,9 +2675,11 @@ function prefillUhFromHome(home) {
   }
   setUf('societyId', socId);
 
-  // Layout — response layout object carries no id, so it can't be prefilled.
-  const layout = g('layoutId', 'layout_id');
-  if (layout != null && typeof layout !== 'object') setUf('layoutId', layout);
+  // Layout — the payload now carries layout.id, so the current layout can be
+  // preselected in the dropdown built by uhCollectLayouts().
+  const layout = g('layout', 'layoutId', 'layout_id');
+  const layoutId = (layout && typeof layout === 'object') ? layout.id : layout;
+  if (layoutId != null) setUf('layoutId', layoutId);
 
   setUf('facing', uhToCode(UH_FACING_CODE, UH_FACING_LABELS, g('facing')));
   setUf('furnishingStatus', uhToCode(UH_FURN_CODE, UH_FURN_LABELS, g('furnishingStatus', 'furnishing_status')));
@@ -2661,9 +2702,17 @@ function prefillUhFromHome(home) {
   checkUhBoxes('uhWhyChoose', uhResolveIds('whyChooseThisHome', ['reason', 'name'], g('whyChooseThisHome', 'whyChooseThisHomeIds', 'why_choose_this_home')));
   checkUhBoxes('uhDocs', uhResolveIds('documentationAndLoan', ['reason', 'name'], g('documentationAndLoan', 'documentationAndLoanIds', 'documentation_and_loan')));
 
-  // Furnishing items: get-home-details returns names WITHOUT counts, and the
-  // update API requires a count per item — so we can't safely prefill these
-  // (that would clobber real counts). Left empty; the user adds items + counts.
+  // Furnishing items — GET now returns [{name, count}], the same shape update
+  // takes, so these round-trip. Items still missing a count are skipped rather
+  // than defaulted: furnishing_data upserts by name, so a guessed count would
+  // overwrite the real one on save.
+  const furn = g('furnishings', 'furnishingData', 'furnishing_data');
+  if (Array.isArray(furn)) {
+    updateHomeState.furnishing = furn
+      .filter(f => f && f.name && Number.isFinite(Number(f.count)) && Number(f.count) > 0)
+      .map(f => ({ name: String(f.name), count: Number(f.count) }));
+    renderUhFurnishing();
+  }
 }
 
 function checkUhBoxes(containerId, ids) {
@@ -2762,7 +2811,9 @@ function buildUhPreview(body) {
   if ('commission' in body) push('Commission', esc(body.commission));
   if ('propertyTypeId' in body) push('Property type', esc(uhLabelForId('propertyTypes', body.propertyTypeId, ['name'])));
   if ('societyId' in body) push('Society', esc(uhSocietyLabel(body.societyId)));
-  if ('layoutId' in body) push('Layout ID', esc(body.layoutId));
+  if ('layoutId' in body) push('Layout', esc(uhLayoutLabel(
+    (updateHomeState.layouts || []).find(l => String(l.id) === String(body.layoutId))
+  ) || ('#' + body.layoutId)));
   if ('facing' in body) push('Facing', esc(UH_FACING_LABELS[body.facing] || body.facing));
   if ('furnishingStatus' in body) push('Furnishing status', esc(UH_FURN_LABELS[body.furnishingStatus] || body.furnishingStatus));
   if ('propertyAge' in body || 'ageUnits' in body) {
