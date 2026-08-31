@@ -2534,6 +2534,7 @@ async function openUpdateHomeModal(uid) {
   updateHomeState.layouts = [];
   updateHomeState.floorPlanUrl = null;      // newly uploaded, pending publish
   updateHomeState.floorPlanCurrent = null;  // what the home already has
+  updateHomeState.floorPlanSource = null;   // 'sheet' | 'upload'
 
   document.querySelectorAll('#updateHomeModal [data-uf]').forEach(el => { el.value = ''; });
   const laySelReset = document.querySelector('#updateHomeModal [data-uf="layoutId"]');
@@ -2552,10 +2553,16 @@ async function openUpdateHomeModal(uid) {
   $('#updateHomeLoading').style.display = '';
   $('#uhPreviewBtn').disabled = true;
   try {
-    const [mastersR, publicR, detailsR] = await Promise.all([
+    const [mastersR, publicR, detailsR, planR] = await Promise.all([
       fetch('/api/core-home/masters', { credentials: 'include' }).then(r => r.json()).catch(e => ({ success: false, error: e.message })),
       fetch('/api/core-home/public-masters?city=' + encodeURIComponent(row.city || ''), { credentials: 'include' }).then(r => r.json()).catch(e => ({ success: false, error: e.message })),
       fetch('/api/core-home/details?id=' + encodeURIComponent(row.core_home_id), { credentials: 'include' }).then(r => r.json()).catch(e => ({ success: false, error: e.message })),
+      fetch('/api/core-home/floor-plan-lookup?' + new URLSearchParams({
+        society: row.society_name || '',
+        bhk: extractBedrooms(row.configuration) || '',
+        area: row.super_area || row.area_sqft || '',
+        city: row.city || '',
+      }), { credentials: 'include' }).then(r => r.json()).catch(e => ({ success: false, matches: [] })),
     ]);
     // Bail if the modal was closed or switched to another row during the fetch.
     if (!$('#updateHomeModal').classList.contains('open') || updateHomeState.uid !== uid) return;
@@ -2565,11 +2572,21 @@ async function openUpdateHomeModal(uid) {
     const home = (detailsR && detailsR.success) ? detailsR.home : null;
     updateHomeState.layouts = uhCollectLayouts(home);
     updateHomeState.floorPlanCurrent = uhFloorPlanFromHome(home);
+
+    // Sheet suggestion is a default too, so it follows the same rule as the rest:
+    // Archive homes only, and only when the home has no plan of its own. A live
+    // listing shows whatever it actually has; the operator can still upload one.
+    const sheetUrl = (planR && planR.matches && planR.matches[0] && planR.matches[0].url) || null;
+    if (uhShouldApplyDefaults(home) && !updateHomeState.floorPlanCurrent && sheetUrl) {
+      updateHomeState.floorPlanUrl = sheetUrl;
+      updateHomeState.floorPlanSource = 'sheet';
+    }
     renderUhFloorPlan();
 
     populateUhSelects();
     populateUhChecks();
     prefillUhFromHome(home);
+    applyUhDefaults(row, home);
 
     const code = extractListingStatus(home);
     // floor is read-only context (update-home doesn't accept it); 0 = ground floor.
@@ -2675,7 +2692,11 @@ function renderUhFloorPlan() {
         <img src="${esc(url)}" alt="Floor plan" data-uh-floorplan="${esc(url)}"
              style="height:64px;width:auto;max-width:190px;object-fit:contain;border:1px solid #e5e7eb;border-radius:6px;cursor:zoom-in;background:#fff;">
         <span style="font-size:12px;color:${pending ? '#b45309' : '#6b7280'};">
-          ${pending ? 'New plan — replaces the current one when you publish' : 'Current floor plan'}
+          ${pending
+            ? (updateHomeState.floorPlanSource === 'sheet'
+                ? 'Suggested from the Floor Plans sheet — attaches on publish'
+                : 'Uploaded — replaces the current plan when you publish')
+            : 'Current floor plan'}
         </span>
       </div>`;
   }
@@ -2710,10 +2731,200 @@ async function uploadUhFloorPlan(file) {
     const data = await r.json();
     if (!r.ok || !data.success) { setStatus(data.error || 'Upload failed', true); return; }
     updateHomeState.floorPlanUrl = data.url;
+    updateHomeState.floorPlanSource = 'upload';
     setStatus('Uploaded — publish to attach it to this home.');
     renderUhFloorPlan();
   } catch (e) {
     setStatus(e.message, true);
+  }
+}
+
+
+// ── Update Home defaults ────────────────────────────────────────────────────
+// Publishing an Archive unit as Coming Soon repeats the same judgement calls
+// every time, so the form is seeded from the supply-side row we already hold
+// (state.rows) plus a few house rules. Everything stays editable before publish.
+//
+// These run AFTER prefillUhFromHome(), so they take precedence over whatever
+// the listing currently holds upstream — but ONLY for a home still in Archive,
+// which by definition has no real listing data yet. A home already live
+// (Coming Soon / Available / Sold / Booked) keeps exactly what
+// get-home-details returns, so re-editing a published listing never silently
+// overwrites real values with generated ones. See uhShouldApplyDefaults().
+
+// Names the operator ticks on essentially every listing.
+const UH_DEFAULT_WHY_CHOOSE = [
+  'Bank Approved', 'Eco-Friendly Environment', 'Piped gas & 24/7 water',
+  'RERA Approved', 'Value for money',
+];
+const UH_DEFAULT_DOCS = [
+  'Allotment Letter', 'Builder Buyer Agreement', 'Conveyance/ Sale Deed',
+  'Possession Letter',
+];
+
+// Master labels are hand-entered on both sides ("Conveyance/ Sale Deed" vs
+// "Conveyance/Sale Deed", "Semi-Furnished" vs "Semi furnished"), so compare on
+// alphanumerics only.
+function uhNorm(v) { return String(v == null ? '' : v).toLowerCase().replace(/[^a-z0-9]/g, ''); }
+
+function uhIdByFuzzy(mastersName, labelKeys, value) {
+  const want = uhNorm(value);
+  if (!want) return null;
+  const list = uhMastersArr(mastersName);
+  const exact = list.find(x => labelKeys.some(k => x[k] && uhNorm(x[k]) === want));
+  if (exact) return exact.id;
+  const partial = list.find(x => labelKeys.some(k => {
+    const got = uhNorm(x[k]);
+    return got && (got.includes(want) || want.includes(got));
+  }));
+  return partial ? partial.id : null;
+}
+
+function uhFuzzyIds(mastersName, labelKeys, values) {
+  const out = [];
+  for (const v of values) {
+    const id = uhIdByFuzzy(mastersName, labelKeys, v);
+    if (id != null && !out.includes(id)) out.push(id);
+  }
+  return out;
+}
+
+// "1 Open" / "2 Covered" / "1 Covered, 1 Open" -> { covered, open }.
+function uhParseParking(text) {
+  const out = { covered: 0, open: 0 };
+  const s = String(text || '').toLowerCase();
+  if (!s) return out;
+  let m, re = /(\d+)\s*(covered|open|stilt|basement)/g;
+  let matched = false;
+  while ((m = re.exec(s)) !== null) {
+    matched = true;
+    const n = parseInt(m[1], 10);
+    if (m[2] === 'open') out.open += n; else out.covered += n;
+  }
+  // Bare "Covered" / "Open" with no leading count means one.
+  if (!matched) {
+    if (/open/.test(s)) out.open = 1;
+    else if (/covered|stilt|basement/.test(s)) out.covered = 1;
+  }
+  return out;
+}
+
+// Balcony Facing renders as "Room · Facing · View"; the View (last part) is what
+// the unit overlooks — "Tower", "Other Building", "Park".
+function uhBalconyViews(balconyDetails) {
+  const arr = parseJsonish(balconyDetails);
+  if (!Array.isArray(arr)) return [];
+  const out = [];
+  for (const o of arr) {
+    let view = '';
+    if (typeof o === 'string') view = o.split('·').pop().trim();
+    else if (o) view = o.view || o.outlook || '';
+    view = String(view || '').trim();
+    if (view && !out.includes(view)) out.push(view);
+  }
+  return out;
+}
+
+// Closest layout: bedroom count first, then super-area proximity. Mirrors how
+// layouts/resolve matches, so the pick here agrees with the backend's.
+function uhClosestLayout(layouts, bedrooms, superArea) {
+  const list = (layouts || []).filter(l => l && l.id != null);
+  if (!list.length) return null;
+  const wantBeds = Number(bedrooms), wantArea = Number(superArea);
+  const scored = list.map(l => {
+    const beds = Array.isArray(l.bedrooms) ? l.bedrooms.length : null;
+    const area = Number(l.superBuiltUp || l.builtUp || l.carpet);
+    return {
+      l,
+      bedDelta: (Number.isFinite(wantBeds) && beds != null) ? Math.abs(beds - wantBeds) : 99,
+      areaDelta: (Number.isFinite(wantArea) && wantArea > 0 && Number.isFinite(area))
+        ? Math.abs(area - wantArea) / wantArea : 99,
+    };
+  });
+  scored.sort((a, b) => (a.bedDelta - b.bedDelta) || (a.areaDelta - b.areaDelta));
+  return scored[0].l;
+}
+
+// Defaults apply only to Archive homes. Anything already listed shows its real
+// values instead. An unknown/unreadable status is treated as "don't apply" —
+// guessing wrong here would clobber a live listing, and a missing default is
+// far cheaper to fix than an overwritten price.
+function uhShouldApplyDefaults(home) {
+  const raw = extractListingStatus(home);
+  if (!raw) return false;
+  return /^(arc|archive|archived)$/i.test(String(raw).trim());
+}
+
+function applyUhDefaults(row, home) {
+  if (!row) return;
+  if (!uhShouldApplyDefaults(home)) return;
+
+  setUf('commission', '1');
+
+  const ptId = uhIdByFuzzy('propertyTypes', ['name'], 'Flat/Apartment')
+            || uhIdByFuzzy('propertyTypes', ['name'], 'Apartment');
+  if (ptId != null) setUf('propertyTypeId', ptId);
+
+  // Layout — closest to this unit's config + super area.
+  const beds = Number(extractBedrooms(row.configuration));
+  const superArea = Number(row.super_area || row.area_sqft);
+  const layout = uhClosestLayout(updateHomeState.layouts, beds, superArea);
+  if (layout) setUf('layoutId', layout.id);
+
+  // Exit Facing -> facing code. "South-East" normalises to "southeast".
+  const facing = uhToCode(UH_FACING_CODE, UH_FACING_LABELS,
+    String(row.exit_facing || '').replace(/[^a-zA-Z]/g, '').toLowerCase());
+  if (facing) setUf('facing', facing);
+
+  // "Semi-Furnished" -> "semi furnished" -> "SF".
+  const furn = uhToCode(UH_FURN_CODE, UH_FURN_LABELS,
+    String(row.furnishing || '').replace(/[-_]+/g, ' ').replace(/\s+/g, ' ').trim().toLowerCase());
+  if (furn) setUf('furnishingStatus', furn);
+
+  // Property age is the society's age, always expressed in years.
+  if (row.society_age_years != null && row.society_age_years !== '') {
+    const age = Math.round(Number(row.society_age_years));
+    if (Number.isFinite(age)) setUf('propertyAge', Math.min(Math.max(age, 0), 40));
+  }
+  setUf('ageUnits', 'y');
+
+  setUf('naturalLightScore', Math.random() < 0.5 ? 7 : 8);
+
+  // Money on the dashboard is in LAKHS; the API wants rupees.
+  // `default_price_lakhs` is derived server-side (listing price, else
+  // acquisition + 8%) so this works for managers, who never receive the raw
+  // acquisition column. Falls back to the local fields for older payloads.
+  const lakhs = (row.default_price_lakhs != null && row.default_price_lakhs !== '')
+    ? Number(row.default_price_lakhs)
+    : ((row.listing_price != null && row.listing_price !== '')
+        ? Number(row.listing_price)
+        : (row.guaranteed_sale_price != null && row.guaranteed_sale_price !== ''
+            ? Number(row.guaranteed_sale_price) * 1.08 : null));
+  if (lakhs != null && Number.isFinite(lakhs) && lakhs > 0) {
+    const total = Math.round(lakhs * 100000);
+    setUf('priceTotal', total);
+    if (Number.isFinite(superArea) && superArea > 0) {
+      setUf('pricePerSqFt', Math.round((total / superArea) * 1.3));
+    }
+  }
+
+  const parking = uhParseParking(row.parking);
+  setUf('parkingCovered', Math.min(parking.covered, 9));
+  setUf('parkingOpen', Math.min(parking.open, 9));
+
+  checkUhBoxes('uhOverlooking', uhFuzzyIds('overlooking', ['name'], uhBalconyViews(row.balcony_details)));
+  checkUhBoxes('uhWhyChoose', uhFuzzyIds('whyChooseThisHome', ['reason', 'name'], UH_DEFAULT_WHY_CHOOSE));
+  checkUhBoxes('uhDocs', uhFuzzyIds('documentationAndLoan', ['reason', 'name'], UH_DEFAULT_DOCS));
+
+  // Furnishing items come from supply as a plain name list; count defaults to 1.
+  const items = parseJsonish(row.furnishing_details);
+  if (Array.isArray(items) && items.length) {
+    updateHomeState.furnishing = items
+      .map(x => (typeof x === 'string' ? x : (x && (x.name || x.item)) || ''))
+      .map(n => String(n).trim())
+      .filter(Boolean)
+      .map(name => ({ name, count: 1 }));
+    renderUhFurnishing();
   }
 }
 

@@ -374,6 +374,24 @@ module.exports = async (req, res) => {
 
     const { rows } = await pool.query(rowsSql, [...baseParams, ...outerParams, pageSize, offset]);
 
+    // Default listing price for the Update Home form: the listing price when
+    // set, otherwise acquisition + 8%. Derived server-side and exposed to every
+    // role so managers can publish a home without a listing price — the raw
+    // acquisition column itself stays admin-only below.
+    //
+    // Note this is reversible (÷1.08 recovers the acquisition price), so it does
+    // disclose the cost basis to managers. That is a deliberate, accepted
+    // trade-off for the publishing flow, not an oversight.
+    for (const r of rows) {
+      r.default_price_lakhs =
+        (r.listing_price != null && r.listing_price !== '')
+          ? Number(r.listing_price)
+          : (r.guaranteed_sale_price != null && r.guaranteed_sale_price !== ''
+              ? Number(r.guaranteed_sale_price) * 1.08
+              : null);
+      if (!Number.isFinite(r.default_price_lakhs)) r.default_price_lakhs = null;
+    }
+
     // Acquisition price (properties.guaranteed_sale_price) is admin-only — our
     // cost basis, not something manager/viewer should see. Hiding it in the UI
     // isn't enough since the raw row lands in the browser, so drop the column
