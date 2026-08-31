@@ -2532,6 +2532,24 @@ function setUfIfEmpty(field, value) {
   setUf(field, value);
 }
 
+// For a few numeric fields upstream returns 0 as a placeholder on a home that
+// was never listed — price total 0, parking 0/0 — and a literal 0 there is not a
+// fact, it is "unset". Treating it as a real value would block the default and
+// leave the operator staring at a 0 they have to clear by hand. A real price is
+// never 0, so this only ever loosens fields where 0 is meaningless.
+function uhIsBlankOrZero(field) {
+  const raw = String(uhFieldValue(field)).trim();
+  if (raw === '') return true;
+  const n = Number(raw);
+  return Number.isFinite(n) && n === 0;
+}
+
+function setUfIfBlankOrZero(field, value) {
+  if (value == null || value === '') return;
+  if (!uhIsBlankOrZero(field)) return;
+  setUf(field, value);
+}
+
 function uhGroupHasChecked(containerId) {
   return !!document.querySelector(`#${containerId} input[type=checkbox]:checked`);
 }
@@ -2567,6 +2585,10 @@ async function openUpdateHomeModal(uid) {
   renderUhFurnishing();
   renderUhFloorPlan();
   const fpFile = $('#uhFloorPlanFile'); if (fpFile) fpFile.value = '';
+  const nlPanel = $('#uhLayoutNew'); if (nlPanel) nlPanel.style.display = 'none';
+  const nlStatus = $('#uhNlStatus'); if (nlStatus) nlStatus.textContent = '';
+  ['uhNlName','uhNlBeds','uhNlBaths','uhNlBalc','uhNlSuper','uhNlCarpet']
+    .forEach(id => { const el = document.getElementById(id); if (el) el.value = ''; });
   const fpStatus = $('#uhFloorPlanStatus'); if (fpStatus) fpStatus.textContent = '';
   $('#updateHomeCurrent').innerHTML = '';
   $('#updateHomeSubtitle').textContent = `· ${row.society_name || ''} ${row.unit_no ? '· Unit ' + row.unit_no : ''}`;
@@ -2764,6 +2786,146 @@ async function uploadUhFloorPlan(file) {
 }
 
 
+// ── Create / resolve a layout ───────────────────────────────────────────────
+// Upstream matches ONLY against the society's Layout M2M, which is still
+// under-populated — a layout can be live on this very home and invisible to the
+// matcher. So before offering to create, we re-run the same match rule against
+// the layouts we DO know about (society list plus the home's own). A local hit
+// upstream can't see means creating would duplicate an existing layout, which
+// is permanent and shows on the public listing — so we stop and say so.
+function uhLocalLayoutMatch(spec) {
+  const beds = Number(spec.bedrooms), sup = Number(spec.superBuiltUp), car = Number(spec.carpet);
+  const near = (a, b) => {
+    if (!Number.isFinite(a) || !Number.isFinite(b) || b <= 0) return false;
+    return Math.abs(a - b) / b <= 0.02;   // same ~2% tolerance the backend uses
+  };
+  return (updateHomeState.layouts || []).find(l => {
+    const lb = Array.isArray(l.bedrooms) ? l.bedrooms.length : null;
+    if (lb == null || !Number.isFinite(beds) || lb !== beds) return false;
+    const supOk = Number.isFinite(sup) ? near(sup, Number(l.superBuiltUp)) : true;
+    const carOk = Number.isFinite(car) ? near(car, Number(l.carpet)) : true;
+    return supOk && carOk;
+  }) || null;
+}
+
+// Seed the panel from the unit's own supply data.
+function fillUhNewLayoutForm(row) {
+  if (!row) return;
+  const beds = Number(extractBedrooms(row.configuration));
+  const sup = Number(row.super_area || row.area_sqft);
+  const set = (id, v) => { const el = document.getElementById(id); if (el && v != null && v !== '' && !Number.isNaN(v)) el.value = v; };
+  set('uhNlBeds', Number.isFinite(beds) ? beds : '');
+  set('uhNlBaths', row.bathrooms);
+  set('uhNlBalc', row.balconies);
+  set('uhNlSuper', Number.isFinite(sup) ? Math.round(sup) : '');
+  set('uhNlCarpet', row.carpet_area != null ? Math.round(Number(row.carpet_area)) : '');
+  const nameEl = document.getElementById('uhNlName');
+  if (nameEl && !nameEl.value) {
+    nameEl.value = [Number.isFinite(beds) ? beds + ' BHK' : '', Number.isFinite(sup) ? Math.round(sup) + ' sqft' : '']
+      .filter(Boolean).join(' — ');
+  }
+}
+
+function uhNewLayoutSpec() {
+  const num = (id) => { const el = document.getElementById(id); const v = el ? el.value.trim() : ''; return v === '' ? null : Number(v); };
+  return {
+    name: (document.getElementById('uhNlName') || {}).value || '',
+    bedrooms: num('uhNlBeds'),
+    bath: num('uhNlBaths'),
+    numberOfBalconies: num('uhNlBalc'),
+    superBuiltUp: num('uhNlSuper'),
+    carpet: num('uhNlCarpet'),
+  };
+}
+
+// Add a layout to the dropdown and select it.
+function uhAdoptLayout(layout) {
+  if (!layout || layout.id == null) return;
+  if (!(updateHomeState.layouts || []).some(l => String(l.id) === String(layout.id))) {
+    updateHomeState.layouts.push(layout);
+    populateUhSelects();
+  }
+  setUf('layoutId', layout.id);
+}
+
+async function resolveUhLayout() {
+  const statusEl = $('#uhNlStatus');
+  const say = (t, kind) => {
+    if (!statusEl) return;
+    statusEl.textContent = t;
+    statusEl.style.color = kind === 'error' ? '#b91c1c' : kind === 'warn' ? '#b45309' : kind === 'ok' ? '#166534' : '#6b7280';
+  };
+  const btn = $('#uhNlResolve');
+  const spec = uhNewLayoutSpec();
+
+  const societyId = Number(uhFieldValue('societyId'));
+  if (!Number.isFinite(societyId) || !societyId) { say('Pick a Society first — the layout is created on it.', 'error'); return; }
+  if (!Number.isFinite(Number(spec.bedrooms)) || Number(spec.bedrooms) < 1) { say('Bedrooms is required.', 'error'); return; }
+  if (!String(spec.name).trim()) { say('Give the layout a name.', 'error'); return; }
+
+  // Guard against creating a duplicate of a layout the backend can't see.
+  const local = uhLocalLayoutMatch(spec);
+  if (local) {
+    uhAdoptLayout(local);
+    say(`Already exists on this home — selected "${uhLayoutLabel(local)}" instead of creating a duplicate.`, 'warn');
+    return;
+  }
+
+  const payload = {
+    societyId,
+    name: String(spec.name).trim(),
+    areaUnit: 'sqft',
+    bath: spec.bath,
+    numberOfBalconies: spec.numberOfBalconies,
+    superBuiltUp: spec.superBuiltUp,
+    carpet: spec.carpet,
+    // Matching is on bedroom COUNT, so send that many entries. We have no room
+    // dimensions here — the first is the master, the rest family.
+    bedrooms: Array.from({ length: Number(spec.bedrooms) }, (_, i) => ({ type: i === 0 ? 'm' : 'b' })),
+    bathrooms: [],
+    balconies: [],
+  };
+
+  if (btn) btn.disabled = true;
+  try {
+    // Pass 1 — look for a match without writing anything.
+    say('Checking this society for a match…');
+    let r = await fetch('/api/core-home/layout-resolve', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, credentials: 'include',
+      body: JSON.stringify({ ...payload, createIfMissing: false }),
+    });
+    let data = await r.json();
+    if (!r.ok || !data.success) { say(data.error || 'Lookup failed', 'error'); return; }
+
+    if (data.layoutId != null) {
+      uhAdoptLayout({ id: data.layoutId, name: payload.name, superBuiltUp: payload.superBuiltUp,
+                      carpet: payload.carpet, bedrooms: payload.bedrooms });
+      say(`Matched existing layout #${data.layoutId} — selected it. Nothing was created.`, 'ok');
+      return;
+    }
+
+    // Pass 2 — no match anywhere, so create it and attach it to the society.
+    say('No match — creating…');
+    r = await fetch('/api/core-home/layout-resolve', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, credentials: 'include',
+      body: JSON.stringify({ ...payload, createIfMissing: true }),
+    });
+    data = await r.json();
+    if (!r.ok || !data.success) { say(data.error || 'Create failed', 'error'); return; }
+    if (data.layoutId == null) { say('Upstream returned no layout id.', 'error'); return; }
+
+    uhAdoptLayout({ id: data.layoutId, name: payload.name, superBuiltUp: payload.superBuiltUp,
+                    carpet: payload.carpet, bedrooms: payload.bedrooms });
+    say(data.created
+      ? `Created layout #${data.layoutId} and added it to this society.`
+      : `Matched layout #${data.layoutId} — selected it.`, 'ok');
+  } catch (e) {
+    say('Network error: ' + e.message, 'error');
+  } finally {
+    if (btn) btn.disabled = false;
+  }
+}
+
 // ── Update Home defaults ────────────────────────────────────────────────────
 // Publishing an Archive unit as Coming Soon repeats the same judgement calls
 // every time, so the form is seeded from the supply-side row we already hold
@@ -2939,7 +3101,7 @@ function applyUhDefaults(row, home) {
         : (row.guaranteed_sale_price != null && row.guaranteed_sale_price !== ''
             ? Number(row.guaranteed_sale_price) * 1.08 : null));
   if (lakhs != null && Number.isFinite(lakhs) && lakhs > 0) {
-    setUfIfEmpty('priceTotal', Math.round(lakhs * 100000));
+    setUfIfBlankOrZero('priceTotal', Math.round(lakhs * 100000));
   }
 
   // Per sq ft divides by the SALEABLE area. For affordable societies in Gurgaon
@@ -2951,13 +3113,13 @@ function applyUhDefaults(row, home) {
     const affordableGurgaon = /gurgaon|gurugram/i.test(String(row.city || ''))
       && (row.affordable === true || String(row.affordable).toLowerCase() === 'true');
     const denominator = affordableGurgaon ? superArea * 1.3 : superArea;
-    setUfIfEmpty('pricePerSqFt', Math.round(totalNow / denominator));
+    setUfIfBlankOrZero('pricePerSqFt', Math.round(totalNow / denominator));
   }
 
   const parking = uhParseParking(row.parking);
-  if (parking) {
-    setUfIfEmpty('parkingCovered', Math.min(parking.covered, 9));
-    setUfIfEmpty('parkingOpen', Math.min(parking.open, 9));
+  if (parking && uhIsBlankOrZero('parkingCovered') && uhIsBlankOrZero('parkingOpen')) {
+    setUf('parkingCovered', Math.min(parking.covered, 9));
+    setUf('parkingOpen', Math.min(parking.open, 9));
   }
 
   checkUhBoxesIfEmpty('uhOverlooking', uhFuzzyIds('overlooking', ['name'], uhBalconyViews(row.balcony_details)));
@@ -3217,6 +3379,16 @@ async function publishUpdateHome() {
     const openBtn = e.target.closest('[data-update-home-uid]');
     if (openBtn) { openUpdateHomeModal(openBtn.dataset.updateHomeUid); return; }
     if (e.target.id === 'uhFurnishAdd') { addUhFurnishing(); return; }
+    if (e.target.id === 'uhLayoutNewToggle') {
+      const panel = $('#uhLayoutNew');
+      if (panel) {
+        const opening = panel.style.display === 'none';
+        panel.style.display = opening ? '' : 'none';
+        if (opening) fillUhNewLayoutForm(updateHomeState.property);
+      }
+      return;
+    }
+    if (e.target.id === 'uhNlResolve') { resolveUhLayout(); return; }
     // Zoom the floor plan in the existing lightbox.
     const fpImg = e.target.closest('[data-uh-floorplan]');
     if (fpImg) { openLightbox([fpImg.dataset.uhFloorplan], 0); return; }

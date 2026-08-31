@@ -438,8 +438,36 @@
             <select class="booking-input" data-uf="propertyTypeId"><option value="">Select…</option></select></div>
           <div class="fg"><label>Society</label>
             <select class="booking-input" data-uf="societyId"><option value="">Select…</option></select></div>
-          <div class="fg"><label>Layout</label>
-            <select class="booking-input" data-uf="layoutId"><option value="">Select…</option></select></div>
+          <div class="fg"><label>Layout
+              <button type="button" id="uhLayoutNewToggle"
+                      style="margin-left:8px;font-size:11px;font-weight:600;color:#4f46e5;background:none;border:none;cursor:pointer;padding:0;">
+                + New layout
+              </button>
+            </label>
+            <select class="booking-input" data-uf="layoutId"><option value="">Select…</option></select>
+            <div id="uhLayoutNew" style="display:none;margin-top:8px;padding:10px;border:1px solid #e5e7eb;border-radius:8px;background:#f9fafb;">
+              <div style="font-size:11px;color:#6b7280;margin-bottom:8px;">
+                Checks this society for a matching layout first, and only creates one if there is no match.
+              </div>
+              <input type="text" class="booking-input" id="uhNlName" placeholder="Layout name (e.g. 3 BHK — 1790 sqft)" style="margin-bottom:8px;">
+              <div style="display:grid;grid-template-columns:repeat(5,1fr);gap:8px;">
+                <div class="fg"><label style="font-size:11px;">Bedrooms</label>
+                  <input type="number" min="1" max="10" step="1" class="booking-input" id="uhNlBeds"></div>
+                <div class="fg"><label style="font-size:11px;">Baths</label>
+                  <input type="number" min="0" max="10" step="1" class="booking-input" id="uhNlBaths"></div>
+                <div class="fg"><label style="font-size:11px;">Balconies</label>
+                  <input type="number" min="0" max="10" step="1" class="booking-input" id="uhNlBalc"></div>
+                <div class="fg"><label style="font-size:11px;">Super (sqft)</label>
+                  <input type="number" min="0" step="1" class="booking-input" id="uhNlSuper"></div>
+                <div class="fg"><label style="font-size:11px;">Carpet (sqft)</label>
+                  <input type="number" min="0" step="1" class="booking-input" id="uhNlCarpet"></div>
+              </div>
+              <div style="display:flex;gap:8px;align-items:center;margin-top:8px;flex-wrap:wrap;">
+                <button type="button" class="btn btn-primary" id="uhNlResolve">Find or create</button>
+                <span id="uhNlStatus" style="font-size:12px;color:#6b7280;"></span>
+              </div>
+            </div>
+          </div>
           <div class="fg"><label>Facing</label>
             <select class="booking-input" data-uf="facing">
               <option value="">Select…</option>
