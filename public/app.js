@@ -2519,6 +2519,30 @@ function setUf(field, value) {
   if (el) el.value = value;
 }
 
+function uhFieldValue(field) {
+  const el = document.querySelector(`#updateHomeModal [data-uf="${cssEscape(field)}"]`);
+  return el ? el.value : '';
+}
+
+// Defaults never overwrite a value that get-home-details already supplied —
+// whatever the upstream listing holds wins, and defaults only fill the gaps.
+function setUfIfEmpty(field, value) {
+  if (value == null || value === '') return;
+  if (String(uhFieldValue(field)).trim() !== '') return;
+  setUf(field, value);
+}
+
+function uhGroupHasChecked(containerId) {
+  return !!document.querySelector(`#${containerId} input[type=checkbox]:checked`);
+}
+
+// Same rule for a checkbox group: if the listing already selected anything in
+// this group, leave the whole group alone rather than adding to it.
+function checkUhBoxesIfEmpty(containerId, ids) {
+  if (uhGroupHasChecked(containerId)) return;
+  checkUhBoxes(containerId, ids);
+}
+
 async function openUpdateHomeModal(uid) {
   const row = state.rows.find(r => r.uid === uid);
   if (!row) return;
@@ -2745,8 +2769,9 @@ async function uploadUhFloorPlan(file) {
 // every time, so the form is seeded from the supply-side row we already hold
 // (state.rows) plus a few house rules. Everything stays editable before publish.
 //
-// These run AFTER prefillUhFromHome(), so they take precedence over whatever
-// the listing currently holds upstream — but ONLY for a home still in Archive,
+// These run AFTER prefillUhFromHome() and only ever FILL GAPS: any field
+// get-home-details already populated is left exactly as it came back. They also
+// only run at all for a home still in Archive,
 // which by definition has no real listing data yet. A home already live
 // (Coming Soon / Available / Sold / Booked) keeps exactly what
 // get-home-details returns, so re-editing a published listing never silently
@@ -2859,36 +2884,36 @@ function applyUhDefaults(row, home) {
   if (!row) return;
   if (!uhShouldApplyDefaults(home)) return;
 
-  setUf('commission', '1');
+  setUfIfEmpty('commission', '1');
 
   const ptId = uhIdByFuzzy('propertyTypes', ['name'], 'Flat/Apartment')
             || uhIdByFuzzy('propertyTypes', ['name'], 'Apartment');
-  if (ptId != null) setUf('propertyTypeId', ptId);
+  if (ptId != null) setUfIfEmpty('propertyTypeId', ptId);
 
   // Layout — closest to this unit's config + super area.
   const beds = Number(extractBedrooms(row.configuration));
   const superArea = Number(row.super_area || row.area_sqft);
   const layout = uhClosestLayout(updateHomeState.layouts, beds, superArea);
-  if (layout) setUf('layoutId', layout.id);
+  if (layout) setUfIfEmpty('layoutId', layout.id);
 
   // Exit Facing -> facing code. "South-East" normalises to "southeast".
   const facing = uhToCode(UH_FACING_CODE, UH_FACING_LABELS,
     String(row.exit_facing || '').replace(/[^a-zA-Z]/g, '').toLowerCase());
-  if (facing) setUf('facing', facing);
+  if (facing) setUfIfEmpty('facing', facing);
 
   // "Semi-Furnished" -> "semi furnished" -> "SF".
   const furn = uhToCode(UH_FURN_CODE, UH_FURN_LABELS,
     String(row.furnishing || '').replace(/[-_]+/g, ' ').replace(/\s+/g, ' ').trim().toLowerCase());
-  if (furn) setUf('furnishingStatus', furn);
+  if (furn) setUfIfEmpty('furnishingStatus', furn);
 
   // Property age is the society's age, always expressed in years.
   if (row.society_age_years != null && row.society_age_years !== '') {
     const age = Math.round(Number(row.society_age_years));
-    if (Number.isFinite(age)) setUf('propertyAge', Math.min(Math.max(age, 0), 40));
+    if (Number.isFinite(age)) setUfIfEmpty('propertyAge', Math.min(Math.max(age, 0), 40));
   }
-  setUf('ageUnits', 'y');
+  setUfIfEmpty('ageUnits', 'y');
 
-  setUf('naturalLightScore', Math.random() < 0.5 ? 7 : 8);
+  setUfIfEmpty('naturalLightScore', Math.random() < 0.5 ? 7 : 8);
 
   // Money on the dashboard is in LAKHS; the API wants rupees.
   // `default_price_lakhs` is derived server-side (listing price, else
@@ -2901,24 +2926,32 @@ function applyUhDefaults(row, home) {
         : (row.guaranteed_sale_price != null && row.guaranteed_sale_price !== ''
             ? Number(row.guaranteed_sale_price) * 1.08 : null));
   if (lakhs != null && Number.isFinite(lakhs) && lakhs > 0) {
-    const total = Math.round(lakhs * 100000);
-    setUf('priceTotal', total);
-    if (Number.isFinite(superArea) && superArea > 0) {
-      setUf('pricePerSqFt', Math.round((total / superArea) * 1.3));
-    }
+    setUfIfEmpty('priceTotal', Math.round(lakhs * 100000));
+  }
+
+  // Per sq ft divides by the SALEABLE area. For affordable societies in Gurgaon
+  // the quoted rate is against super area inflated by 1.3; everywhere else it is
+  // the plain super area. Derived from whatever price total ended up in the form
+  // (upstream's or ours), so the two always agree.
+  const totalNow = Number(uhFieldValue('priceTotal'));
+  if (Number.isFinite(totalNow) && totalNow > 0 && Number.isFinite(superArea) && superArea > 0) {
+    const affordableGurgaon = /gurgaon|gurugram/i.test(String(row.city || ''))
+      && (row.affordable === true || String(row.affordable).toLowerCase() === 'true');
+    const denominator = affordableGurgaon ? superArea * 1.3 : superArea;
+    setUfIfEmpty('pricePerSqFt', Math.round(totalNow / denominator));
   }
 
   const parking = uhParseParking(row.parking);
-  setUf('parkingCovered', Math.min(parking.covered, 9));
-  setUf('parkingOpen', Math.min(parking.open, 9));
+  setUfIfEmpty('parkingCovered', Math.min(parking.covered, 9));
+  setUfIfEmpty('parkingOpen', Math.min(parking.open, 9));
 
-  checkUhBoxes('uhOverlooking', uhFuzzyIds('overlooking', ['name'], uhBalconyViews(row.balcony_details)));
-  checkUhBoxes('uhWhyChoose', uhFuzzyIds('whyChooseThisHome', ['reason', 'name'], UH_DEFAULT_WHY_CHOOSE));
-  checkUhBoxes('uhDocs', uhFuzzyIds('documentationAndLoan', ['reason', 'name'], UH_DEFAULT_DOCS));
+  checkUhBoxesIfEmpty('uhOverlooking', uhFuzzyIds('overlooking', ['name'], uhBalconyViews(row.balcony_details)));
+  checkUhBoxesIfEmpty('uhWhyChoose', uhFuzzyIds('whyChooseThisHome', ['reason', 'name'], UH_DEFAULT_WHY_CHOOSE));
+  checkUhBoxesIfEmpty('uhDocs', uhFuzzyIds('documentationAndLoan', ['reason', 'name'], UH_DEFAULT_DOCS));
 
   // Furnishing items come from supply as a plain name list; count defaults to 1.
   const items = parseJsonish(row.furnishing_details);
-  if (Array.isArray(items) && items.length) {
+  if (Array.isArray(items) && items.length && !updateHomeState.furnishing.length) {
     updateHomeState.furnishing = items
       .map(x => (typeof x === 'string' ? x : (x && (x.name || x.item)) || ''))
       .map(n => String(n).trim())
