@@ -3416,7 +3416,15 @@ async function publishUpdateHome() {
       btn.textContent = original;
       return;
     }
-    showToast('Home published as Coming Soon', 'success');
+    // The proxy retries without furnishings when upstream rejects a name, so a
+    // publish can succeed with items dropped — say so rather than reporting a
+    // clean success the operator would never think to check.
+    if (Array.isArray(data.skippedFurnishing) && data.skippedFurnishing.length) {
+      showToast('Published as Coming Soon, but furnishing items were not saved ('
+        + data.skippedFurnishing.join(', ') + '). Add them in Django admin.', 'error');
+    } else {
+      showToast('Home published as Coming Soon', 'success');
+    }
     state.homeStatus[updateHomeState.coreHomeId] = { code: 'CS', home: data.home };
     updateHomeStatusBadge(updateHomeState.coreHomeId);
     $('#updateHomeModal').classList.remove('open');
