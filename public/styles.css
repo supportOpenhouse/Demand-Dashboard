@@ -1055,3 +1055,77 @@ body.role-viewer .col-contact { display: none; }
   .search-bar { width: 180px; }
   .form-grid { grid-template-columns: 1fr; }
 }
+
+/* ── Update Home: "New layout" panel ─────────────────────────────────────── */
+/* The panel is a direct child of .form-grid so it can span both columns; a
+   half-width column cannot hold the 5-up field row without clipping, and a tall
+   grid item stretches whatever sits beside it. */
+.uh-field-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+.uh-field-head label { margin: 0; }
+
+.uh-link-btn {
+  background: none;
+  border: 0;
+  padding: 0;
+  font: inherit;
+  font-size: 11px;
+  font-weight: 600;
+  color: #4f46e5;
+  cursor: pointer;
+  line-height: 1;
+}
+.uh-link-btn:hover { text-decoration: underline; }
+.uh-link-btn:focus-visible { outline: 2px solid #4f46e5; outline-offset: 2px; border-radius: 3px; }
+
+.uh-newlayout {
+  grid-column: 1 / -1;
+  display: grid;
+  gap: 10px;
+  margin-top: 2px;
+  padding: 14px;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  background: #f9fafb;
+  min-width: 0;
+}
+.uh-newlayout[hidden] { display: none; }
+
+.uh-newlayout-hint {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.5;
+  color: #6b7280;
+}
+
+/* auto-fit so the five fields wrap instead of overflowing a narrow modal */
+.uh-newlayout-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(116px, 1fr));
+  gap: 10px;
+  min-width: 0;
+}
+.uh-newlayout-grid .fg { min-width: 0; }
+.uh-newlayout .booking-input { width: 100%; box-sizing: border-box; }
+
+.uh-newlayout-foot {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.uh-newlayout-status {
+  font-size: 12px;
+  line-height: 1.45;
+  color: #6b7280;
+  flex: 1 1 240px;
+  min-width: 0;
+}
+
+/* Keep grid items from stretching to the tallest row — this is what blew up the
+   Society select's height when the panel lived inside the grid. */
+#updateHomeModal .form-grid { align-items: start; }

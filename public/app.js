@@ -2585,7 +2585,8 @@ async function openUpdateHomeModal(uid) {
   renderUhFurnishing();
   renderUhFloorPlan();
   const fpFile = $('#uhFloorPlanFile'); if (fpFile) fpFile.value = '';
-  const nlPanel = $('#uhLayoutNew'); if (nlPanel) nlPanel.style.display = 'none';
+  const nlPanel = $('#uhLayoutNew'); if (nlPanel) nlPanel.hidden = true;
+  const nlToggle = $('#uhLayoutNewToggle'); if (nlToggle) nlToggle.textContent = '+ New layout';
   const nlStatus = $('#uhNlStatus'); if (nlStatus) nlStatus.textContent = '';
   ['uhNlName','uhNlBeds','uhNlBaths','uhNlBalc','uhNlSuper','uhNlCarpet']
     .forEach(id => { const el = document.getElementById(id); if (el) el.value = ''; });
@@ -3075,9 +3076,12 @@ function applyUhDefaults(row, home) {
 
   setUfIfEmpty('commission', '1');
 
+  // Property type and furnishing status always come from us, overwriting
+  // whatever the listing holds — upstream's values for these are unreliable and
+  // the supply row is authoritative. (Still Archive-only, like every default.)
   const ptId = uhIdByFuzzy('propertyTypes', ['name'], 'Flat/Apartment')
             || uhIdByFuzzy('propertyTypes', ['name'], 'Apartment');
-  if (ptId != null) setUfIfEmpty('propertyTypeId', ptId);
+  if (ptId != null) setUf('propertyTypeId', ptId);
 
   // Layout — closest to this unit's config + super area.
   const beds = Number(extractBedrooms(row.configuration));
@@ -3093,7 +3097,7 @@ function applyUhDefaults(row, home) {
   // "Semi-Furnished" -> "semi furnished" -> "SF".
   const furn = uhToCode(UH_FURN_CODE, UH_FURN_LABELS,
     String(row.furnishing || '').replace(/[-_]+/g, ' ').replace(/\s+/g, ' ').trim().toLowerCase());
-  if (furn) setUfIfEmpty('furnishingStatus', furn);
+  if (furn) setUf('furnishingStatus', furn);
 
   // Property age is the society's age, always expressed in years.
   if (row.society_age_years != null && row.society_age_years !== '') {
@@ -3114,16 +3118,22 @@ function applyUhDefaults(row, home) {
         ? Number(row.listing_price)
         : (row.guaranteed_sale_price != null && row.guaranteed_sale_price !== ''
             ? Number(row.guaranteed_sale_price) * 1.08 : null));
-  if (lakhs != null && Number.isFinite(lakhs) && lakhs > 0) {
-    setUfIfBlankOrZero('priceTotal', Math.round(lakhs * 100000));
-  }
+  const ourTotal = (lakhs != null && Number.isFinite(lakhs) && lakhs > 0)
+    ? Math.round(lakhs * 100000) : null;
+  if (ourTotal != null) setUfIfBlankOrZero('priceTotal', ourTotal);
 
   // Per sq ft divides by the SALEABLE area. For affordable societies in Gurgaon
   // the quoted rate is against super area inflated by 1.3; everywhere else it is
-  // the plain super area. Derived from whatever price total ended up in the form
-  // (upstream's or ours), so the two always agree.
-  const totalNow = Number(uhFieldValue('priceTotal'));
-  if (Number.isFinite(totalNow) && totalNow > 0 && Number.isFinite(superArea) && superArea > 0) {
+  // the plain super area.
+  //
+  // Prefer the price actually in the form (upstream's, or ours from just above)
+  // so the two figures agree, but fall back to our own computed total. Reading
+  // only the field meant that whenever the price default didn't land — a manager
+  // with no listing price, say — the rate silently never computed either.
+  const fieldTotal = Number(uhFieldValue('priceTotal'));
+  const totalNow = (Number.isFinite(fieldTotal) && fieldTotal > 0) ? fieldTotal : ourTotal;
+  if (totalNow != null && Number.isFinite(totalNow) && totalNow > 0
+      && Number.isFinite(superArea) && superArea > 0) {
     const affordableGurgaon = /gurgaon|gurugram/i.test(String(row.city || ''))
       && (row.affordable === true || String(row.affordable).toLowerCase() === 'true');
     const denominator = affordableGurgaon ? superArea * 1.3 : superArea;
@@ -3396,9 +3406,13 @@ async function publishUpdateHome() {
     if (e.target.id === 'uhLayoutNewToggle') {
       const panel = $('#uhLayoutNew');
       if (panel) {
-        const opening = panel.style.display === 'none';
-        panel.style.display = opening ? '' : 'none';
-        if (opening) fillUhNewLayoutForm(updateHomeState.property);
+        panel.hidden = !panel.hidden;
+        e.target.textContent = panel.hidden ? '+ New layout' : 'Cancel';
+        if (!panel.hidden) {
+          fillUhNewLayoutForm(updateHomeState.property);
+          const first = document.getElementById('uhNlName');
+          if (first) first.focus();
+        }
       }
       return;
     }
