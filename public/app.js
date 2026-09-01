@@ -1763,12 +1763,32 @@ function cpStatus(msg, kind) {
   el.className = 'cp-lookup-status' + (kind ? ' is-' + kind : '');
 }
 
+// The CP detail fields stay locked until a partner is actually resolved — an
+// email typed against no CP cannot be filed against anyone, and would be written
+// back to nothing. Unlocked only by applyCpMatch().
+function setCpFieldsLocked(locked) {
+  document.querySelectorAll('#bookingModal [data-cp-field]').forEach(el => {
+    el.readOnly = locked;
+    el.classList.toggle('is-locked', locked);
+  });
+  // The CP's email is captured by the existing broker box — there is no second
+  // field for it — so that box follows the same rule: no CP, no email.
+  const broker = document.getElementById('bookingNewBroker');
+  if (broker) {
+    broker.readOnly = locked;
+    broker.classList.toggle('is-locked', locked);
+    broker.placeholder = locked ? 'Look up a CP first' : 'Add CP email…';
+  }
+  const addBtn = document.getElementById('bookingAddBroker');
+  if (addBtn) addBtn.disabled = locked;
+}
+
 function resetCpLookup() {
   bookingState.cpId = null;
-  ['cpLookupCode', 'cpLookupPhone', 'cpName', 'cpCompany', 'cpEmail']
+  ['cpLookupCode', 'cpLookupPhone', 'cpName', 'cpCompany']
     .forEach(id => { const el = document.getElementById(id); if (el) el.value = ''; });
-  const f = $('#cpLookupFields'); if (f) f.hidden = true;
   const m = $('#cpLookupMatches'); if (m) { m.hidden = true; m.innerHTML = ''; }
+  setCpFieldsLocked(true);
   cpStatus('');
 }
 
@@ -1780,24 +1800,21 @@ function applyCpMatch(cp) {
   set('cpLookupPhone', cp.phone);
   set('cpName', cp.name);
   set('cpCompany', cp.company);
-  // Only overwrite the email when the record actually has one — otherwise keep
-  // whatever the operator has already typed.
-  if (cp.email) set('cpEmail', cp.email);
 
-  const f = $('#cpLookupFields'); if (f) f.hidden = false;
+  setCpFieldsLocked(false);
   const m = $('#cpLookupMatches'); if (m) { m.hidden = true; m.innerHTML = ''; }
 
-  // The CP's email is also the natural broker recipient for the CP mail.
-  const email = (document.getElementById('cpEmail') || {}).value;
-  if (email && !bookingState.brokers.includes(email.toLowerCase())) {
-    bookingState.brokers.push(email.toLowerCase());
-    renderBookingBrokers();
+  // A stored email goes straight into the CP recipient chips; when the record
+  // has none the operator adds it there, and it is written back on send.
+  if (cp.email) {
+    const e = String(cp.email).toLowerCase();
+    if (!bookingState.brokers.includes(e)) {
+      bookingState.brokers.push(e);
+      renderBookingBrokers();
+    }
   }
 
-  cpStatus(cp.email
-    ? `Matched ${cp.cpCode} — ${cp.name}${cp.company ? ' · ' + cp.company : ''}`
-    : `Matched ${cp.cpCode} — ${cp.name}. No email on record: enter one and it will be saved to the CP for next time.`,
-    cp.email ? 'ok' : 'warn');
+  cpStatus(`Matched ${cp.cpCode} — ${cp.name}${cp.company ? ' · ' + cp.company : ''}`, 'ok');
 }
 
 function renderCpMatches(matches) {
@@ -1813,26 +1830,53 @@ function renderCpMatches(matches) {
   bookingState.cpMatches = matches;
 }
 
-async function lookupChannelPartner() {
-  const code = ($('#cpLookupCode') || {}).value || '';
-  const phone = ($('#cpLookupPhone') || {}).value || '';
-  if (!code.trim() && !phone.trim()) { cpStatus('Enter a CP code or a registered phone number.', 'error'); return; }
+// Live search. Fires from a debounced input once the value looks complete —
+// a full 10-digit phone, or a CP code of plausible length — so the operator
+// never has to press anything. `seq` guards against an earlier, slower response
+// overwriting a newer one when someone keeps typing.
+let _cpSeq = 0;
+let _cpTimer = null;
 
-  const btn = $('#cpLookupBtn');
-  if (btn) btn.disabled = true;
-  cpStatus('Looking up…');
+function cpLookupKeys() {
+  const code = (($('#cpLookupCode') || {}).value || '').trim();
+  const phoneRaw = (($('#cpLookupPhone') || {}).value || '').trim();
+  const digits = phoneRaw.replace(/\D/g, '').slice(-10);
+  return { code, phoneRaw, digits };
+}
+
+// Ready to search? Code is the unique key so it wins; 6965 of 6971 codes are
+// exactly CP#####, and the handful of others are 4+ char admin rows.
+function cpLookupReady() {
+  const { code, digits } = cpLookupKeys();
+  if (code) return /^cp\d{5}$/i.test(code) || code.length >= 4;
+  return digits.length === 10;
+}
+
+function scheduleCpLookup() {
+  clearTimeout(_cpTimer);
+  if (!cpLookupReady()) { cpStatus(''); return; }
+  _cpTimer = setTimeout(lookupChannelPartner, 300);
+}
+
+async function lookupChannelPartner() {
+  const { code, phoneRaw } = cpLookupKeys();
+  if (!code && !phoneRaw) { cpStatus(''); return; }
+
+  const seq = ++_cpSeq;
+  cpStatus('Searching…');
   try {
     const qs = new URLSearchParams();
     // Code is the unique key, so it wins when both are filled.
-    if (code.trim()) qs.set('code', code.trim()); else qs.set('phone', phone.trim());
+    if (code) qs.set('code', code); else qs.set('phone', phoneRaw);
     const r = await fetch('/api/cp-lookup?' + qs, { credentials: 'include' });
     const data = await r.json();
+    if (seq !== _cpSeq) return;   // a newer keystroke already superseded this
     if (!r.ok || !data.success) { cpStatus(data.error || 'Lookup failed', 'error'); return; }
 
     if (!data.matches.length) {
       bookingState.cpId = null;
-      const f = $('#cpLookupFields'); if (f) f.hidden = false;   // let them fill it by hand
-      cpStatus('No channel partner found. You can still fill the details in manually.', 'warn');
+      setCpFieldsLocked(true);
+      cpStatus('No channel partner found for that code or phone. Check it and try again.', 'error');
       return;
     }
     if (data.matches.length === 1) { applyCpMatch(data.matches[0]); return; }
@@ -1840,9 +1884,7 @@ async function lookupChannelPartner() {
     renderCpMatches(data.matches);
     cpStatus(`${data.matches.length} channel partners share that number — pick one.`, 'warn');
   } catch (e) {
-    cpStatus('Network error: ' + e.message, 'error');
-  } finally {
-    if (btn) btn.disabled = false;
+    if (seq === _cpSeq) cpStatus('Network error: ' + e.message, 'error');
   }
 }
 
@@ -2312,7 +2354,11 @@ function flushPendingBookingInputs() {
 (function bindBookingModal() {
   document.addEventListener('click', (e) => {
     // Add recipient
-    if (e.target.id === 'cpLookupBtn') { lookupChannelPartner(); return; }
+    if (e.target.matches('[data-cp-field], #bookingNewBroker') && e.target.readOnly) {
+      cpStatus('Please enter a CP phone number or CP code first.', 'error');
+      const code = $('#cpLookupCode'); if (code) code.focus();
+      return;
+    }
     const cpPick = e.target.closest('[data-cp-idx]');
     if (cpPick) {
       const m = (bookingState.cpMatches || [])[Number(cpPick.dataset.cpIdx)];
@@ -2491,6 +2537,7 @@ async function generateBookingPreview(mode) {
         recipients: bookingState.recipients,
         broker_emails: bookingState.brokers,
         selling_cp_id: bookingState.cpId,
+        selling_cp_email: bookingState.brokers[0] || null,
         ...form,
       }),
     });
@@ -2529,6 +2576,7 @@ async function sendBookingMail(mode) {
         recipients: bookingState.recipients,
         broker_emails: bookingState.brokers,
         selling_cp_id: bookingState.cpId,
+        selling_cp_email: bookingState.brokers[0] || null,
         ...form,
       }),
     });
@@ -3593,17 +3641,30 @@ async function publishUpdateHome() {
   });
   // Changing the code or phone after a match invalidates the resolved CP — the
   // snapshot must never be filed under a partner the operator has moved off.
+  document.addEventListener('focusin', (e) => {
+    if (e.target.matches && e.target.matches('[data-cp-field], #bookingNewBroker') && e.target.readOnly) {
+      cpStatus('Please enter a CP phone number or CP code first.', 'error');
+    }
+  });
+  document.addEventListener('keydown', (e) => {
+    if (e.target.matches && e.target.matches('[data-cp-field], #bookingNewBroker') && e.target.readOnly
+        && e.key.length === 1) {
+      cpStatus('Please enter a CP phone number or CP code first.', 'error');
+    }
+  }, true);
   document.addEventListener('input', (e) => {
     if (e.target.id === 'cpLookupCode' || e.target.id === 'cpLookupPhone') {
       if (bookingState.cpId != null) {
         bookingState.cpId = null;
-        cpStatus('Code or phone changed — look up again to re-link the CP.', 'warn');
+        setCpFieldsLocked(true);
       }
+      scheduleCpLookup();
     }
   });
   document.addEventListener('keydown', (e) => {
     if (e.key === 'Enter' && (e.target.id === 'cpLookupCode' || e.target.id === 'cpLookupPhone')) {
       e.preventDefault();
+      clearTimeout(_cpTimer);
       lookupChannelPartner();
       return;
     }

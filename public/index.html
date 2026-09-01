@@ -196,34 +196,30 @@
     <div class="modal-body" id="bookingModalBody">
       <!-- ── Page 1: Recipients ── -->
       <div class="booking-page" data-page="1">
-        <!-- Selling channel partner: look the CP up by code or registered phone
-             and let it fill the rest, rather than typing an email blind. -->
+        <!-- Selling channel partner. Resolved by code or registered phone; the
+             email is captured by the existing "Add CP email" box below rather
+             than a second field for the same thing. -->
         <div class="cp-lookup">
-          <div class="cp-lookup-title">Selling channel partner</div>
-          <div class="cp-lookup-row">
+          <div class="cp-lookup-title">Selling channel partner <span class="req">*</span></div>
+          <div class="cp-lookup-keys">
             <input type="text" class="booking-input" id="cpLookupCode"
-                   data-bf="selling_cp_code" placeholder="CP code — e.g. CP01234" autocomplete="off">
+                   data-bf="selling_cp_code" placeholder="CP code — CP01234" autocomplete="off">
             <span class="cp-lookup-or">or</span>
-            <input type="tel" class="booking-input" id="cpLookupPhone"
-                   data-bf="selling_cp_phone" placeholder="Registered phone" autocomplete="off">
-            <button type="button" class="btn btn-ghost" id="cpLookupBtn">Look up</button>
+            <input type="tel" class="booking-input" id="cpLookupPhone" inputmode="numeric"
+                   data-bf="selling_cp_phone" placeholder="Registered phone (10 digits)" autocomplete="off">
           </div>
           <div id="cpLookupStatus" class="cp-lookup-status"></div>
           <div id="cpLookupMatches" class="cp-lookup-matches" hidden></div>
-
-          <div id="cpLookupFields" class="cp-lookup-fields" hidden>
+          <div class="cp-lookup-fields">
             <div class="fg">
               <label for="cpName">CP name</label>
-              <input type="text" class="booking-input" id="cpName" data-bf="selling_cp_name">
+              <input type="text" class="booking-input is-locked" id="cpName"
+                     data-bf="selling_cp_name" data-cp-field readonly>
             </div>
             <div class="fg">
               <label for="cpCompany">Company</label>
-              <input type="text" class="booking-input" id="cpCompany" data-bf="selling_cp_company">
-            </div>
-            <div class="fg">
-              <label for="cpEmail">CP email</label>
-              <input type="email" class="booking-input" id="cpEmail" data-bf="selling_cp_email"
-                     placeholder="not on record — please enter">
+              <input type="text" class="booking-input is-locked" id="cpCompany"
+                     data-bf="selling_cp_company" data-cp-field readonly>
             </div>
           </div>
         </div>
