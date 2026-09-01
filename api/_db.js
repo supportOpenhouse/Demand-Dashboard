@@ -127,6 +127,28 @@ const INIT_SQL = `
   ALTER TABLE booking_details ADD COLUMN IF NOT EXISTS brokerage_registry_amount REAL;
   ALTER TABLE booking_details ADD COLUMN IF NOT EXISTS cp_mail_sent_at           TIMESTAMPTZ;
 
+  -- Selling channel partner, resolved from the CP inventory database by cp_code
+  -- or registered phone at booking time. That database is a SEPARATE Postgres
+  -- instance, so no foreign key is possible and no join can be done at query
+  -- time — the CP's details are snapshotted here instead, which also preserves
+  -- them as they were on the date of sale.
+  --
+  -- This is what makes "which CP sold this property" answerable:
+  --   SELECT uid, selling_cp_code, selling_cp_name FROM booking_details
+  --    WHERE mail_sent_at IS NOT NULL;
+  --
+  -- selling_cp_email is operator-entered: channel_partners.email is empty for
+  -- every row upstream, so we capture it here AND write it back to the CP
+  -- record so later lookups can prefill it.
+  ALTER TABLE booking_details ADD COLUMN IF NOT EXISTS selling_cp_id      INTEGER;
+  ALTER TABLE booking_details ADD COLUMN IF NOT EXISTS selling_cp_code    TEXT;
+  ALTER TABLE booking_details ADD COLUMN IF NOT EXISTS selling_cp_phone   TEXT;
+  ALTER TABLE booking_details ADD COLUMN IF NOT EXISTS selling_cp_name    TEXT;
+  ALTER TABLE booking_details ADD COLUMN IF NOT EXISTS selling_cp_company TEXT;
+  ALTER TABLE booking_details ADD COLUMN IF NOT EXISTS selling_cp_email   TEXT;
+  CREATE INDEX IF NOT EXISTS idx_booking_selling_cp_code  ON booking_details(selling_cp_code);
+  CREATE INDEX IF NOT EXISTS idx_booking_selling_cp_phone ON booking_details(selling_cp_phone);
+
   -- legacy_properties: parallel to the properties table but OWNED by the
   -- demand dashboard. Holds property records that came in via legacy bulk
   -- import (CSV) and do not belong in the supply pipeline. The Supply Closure

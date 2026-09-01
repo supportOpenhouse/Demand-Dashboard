@@ -196,6 +196,40 @@
     <div class="modal-body" id="bookingModalBody">
       <!-- ── Page 1: Recipients ── -->
       <div class="booking-page" data-page="1">
+        <!-- Selling channel partner: look the CP up by code or registered phone
+             and let it fill the rest, rather than typing an email blind. -->
+        <div class="cp-lookup">
+          <div class="cp-lookup-title">Selling channel partner</div>
+          <div class="cp-lookup-row">
+            <input type="text" class="booking-input" id="cpLookupCode"
+                   data-bf="selling_cp_code" placeholder="CP code — e.g. CP01234" autocomplete="off">
+            <span class="cp-lookup-or">or</span>
+            <input type="tel" class="booking-input" id="cpLookupPhone"
+                   data-bf="selling_cp_phone" placeholder="Registered phone" autocomplete="off">
+            <button type="button" class="btn btn-ghost" id="cpLookupBtn">Look up</button>
+          </div>
+          <div id="cpLookupStatus" class="cp-lookup-status"></div>
+          <div id="cpLookupMatches" class="cp-lookup-matches" hidden></div>
+
+          <div id="cpLookupFields" class="cp-lookup-fields" hidden>
+            <div class="fg">
+              <label for="cpName">CP name</label>
+              <input type="text" class="booking-input" id="cpName" data-bf="selling_cp_name">
+            </div>
+            <div class="fg">
+              <label for="cpCompany">Company</label>
+              <input type="text" class="booking-input" id="cpCompany" data-bf="selling_cp_company">
+            </div>
+            <div class="fg">
+              <label for="cpEmail">CP email</label>
+              <input type="email" class="booking-input" id="cpEmail" data-bf="selling_cp_email"
+                     placeholder="not on record — please enter">
+            </div>
+          </div>
+        </div>
+
+        <div class="booking-section-divider"></div>
+
         <div class="booking-recipients-list" id="bookingRecipientsList"></div>
         <div class="booking-recipients-list" id="bookingBrokersList"></div>
 

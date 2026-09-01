@@ -1745,8 +1745,106 @@ const bookingState = {
   paymentMethods: [],
   payMode: 'single',  // 'single' | 'split'
   previewMode: 'buyer', // 'buyer' | 'cp' — which mail Step 3 is showing/sending
+  cpId: null,           // channel_partners.id once a CP is resolved
   form: {},
 };
+
+// ── Selling channel partner lookup ──────────────────────────────────────────
+// Resolve the CP from its code or registered phone instead of asking for an
+// email up front. channel_partners lives in a separate database, so what we
+// find is snapshotted onto the booking row (see api/_db.js).
+//
+// The email is the one field the lookup cannot fill — it is empty for every CP
+// upstream — so it is typed here and written back after a successful send.
+function cpStatus(msg, kind) {
+  const el = $('#cpLookupStatus');
+  if (!el) return;
+  el.textContent = msg || '';
+  el.className = 'cp-lookup-status' + (kind ? ' is-' + kind : '');
+}
+
+function resetCpLookup() {
+  bookingState.cpId = null;
+  ['cpLookupCode', 'cpLookupPhone', 'cpName', 'cpCompany', 'cpEmail']
+    .forEach(id => { const el = document.getElementById(id); if (el) el.value = ''; });
+  const f = $('#cpLookupFields'); if (f) f.hidden = true;
+  const m = $('#cpLookupMatches'); if (m) { m.hidden = true; m.innerHTML = ''; }
+  cpStatus('');
+}
+
+// Fill the form from one resolved CP.
+function applyCpMatch(cp) {
+  bookingState.cpId = cp.id;
+  const set = (id, v) => { const el = document.getElementById(id); if (el) el.value = v == null ? '' : v; };
+  set('cpLookupCode', cp.cpCode);
+  set('cpLookupPhone', cp.phone);
+  set('cpName', cp.name);
+  set('cpCompany', cp.company);
+  // Only overwrite the email when the record actually has one — otherwise keep
+  // whatever the operator has already typed.
+  if (cp.email) set('cpEmail', cp.email);
+
+  const f = $('#cpLookupFields'); if (f) f.hidden = false;
+  const m = $('#cpLookupMatches'); if (m) { m.hidden = true; m.innerHTML = ''; }
+
+  // The CP's email is also the natural broker recipient for the CP mail.
+  const email = (document.getElementById('cpEmail') || {}).value;
+  if (email && !bookingState.brokers.includes(email.toLowerCase())) {
+    bookingState.brokers.push(email.toLowerCase());
+    renderBookingBrokers();
+  }
+
+  cpStatus(cp.email
+    ? `Matched ${cp.cpCode} — ${cp.name}${cp.company ? ' · ' + cp.company : ''}`
+    : `Matched ${cp.cpCode} — ${cp.name}. No email on record: enter one and it will be saved to the CP for next time.`,
+    cp.email ? 'ok' : 'warn');
+}
+
+function renderCpMatches(matches) {
+  const el = $('#cpLookupMatches');
+  if (!el) return;
+  el.innerHTML = matches.map((m, i) => `
+    <button type="button" class="cp-match" data-cp-idx="${i}">
+      <span class="code">${esc(m.cpCode)}</span>
+      <span>${esc(m.name || '')}</span>
+      <span class="meta">${esc([m.company, m.city, m.phone].filter(Boolean).join(' · '))}</span>
+    </button>`).join('');
+  el.hidden = false;
+  bookingState.cpMatches = matches;
+}
+
+async function lookupChannelPartner() {
+  const code = ($('#cpLookupCode') || {}).value || '';
+  const phone = ($('#cpLookupPhone') || {}).value || '';
+  if (!code.trim() && !phone.trim()) { cpStatus('Enter a CP code or a registered phone number.', 'error'); return; }
+
+  const btn = $('#cpLookupBtn');
+  if (btn) btn.disabled = true;
+  cpStatus('Looking up…');
+  try {
+    const qs = new URLSearchParams();
+    // Code is the unique key, so it wins when both are filled.
+    if (code.trim()) qs.set('code', code.trim()); else qs.set('phone', phone.trim());
+    const r = await fetch('/api/cp-lookup?' + qs, { credentials: 'include' });
+    const data = await r.json();
+    if (!r.ok || !data.success) { cpStatus(data.error || 'Lookup failed', 'error'); return; }
+
+    if (!data.matches.length) {
+      bookingState.cpId = null;
+      const f = $('#cpLookupFields'); if (f) f.hidden = false;   // let them fill it by hand
+      cpStatus('No channel partner found. You can still fill the details in manually.', 'warn');
+      return;
+    }
+    if (data.matches.length === 1) { applyCpMatch(data.matches[0]); return; }
+    // One phone in the source data maps to two CP codes, so never guess.
+    renderCpMatches(data.matches);
+    cpStatus(`${data.matches.length} channel partners share that number — pick one.`, 'warn');
+  } catch (e) {
+    cpStatus('Network error: ' + e.message, 'error');
+  } finally {
+    if (btn) btn.disabled = false;
+  }
+}
 
 async function openBookingModal(uid) {
   bookingState.uid = uid;
@@ -1765,6 +1863,9 @@ async function openBookingModal(uid) {
   if (cpSendBtn) { cpSendBtn.disabled = false; cpSendBtn.textContent = '📨 Send CP Mail'; }
   bookingState.recipients = [];
   bookingState.brokers = [];
+  bookingState.cpId = null;
+  bookingState.cpMatches = [];
+  resetCpLookup();
   bookingState.fixedRecipients = [];
   bookingState.paymentMethods = [];
   bookingState.payMode = 'single';
@@ -2211,6 +2312,13 @@ function flushPendingBookingInputs() {
 (function bindBookingModal() {
   document.addEventListener('click', (e) => {
     // Add recipient
+    if (e.target.id === 'cpLookupBtn') { lookupChannelPartner(); return; }
+    const cpPick = e.target.closest('[data-cp-idx]');
+    if (cpPick) {
+      const m = (bookingState.cpMatches || [])[Number(cpPick.dataset.cpIdx)];
+      if (m) applyCpMatch(m);
+      return;
+    }
     if (e.target.id === 'bookingAddRecipient') {
       const input = $('#bookingNewRecipient');
       const val = input.value.trim();
@@ -2382,6 +2490,7 @@ async function generateBookingPreview(mode) {
         action: mode === 'cp' ? 'preview_cp' : 'preview',
         recipients: bookingState.recipients,
         broker_emails: bookingState.brokers,
+        selling_cp_id: bookingState.cpId,
         ...form,
       }),
     });
@@ -2419,6 +2528,7 @@ async function sendBookingMail(mode) {
         action: isCp ? 'send_cp' : 'send',
         recipients: bookingState.recipients,
         broker_emails: bookingState.brokers,
+        selling_cp_id: bookingState.cpId,
         ...form,
       }),
     });
@@ -3481,7 +3591,22 @@ async function publishUpdateHome() {
   document.addEventListener('change', (e) => {
     if (e.target.id === 'uhFloorPlanFile') uploadUhFloorPlan(e.target.files && e.target.files[0]);
   });
+  // Changing the code or phone after a match invalidates the resolved CP — the
+  // snapshot must never be filed under a partner the operator has moved off.
+  document.addEventListener('input', (e) => {
+    if (e.target.id === 'cpLookupCode' || e.target.id === 'cpLookupPhone') {
+      if (bookingState.cpId != null) {
+        bookingState.cpId = null;
+        cpStatus('Code or phone changed — look up again to re-link the CP.', 'warn');
+      }
+    }
+  });
   document.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' && (e.target.id === 'cpLookupCode' || e.target.id === 'cpLookupPhone')) {
+      e.preventDefault();
+      lookupChannelPartner();
+      return;
+    }
     if (e.key === 'Enter' && (e.target.id === 'uhFurnishName' || e.target.id === 'uhFurnishCount')) {
       e.preventDefault();
       addUhFurnishing();

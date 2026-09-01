@@ -25,6 +25,7 @@
 // failed send doesn't leave an orphan unsent row in the DB.
 
 const { pool, logActivity } = require('../_db');
+const { saveChannelPartnerEmail } = require('../_cpdb');
 const { requireAuth, canEdit, setCors } = require('../_auth');
 const { buildBookingEmail, buildBrokerEmail, sendMail } = require('../_email');
 
@@ -39,6 +40,23 @@ const ISO_DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 function validate(body) {
   const errors = [];
   const clean = {};
+
+  // Selling channel partner — resolved by the CP lookup, or typed by hand.
+  // Snapshotted onto the booking because channel_partners lives in a separate
+  // database and cannot be joined at read time.
+  clean.selling_cp_id = Number.isInteger(Number(body.selling_cp_id)) && Number(body.selling_cp_id) > 0
+    ? Number(body.selling_cp_id) : null;
+  for (const f of ['selling_cp_code', 'selling_cp_phone', 'selling_cp_name', 'selling_cp_company']) {
+    const v = body[f] == null ? '' : String(body[f]).trim();
+    clean[f] = v === '' ? null : v.slice(0, 200);
+  }
+  if (clean.selling_cp_phone) clean.selling_cp_phone = clean.selling_cp_phone.replace(/\D/g, '').slice(-10) || null;
+  {
+    const v = body.selling_cp_email == null ? '' : String(body.selling_cp_email).trim().toLowerCase();
+    if (v === '') clean.selling_cp_email = null;
+    else if (!EMAIL_RE.test(v)) errors.push('selling_cp_email is not a valid email address');
+    else clean.selling_cp_email = v;
+  }
 
   // Strings (trim, max length)
   const textFields = ['buyer_name', 'co_buyer_name', 'booking_amount_method',
@@ -529,9 +547,11 @@ module.exports = async (req, res) => {
          ats_timeline, registry_timeline, booking_amount_forfeitable,
          amount_on_ats_pct, other_conditions, recipients, broker_emails, submitted_by,
          source, brokerage_amount, brokerage_timing,
-         brokerage_ats_amount, brokerage_registry_amount
+         brokerage_ats_amount, brokerage_registry_amount,
+         selling_cp_id, selling_cp_code, selling_cp_phone,
+         selling_cp_name, selling_cp_company, selling_cp_email
        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20,
-                 $21, $22, $23, $24, $25)
+                 $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31)
        RETURNING id`,
       [
         uid, clean.buyer_salutation, clean.buyer_name, clean.co_buyer_name,
@@ -547,6 +567,8 @@ module.exports = async (req, res) => {
         user.email,
         clean.source, clean.brokerage_amount, clean.brokerage_timing,
         clean.brokerage_ats_amount, clean.brokerage_registry_amount,
+        clean.selling_cp_id, clean.selling_cp_code, clean.selling_cp_phone,
+        clean.selling_cp_name, clean.selling_cp_company, clean.selling_cp_email,
       ]
     );
     insertedId = rows[0].id;

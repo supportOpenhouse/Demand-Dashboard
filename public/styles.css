@@ -1142,3 +1142,28 @@ body.role-viewer .col-contact { display: none; }
 .uh-fp-cap.is-new { color: #b45309; font-weight: 600; }
 .uh-fp-cap.is-stale { color: #9ca3af; text-decoration: line-through; }
 .uh-fp-note { margin: 8px 0 0; font-size: 12px; line-height: 1.5; color: #6b7280; }
+
+/* ── Booking: selling channel partner lookup ─────────────────────────────── */
+.cp-lookup { display: grid; gap: 8px; }
+.cp-lookup-title { font-size: 12px; font-weight: 600; color: #374151; }
+.cp-lookup-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.cp-lookup-row .booking-input { flex: 1 1 190px; min-width: 0; }
+.cp-lookup-or { font-size: 12px; color: #9ca3af; flex: none; }
+.cp-lookup-status { font-size: 12px; line-height: 1.45; color: #6b7280; }
+.cp-lookup-status.is-ok { color: #166534; }
+.cp-lookup-status.is-warn { color: #b45309; }
+.cp-lookup-status.is-error { color: #b91c1c; }
+.cp-lookup-matches { display: grid; gap: 6px; }
+.cp-lookup-matches[hidden] { display: none; }
+.cp-match {
+  display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap;
+  padding: 8px 10px; border: 1px solid #e5e7eb; border-radius: 7px;
+  background: #fff; cursor: pointer; font-size: 13px; text-align: left; width: 100%;
+}
+.cp-match:hover { border-color: #4f46e5; background: #f5f3ff; }
+.cp-match .code { font-weight: 600; color: #4f46e5; }
+.cp-match .meta { color: #6b7280; font-size: 12px; }
+.cp-lookup-fields {
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 10px;
+}
+.cp-lookup-fields[hidden] { display: none; }
