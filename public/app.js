@@ -1746,8 +1746,59 @@ const bookingState = {
   payMode: 'single',  // 'single' | 'split'
   previewMode: 'buyer', // 'buyer' | 'cp' — which mail Step 3 is showing/sending
   cpId: null,           // channel_partners.id once a CP is resolved
+  draftId: null,        // booking_details row being autosaved into
   form: {},
 };
+
+// ── Draft autosave ──────────────────────────────────────────────────────────
+// The booking used to reach the database only when the mail was sent, so a
+// closed tab lost everything typed. It is now saved as a draft while the
+// operator types and on every step change.
+//
+// The draft deliberately does NOT mark the unit Booked — only a sent booking
+// does that — and it updates one row rather than inserting per keystroke.
+let _draftTimer = null;
+let _draftInFlight = false;
+
+async function saveBookingDraft({ quiet = true } = {}) {
+  if (!bookingState.uid) return;
+  if (_draftInFlight) return;               // a save is already covering this edit
+  _draftInFlight = true;
+  try {
+    const form = collectBookingForm();
+    const r = await fetch('/api/booking-details/' + encodeURIComponent(bookingState.uid), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'include',
+      body: JSON.stringify({
+        action: 'save',
+        booking_id: bookingState.draftId,
+        recipients: bookingState.recipients,
+        broker_emails: bookingState.brokers,
+        selling_cp_id: bookingState.cpId,
+        selling_cp_email: bookingState.brokers[0] || null,
+        ...form,
+      }),
+    });
+    const data = await r.json();
+    if (r.ok && data.success && data.id) {
+      bookingState.draftId = data.id;       // subsequent saves update this row
+      if (!quiet) showToast('Draft saved', 'success');
+    } else if (!quiet) {
+      showToast(data.error || 'Could not save draft', 'error');
+    }
+  } catch (e) {
+    // Autosave is best-effort: a dropped save must never block data entry.
+    if (!quiet) showToast('Could not save draft: ' + e.message, 'error');
+  } finally {
+    _draftInFlight = false;
+  }
+}
+
+function scheduleBookingDraft() {
+  clearTimeout(_draftTimer);
+  _draftTimer = setTimeout(() => saveBookingDraft({ quiet: true }), 800);
+}
 
 // ── Selling channel partner lookup ──────────────────────────────────────────
 // Resolve the CP from its code or registered phone instead of asking for an
@@ -1907,6 +1958,8 @@ async function openBookingModal(uid) {
   bookingState.brokers = [];
   bookingState.cpId = null;
   bookingState.cpMatches = [];
+  bookingState.draftId = null;
+  clearTimeout(_draftTimer);
   resetCpLookup();
   bookingState.fixedRecipients = [];
   bookingState.paymentMethods = [];
@@ -2008,9 +2061,12 @@ async function openBookingModal(uid) {
   document.querySelectorAll('#bookingModal [data-bf="booking_amount_method"], #bookingModal [data-bf="booking_amount_method_2"]')
     .forEach(sel => { sel.innerHTML = methodOpts; });
 
-  // Prefill form if there's a saved draft (latest non-mailed booking row)
-  if (data.latest && !data.latest.mail_sent_at) {
+  // Prefill from the latest booking row, sent or not. A mailed booking stays
+  // editable — corrections land on that row — while sending again still forks a
+  // fresh row for the rebooking.
+  if (data.latest) {
     const l = data.latest;
+    bookingState.draftId = l.id != null ? l.id : null;
     setBF('buyer_name', l.buyer_name);
     setBF('buyer_email', l.buyer_email);
     setBF('co_buyer_name', l.co_buyer_name);
@@ -2097,6 +2153,7 @@ function renderBookingRecipients() {
 // Broker chip list. Parallel to renderBookingRecipients but uses a separate
 // data-broker-idx attribute so the click delegation targets the right array.
 function renderBookingBrokers() {
+  scheduleBookingDraft();
   const list = $('#bookingBrokersList');
   if (!list) return;
   if (!bookingState.brokers.length) {
@@ -2442,15 +2499,20 @@ function flushPendingBookingInputs() {
           coBuyerEmailEl?.focus();
           return;
         }
+        saveBookingDraft({ quiet: true });
         goToBookingStep(2);
       }
     }
     // Back
     if (e.target.id === 'bookingBackBtn') {
-      if (bookingState.step > 1) goToBookingStep(bookingState.step - 1);
+      if (bookingState.step > 1) {
+        saveBookingDraft({ quiet: true });
+        goToBookingStep(bookingState.step - 1);
+      }
     }
     // Buyer Mail Preview (page 2 → server preview → page 3)
     if (e.target.id === 'bookingPreviewBtn') {
+      saveBookingDraft({ quiet: true });
       const form = collectBookingForm();
       const missing = validateBookingForm(form);
       if (missing.length) {
@@ -2534,6 +2596,7 @@ async function generateBookingPreview(mode) {
       credentials: 'include',
       body: JSON.stringify({
         action: mode === 'cp' ? 'preview_cp' : 'preview',
+        booking_id: bookingState.draftId,
         recipients: bookingState.recipients,
         broker_emails: bookingState.brokers,
         selling_cp_id: bookingState.cpId,
@@ -2573,6 +2636,7 @@ async function sendBookingMail(mode) {
       credentials: 'include',
       body: JSON.stringify({
         action: isCp ? 'send_cp' : 'send',
+        booking_id: bookingState.draftId,
         recipients: bookingState.recipients,
         broker_emails: bookingState.brokers,
         selling_cp_id: bookingState.cpId,
@@ -3653,6 +3717,10 @@ async function publishUpdateHome() {
     }
   }, true);
   document.addEventListener('input', (e) => {
+    // Any booking field edit schedules a debounced draft save.
+    if (e.target.closest && e.target.closest('#bookingModal') && e.target.matches('[data-bf]')) {
+      scheduleBookingDraft();
+    }
     if (e.target.id === 'cpLookupCode' || e.target.id === 'cpLookupPhone') {
       if (bookingState.cpId != null) {
         bookingState.cpId = null;

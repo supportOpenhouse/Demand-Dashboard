@@ -34,6 +34,27 @@ const SOURCES = ['CP', 'Direct'];
 const BROKERAGE_TIMINGS = ['Registry Only', 'ATS & Registry'];
 const SALUTATIONS = ['Mr.', 'Mrs.', 'Ms.', 'Dr.'];
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+// Every column a booking row writes, in order. Shared by the insert and the
+// draft update so the two can't drift. `recipients` / `broker_emails` are JSONB
+// and get stringified; everything else goes through as-is.
+const BOOKING_COLS = [
+  'buyer_salutation', 'buyer_name', 'co_buyer_name', 'buyer_email', 'co_buyer_email',
+  'consideration_amount', 'booking_amount_received',
+  'booking_amount_method', 'booking_amount_method_2',
+  'booking_amount_split_1', 'booking_amount_split_2',
+  'ats_timeline', 'registry_timeline', 'booking_amount_forfeitable',
+  'amount_on_ats_pct', 'other_conditions', 'recipients', 'broker_emails',
+  'source', 'brokerage_amount', 'brokerage_timing',
+  'brokerage_ats_amount', 'brokerage_registry_amount',
+  'selling_cp_id', 'selling_cp_code', 'selling_cp_phone',
+  'selling_cp_name', 'selling_cp_company', 'selling_cp_email',
+];
+const JSON_COLS = new Set(['recipients', 'broker_emails']);
+
+function bookingValues(clean) {
+  return BOOKING_COLS.map(c => JSON_COLS.has(c) ? JSON.stringify(clean[c] || []) : clean[c]);
+}
 const ISO_DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 
 // Strict-list fields. Reject anything not in the allow-list to keep DB clean.
@@ -509,7 +530,52 @@ module.exports = async (req, res) => {
     return res.status(200).json({ success: true, id: cpRowId, sent: true });
   }
 
-  // ── action: save (draft) or send (full) — both write a row.
+  // ── action: save (draft) — autosaved from the form as the operator types and
+  // on each step change, so nothing is lost if the tab closes mid-entry.
+  //
+  // Two deliberate differences from `send`:
+  //   * it UPDATES the row it created rather than inserting another, so an
+  //     autosaving form leaves one draft, not hundreds;
+  //   * it never touches demand_details. A half-typed draft must not flip the
+  //     unit to Booked — only an actually-sent booking means that.
+  // A row that has already been mailed is immutable here.
+  if (action === 'save') {
+    const draftId = Number(body.booking_id) || null;
+    const sets = BOOKING_COLS.map((c, i) => `"${c}" = $${i + 1}`).join(', ');
+    if (draftId) {
+      const { rows } = await pool.query(
+        `UPDATE booking_details SET ${sets}, updated_at = NOW()
+          WHERE id = $${BOOKING_COLS.length + 1} AND uid = $${BOOKING_COLS.length + 2}
+          RETURNING id, mail_sent_at`,
+        [...bookingValues(clean), draftId, uid]
+      );
+      if (rows.length) {
+        // Editing a booking that has already gone out is allowed, but it means
+        // the stored record no longer matches the mail the buyer received — so
+        // it is logged distinctly rather than passing as a routine autosave.
+        if (rows[0].mail_sent_at) {
+          logActivity(uid, 'booking_edited_after_send', 'booking', user, { booking_id: rows[0].id });
+        }
+        return res.status(200).json({
+          success: true, id: rows[0].id, sent: !!rows[0].mail_sent_at, draft: true,
+          editedAfterSend: !!rows[0].mail_sent_at,
+        });
+      }
+      // Fell through: the row belongs to another unit — start a fresh draft
+      // rather than silently editing nothing.
+    }
+    const cols = ['uid', ...BOOKING_COLS, 'submitted_by'];
+    const ph = cols.map((_, i) => `$${i + 1}`).join(', ');
+    const { rows } = await pool.query(
+      `INSERT INTO booking_details (${cols.map(c => `"${c}"`).join(', ')})
+       VALUES (${ph}) RETURNING id`,
+      [uid, ...bookingValues(clean), user.email]
+    );
+    logActivity(uid, 'booking_draft_saved', 'booking', user, { booking_id: rows[0].id });
+    return res.status(200).json({ success: true, id: rows[0].id, sent: false, draft: true });
+  }
+
+  // ── action: send (full) — writes a row.
   // For send, we additionally:
   //   - require buyer_email + at least one effective recipient
   //   - call SMTP after commit
@@ -538,7 +604,25 @@ module.exports = async (req, res) => {
   try {
     await client.query('BEGIN');
 
-    const { rows } = await client.query(
+    // If the form autosaved a draft, promote that row rather than inserting a
+    // second one for the same booking. A row that has already been mailed is
+    // deliberately excluded: sending again is a REBOOKING, and the earlier
+    // submission has to survive as history. (Editing a mailed booking in place
+    // is still possible via the draft save above.)
+    const draftId = Number(body.booking_id) || null;
+    if (draftId) {
+      const sets = BOOKING_COLS.map((c, i) => `"${c}" = $${i + 1}`).join(', ');
+      const upd = await client.query(
+        `UPDATE booking_details SET ${sets}, submitted_by = $${BOOKING_COLS.length + 1}, updated_at = NOW()
+          WHERE id = $${BOOKING_COLS.length + 2} AND uid = $${BOOKING_COLS.length + 3}
+            AND mail_sent_at IS NULL
+          RETURNING id`,
+        [...bookingValues(clean), user.email, draftId, uid]
+      );
+      if (upd.rows.length) insertedId = upd.rows[0].id;
+    }
+
+    const { rows } = insertedId ? { rows: [{ id: insertedId }] } : await client.query(
       `INSERT INTO booking_details (
          uid, buyer_salutation, buyer_name, co_buyer_name, buyer_email, co_buyer_email,
          consideration_amount, booking_amount_received,
