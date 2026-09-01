@@ -13,15 +13,16 @@ module.exports = async (req, res) => {
   const user = await requireAuth(req, res);
   if (!user) return;
 
-  const { society, bhk, area, city } = req.query;
+  const { society, bhk, area, city, fresh } = req.query;
   if (!society) return res.status(400).json({ success: false, error: 'society is required' });
 
   try {
-    const rows = await getFloorPlanRows();
+    const rows = await getFloorPlanRows({ force: fresh === '1' || fresh === 'true' });
     const matches = matchFloorPlans(rows, { society, bhk, area, city });
     return res.status(200).json({
       success: true,
       count: matches.length,
+      rowCount: rows.length,
       matches: matches.map(m => ({
         url: m.url, society: m.society, bhk: m.bhk, area: m.area,
         tower: m.tower, unit: m.unit,

@@ -2577,6 +2577,7 @@ async function openUpdateHomeModal(uid) {
   updateHomeState.floorPlanUrl = null;      // newly uploaded, pending publish
   updateHomeState.floorPlanCurrent = null;  // what the home already has
   updateHomeState.floorPlanSource = null;   // 'sheet' | 'upload'
+  updateHomeState.floorPlanNote = null;     // why there is (or isn't) a suggestion
 
   document.querySelectorAll('#updateHomeModal [data-uf]').forEach(el => { el.value = ''; });
   const laySelReset = document.querySelector('#updateHomeModal [data-uf="layoutId"]');
@@ -2609,6 +2610,7 @@ async function openUpdateHomeModal(uid) {
         bhk: extractBedrooms(row.configuration) || '',
         area: row.super_area || row.area_sqft || '',
         city: row.city || '',
+        fresh: '1',
       }), { credentials: 'include' }).then(r => r.json()).catch(e => ({ success: false, matches: [] })),
     ]);
     // Bail if the modal was closed or switched to another row during the fetch.
@@ -2620,13 +2622,24 @@ async function openUpdateHomeModal(uid) {
     updateHomeState.layouts = uhCollectLayouts(home);
     updateHomeState.floorPlanCurrent = uhFloorPlanFromHome(home);
 
-    // Sheet suggestion is a default too, so it follows the same rule as the rest:
-    // Archive homes only, and only when the home has no plan of its own. A live
-    // listing shows whatever it actually has; the operator can still upload one.
-    const sheetUrl = (planR && planR.matches && planR.matches[0] && planR.matches[0].url) || null;
-    if (uhShouldApplyDefaults(home) && !updateHomeState.floorPlanCurrent && sheetUrl) {
-      updateHomeState.floorPlanUrl = sheetUrl;
+    // The Floor Plans sheet is the curated source, so on an Archive home its
+    // match is offered even when the home already carries a plan — an unlisted
+    // home's existing photo is usually the stale one. Both are shown; publishing
+    // sends the suggestion, and the operator can drop it or upload their own.
+    const sheetHit = (planR && planR.matches && planR.matches[0]) || null;
+    if (uhShouldApplyDefaults(home) && sheetHit && sheetHit.url) {
+      updateHomeState.floorPlanUrl = sheetHit.url;
       updateHomeState.floorPlanSource = 'sheet';
+      updateHomeState.floorPlanNote =
+        `Sheet match: ${sheetHit.society || ''} ${sheetHit.bhk || '?'}BHK ${sheetHit.area || '?'} sqft`;
+    } else if (!uhShouldApplyDefaults(home)) {
+      updateHomeState.floorPlanNote = null;   // live listing: no suggestions at all
+    } else if (planR && planR.success === false) {
+      updateHomeState.floorPlanNote = 'Floor Plans sheet unavailable: ' + (planR.error || 'lookup failed');
+    } else {
+      updateHomeState.floorPlanNote =
+        `No match in the Floor Plans sheet for "${row.society_name || ''}" `
+        + `(${extractBedrooms(row.configuration) || '?'} BHK, ${row.super_area || row.area_sqft || '?'} sqft).`;
     }
     renderUhFloorPlan();
 
@@ -2725,29 +2738,39 @@ function uhFloorPlanFromHome(home) {
   return hit && hit.image ? hit.image : null;
 }
 
-// Shows the current plan, or the pending upload that will replace it on publish.
+// Shows the home's existing plan and any pending one (sheet suggestion or
+// upload) side by side, so the operator can compare before publishing. When
+// there is nothing to suggest, says why rather than rendering an empty box.
 function renderUhFloorPlan() {
   const el = $('#uhFloorPlan');
   if (!el) return;
-  const pending = updateHomeState.floorPlanUrl;
+
   const current = updateHomeState.floorPlanCurrent;
-  const url = pending || current;
-  if (!url) {
-    el.innerHTML = '<span class="field-val muted">No floor plan on this home yet.</span>';
-  } else {
-    el.innerHTML = `
-      <div style="display:flex;align-items:center;gap:10px;">
-        <img src="${esc(url)}" alt="Floor plan" data-uh-floorplan="${esc(url)}"
-             style="height:64px;width:auto;max-width:190px;object-fit:contain;border:1px solid #e5e7eb;border-radius:6px;cursor:zoom-in;background:#fff;">
-        <span style="font-size:12px;color:${pending ? '#b45309' : '#6b7280'};">
-          ${pending
-            ? (updateHomeState.floorPlanSource === 'sheet'
-                ? 'Suggested from the Floor Plans sheet — attaches on publish'
-                : 'Uploaded — replaces the current plan when you publish')
-            : 'Current floor plan'}
-        </span>
-      </div>`;
+  const pending = updateHomeState.floorPlanUrl;
+  const source = updateHomeState.floorPlanSource;
+  const note = updateHomeState.floorPlanNote;
+
+  const card = (url, title, tone) => `
+    <figure class="uh-fp-card">
+      <img src="${esc(url)}" alt="${esc(title)}" data-uh-floorplan="${esc(url)}" loading="lazy">
+      <figcaption class="uh-fp-cap ${tone}">${esc(title)}</figcaption>
+    </figure>`;
+
+  const cards = [];
+  if (current) {
+    cards.push(card(current, pending ? 'Current — will be replaced' : 'Current floor plan',
+                    pending ? 'is-stale' : ''));
   }
+  if (pending) {
+    cards.push(card(pending,
+      source === 'sheet' ? 'From sheet — attaches on publish' : 'Uploaded — attaches on publish',
+      'is-new'));
+  }
+
+  el.innerHTML = (cards.length ? `<div class="uh-fp-row">${cards.join('')}</div>` : '')
+    + (!cards.length ? '<span class="field-val muted">No floor plan on this home yet.</span>' : '')
+    + (note ? `<p class="uh-fp-note">${esc(note)}</p>` : '');
+
   const clearBtn = $('#uhFloorPlanClear');
   if (clearBtn) clearBtn.style.display = pending ? '' : 'none';
 }
@@ -3430,6 +3453,8 @@ async function publishUpdateHome() {
     // Drop a pending upload — the home's existing plan is untouched.
     if (e.target.id === 'uhFloorPlanClear') {
       updateHomeState.floorPlanUrl = null;
+      updateHomeState.floorPlanSource = null;
+      updateHomeState.floorPlanNote = null;
       const f = $('#uhFloorPlanFile'); if (f) f.value = '';
       const st = $('#uhFloorPlanStatus'); if (st) st.textContent = '';
       renderUhFloorPlan();

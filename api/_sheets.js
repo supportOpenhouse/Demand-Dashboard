@@ -65,8 +65,11 @@ async function fetchRows() {
   })).filter(x => x.society && x.url);
 }
 
-async function getFloorPlanRows() {
-  if (_cache && (Date.now() - _cache.at) < TTL_MS) return _cache.rows;
+// `force` skips the cache — the sheet is edited by hand, and a row added
+// moments ago would otherwise stay invisible for up to TTL_MS on a warm
+// instance. The modal passes it through as ?fresh=1.
+async function getFloorPlanRows({ force = false } = {}) {
+  if (!force && _cache && (Date.now() - _cache.at) < TTL_MS) return _cache.rows;
   if (_inflight) return _inflight;
   _inflight = fetchRows()
     .then(rows => { _cache = { at: Date.now(), rows }; return rows; })

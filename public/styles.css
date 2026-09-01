@@ -1129,3 +1129,16 @@ body.role-viewer .col-contact { display: none; }
 /* Keep grid items from stretching to the tallest row — this is what blew up the
    Society select's height when the panel lived inside the grid. */
 #updateHomeModal .form-grid { align-items: start; }
+
+/* ── Update Home: floor plan cards ───────────────────────────────────────── */
+.uh-fp-row { display: flex; flex-wrap: wrap; gap: 12px; }
+.uh-fp-card { margin: 0; display: grid; gap: 4px; max-width: 220px; min-width: 0; }
+.uh-fp-card img {
+  height: 78px; width: auto; max-width: 100%;
+  object-fit: contain; background: #fff;
+  border: 1px solid #e5e7eb; border-radius: 6px; cursor: zoom-in;
+}
+.uh-fp-cap { font-size: 11px; line-height: 1.4; color: #6b7280; }
+.uh-fp-cap.is-new { color: #b45309; font-weight: 600; }
+.uh-fp-cap.is-stale { color: #9ca3af; text-decoration: line-through; }
+.uh-fp-note { margin: 8px 0 0; font-size: 12px; line-height: 1.5; color: #6b7280; }
