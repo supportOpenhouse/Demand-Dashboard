@@ -3130,6 +3130,13 @@ function applyUhDefaults(row, home) {
   // so the two figures agree, but fall back to our own computed total. Reading
   // only the field meant that whenever the price default didn't land — a manager
   // with no listing price, say — the rate silently never computed either.
+  //
+  // The rate is ALWAYS recomputed, never gap-filled. It is derived from the
+  // total, so leaving upstream's value beside a total we just wrote would put
+  // two numbers on screen that contradict each other. It also sidesteps the
+  // placeholders Django seeds an unlisted home with: `total` 0 and `per_sq_ft`
+  // 10000 (the model default — confirmed on live Archive homes), neither of
+  // which is a real figure.
   const fieldTotal = Number(uhFieldValue('priceTotal'));
   const totalNow = (Number.isFinite(fieldTotal) && fieldTotal > 0) ? fieldTotal : ourTotal;
   if (totalNow != null && Number.isFinite(totalNow) && totalNow > 0
@@ -3137,7 +3144,7 @@ function applyUhDefaults(row, home) {
     const affordableGurgaon = /gurgaon|gurugram/i.test(String(row.city || ''))
       && (row.affordable === true || String(row.affordable).toLowerCase() === 'true');
     const denominator = affordableGurgaon ? superArea * 1.3 : superArea;
-    setUfIfBlankOrZero('pricePerSqFt', Math.round(totalNow / denominator));
+    setUf('pricePerSqFt', Math.round(totalNow / denominator));
   }
 
   const parking = uhParseParking(row.parking);
