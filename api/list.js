@@ -1,5 +1,6 @@
 const { pool, getPropertiesColumns, hasCol, masterSocietiesHasAffordable,
-        masterSocietiesHasMicroMarket, SUPPLY_READY_STATUSES } = require('./_db');
+        masterSocietiesHasMicroMarket, SUPPLY_READY_STATUSES,
+        KEY_HANDOVER_DONE_STATUS } = require('./_db');
 const { requireAuth, setCors } = require('./_auth');
 
 // Typed projection list shared by both sides of the UNION ALL. Each tuple is:
@@ -83,6 +84,11 @@ const UNIFIED_COLS = [
 
   ['documents_available',       'documents_available',       'documents_available',       'JSONB'],
   ['ama_date',                  'ama_date',                  'ama_date',                  'DATE'],
+  // Form 9 (Key Handover Acknowledgement) submission stamp, written by the supply
+  // forms app. This — not the presence of a date — is what makes key handover
+  // genuinely "Done": key_handover_date alone can be a tentative Form 3 value or a
+  // manual entry. Real-side only; legacy rows never pass through the supply forms.
+  ['final_submitted_at',        null,                        'final_submitted_at',        'TIMESTAMPTZ'],
 
   ['additional_images',         'additional_images',         'additional_images',         'JSONB'],
   ['video_link',                'video_link',                'video_link',                'TEXT'],
@@ -128,6 +134,91 @@ function buildLegacyProjection() {
     `'legacy'::TEXT AS origin`,
   );
   return cols.join(',\n        ');
+}
+
+// Key handover → occupancy sync.
+//
+// Once the keys are in Openhouse custody, any Tenant / Owner Staying label is
+// stale and flips to 'Vacant'. Handover counts as real on either signal — a Form 9
+// (Key Handover Acknowledgement) submission, or the supply pipeline reaching
+// 'Key Handover Done' — matching keyHandoverDone() in the frontend. Form 9 alone
+// would miss the ~64 fully-progressed units that predate / bypassed the form and
+// leave them reading "Done" while still labelled Tenant.
+//
+// The two labels are NOT treated alike, because the confidence differs:
+//   Tenant       → always flips. A tenanted unit whose keys reached Openhouse
+//                  means the tenant left; there is no ambiguous case.
+//   Owner Staying → flips only when owner_will_vacate holds an explicit answer
+//                  other than 'No'. 'No' is Form 9's own carve-out (it sets the
+//                  handover date to the AMA date precisely because no handover
+//                  happens). NULL/'' is the important one: owner_will_vacate was
+//                  added to `properties` by a later ALTER, so older rows never
+//                  answered it — and guessing 'Vacant' for an owner who may still
+//                  be living there sends the demand team to visit an occupied
+//                  home. Those units keep their label for a human to resolve.
+//
+// Runs on every list load rather than through a hook, following the same
+// self-healing pattern as the demand_details materialization above — this app
+// has no callback from the supply forms. It is cheap and idempotent: the WHERE
+// clause only matches rows still needing a flip, so after the first pass it
+// matches nothing. Each flip is audit-logged with an `auto` tag so it is
+// distinguishable from a human edit.
+//
+// Legacy rows are untouched — legacy_properties has no Form 9 stamp.
+async function syncKeyHandoverVacancy(allCols) {
+  const required = ['final_submitted_at', 'key_handover_date', 'owner_will_vacate',
+                    'possession_status', 'occupancy_status', 'updated_at'];
+  if (!required.every(c => hasCol(allCols, c))) return;
+
+  try {
+    await pool.query(`
+      WITH cand AS MATERIALIZED (
+        SELECT p.uid,
+               TRIM(COALESCE(p.possession_status, '')) AS old_poss,
+               TRIM(COALESCE(p.occupancy_status,  '')) AS old_occ,
+               (TRIM(COALESCE(p.owner_will_vacate, '')) NOT IN ('', 'No')) AS owner_vacating
+        FROM properties p
+        LEFT JOIN ap_details apd ON apd.uid = p.uid
+        WHERE (p.final_submitted_at IS NOT NULL OR apd.status = $1)
+          AND p.key_handover_date IS NOT NULL
+          AND (
+            TRIM(COALESCE(p.possession_status, '')) = 'Tenant'
+            OR TRIM(COALESCE(p.occupancy_status, '')) = 'Tenant'
+            OR (TRIM(COALESCE(p.owner_will_vacate, '')) NOT IN ('', 'No')
+                AND (TRIM(COALESCE(p.possession_status, '')) = 'Owner Staying'
+                  OR TRIM(COALESCE(p.occupancy_status,  '')) = 'Owner Staying'))
+          )
+      ), upd AS (
+        UPDATE properties p SET
+          possession_status = CASE
+            WHEN c.old_poss = 'Tenant' THEN 'Vacant'
+            WHEN c.old_poss = 'Owner Staying' AND c.owner_vacating THEN 'Vacant'
+            ELSE p.possession_status END,
+          occupancy_status = CASE
+            WHEN c.old_occ = 'Tenant' THEN 'Vacant'
+            WHEN c.old_occ = 'Owner Staying' AND c.owner_vacating THEN 'Vacant'
+            ELSE p.occupancy_status END,
+          updated_at = NOW()
+        FROM cand c WHERE p.uid = c.uid
+        RETURNING p.uid
+      )
+      INSERT INTO activity_logs (uid, action, category, actor_email, actor_name, details, dashboard)
+      SELECT c.uid, 'property_edit', 'supply_field', '', 'System (key handover sync)',
+             jsonb_build_object(
+               'auto', 'key_handover_vacant_sync',
+               'table', 'properties',
+               'possession_status_from', c.old_poss,
+               'occupancy_status_from',  c.old_occ,
+               'to', 'Vacant'
+             ),
+             'Demand Dashboard'
+      FROM cand c
+    `, [KEY_HANDOVER_DONE_STATUS]);
+  } catch (err) {
+    // Never let the sync break the listing — the dashboard still renders the
+    // pre-flip values and the next load retries.
+    console.warn('[syncKeyHandoverVacancy]', err.message);
+  }
 }
 
 module.exports = async (req, res) => {
@@ -308,6 +399,8 @@ module.exports = async (req, res) => {
       INSERT INTO demand_details (uid)
       SELECT u.uid FROM unified u
       ON CONFLICT (uid) DO NOTHING`, baseParams);
+
+    await syncKeyHandoverVacancy(allCols);
 
     // Total count across both halves, with filters applied.
     const countSql = `${baseCte}

@@ -69,14 +69,28 @@ const ALLOWED_FIELDS = [
 
 const MAX_TEXT_LEN = 500;
 
+// Fields a manager may not touch. key_handover_date is owned by Form 9 (Key
+// Handover Acknowledgement) in the supply forms app — a value typed here would
+// contradict the form's record and, via the auto-vacant rule below, silently
+// re-label occupancy. Admins keep the ability as a correction path.
+const ADMIN_ONLY_FIELDS = ['key_handover_date'];
+
 // Auto-derivation for the per-unit "Current Occupancy" labels.
 // Trigger: an actual change to key_handover_date — once the unit's keys are
 // in Openhouse custody, any prior Tenant/Owner Staying label is no longer
 // accurate, so we flip the affected fields to 'Vacant'. We only re-label
 // values already in the canonical {Vacant, Tenant, Owner Staying} set —
 // other values (society-level "Ready to Move" etc.) are left untouched.
+//
+// 'Tenant' always flips. 'Owner Staying' flips only when owner_will_vacate holds
+// an explicit answer other than 'No' — 'No' is Form 9's own carve-out (no handover
+// actually happens), and NULL/'' means the question was never answered, so flipping
+// would guess that an owner who may still be living there has left. Mirrors
+// syncKeyHandoverVacancy() in /api/list, which is now the primary driver of this
+// flip; the rule stays here for the admin correction path.
 const AUTO_VACANT_FIELDS  = ['possession_status', 'occupancy_status'];
-const AUTO_VACANT_FROM    = ['Vacant', 'Tenant', 'Owner Staying'];
+const AUTO_VACANT_ALWAYS  = 'Tenant';
+const AUTO_VACANT_IF_SURE = 'Owner Staying';
 
 // Cache: which columns exist on legacy_properties. We own this schema, so the
 // list is stable per cold start. Mirrors the getPropertiesColumns pattern.
@@ -174,6 +188,14 @@ module.exports = async (req, res) => {
     return res.status(400).json({ success: false, error: 'No valid fields to update' });
   }
 
+  const blocked = Object.keys(updates).filter(f => ADMIN_ONLY_FIELDS.includes(f));
+  if (blocked.length && user.role !== 'admin') {
+    return res.status(403).json({
+      success: false,
+      error: 'Key Handover Date is set by Form 9 (Key Handover Acknowledgement) and can only be corrected by an admin',
+    });
+  }
+
   // Determine which table owns this uid.
   const targetTable = await findUidTable(uid);
   if (!targetTable) {
@@ -247,16 +269,24 @@ module.exports = async (req, res) => {
     if (diff.key_handover_date && diff.key_handover_date.to) {
       const autoCols = AUTO_VACANT_FIELDS.filter(c => tableCols.includes(c));
       if (autoCols.length) {
-        const sel = autoCols.map(c => `"${c}"`).join(', ');
+        // owner_will_vacate is a supply-forms column, so it may be absent on
+        // legacy_properties — read it only where it exists.
+        const hasVacateCol = tableCols.includes('owner_will_vacate');
+        const sel = [...autoCols, ...(hasVacateCol ? ['owner_will_vacate'] : [])]
+          .map(c => `"${c}"`).join(', ');
         const curRes = await client.query(
           `SELECT ${sel} FROM ${targetTable} WHERE uid = $1`,
           [uid]
         );
         const cur = curRes.rows[0] || {};
+        // Only an explicit answer other than 'No' counts as "the owner is leaving".
+        const ownerVacating = hasVacateCol
+          && !['', 'No'].includes(String(cur.owner_will_vacate ?? '').trim());
         for (const c of autoCols) {
           const cv = (cur[c] == null) ? '' : String(cur[c]).trim();
-          // Skip if not in the trigger set, OR already Vacant (no-op per spec).
-          if (!AUTO_VACANT_FROM.includes(cv) || cv === 'Vacant') continue;
+          const flip = cv === AUTO_VACANT_ALWAYS
+            || (cv === AUTO_VACANT_IF_SURE && ownerVacating);
+          if (!flip) continue;
           diff[c] = { from: cur[c], to: 'Vacant' };
           autoDerived.add(c);
         }

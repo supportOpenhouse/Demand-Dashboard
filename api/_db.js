@@ -22,6 +22,13 @@ const DEMAND_STATUSES = [
 // Sourced from ap_details.status (replaces the deleted v_property_status view).
 const SUPPLY_READY_STATUSES = ['AMA Signed', 'Key Handover Done'];
 
+// The supply pipeline's terminal handover state. Treated as equivalent to a Form 9
+// submission when deciding whether key handover is genuinely "Done": ~26% of units
+// that reached this status predate / bypassed Form 9, but the status itself is a
+// demanding gate (deal transfer, docs reviewed, draft AMA, seller approval, AMA
+// date passed AND handover date passed), so it is a credible second signal.
+const KEY_HANDOVER_DONE_STATUS = 'Key Handover Done';
+
 // Idempotent — runs on every cold start. Owns demand_users and demand_details only.
 // Reads activity_logs (created by the Acquired dashboard) but does not own its schema.
 const INIT_SQL = `
@@ -367,4 +374,5 @@ module.exports = {
   projectIfExists,
   DEMAND_STATUSES,
   SUPPLY_READY_STATUSES,
+  KEY_HANDOVER_DONE_STATUS,
 };

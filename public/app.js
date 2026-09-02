@@ -766,10 +766,25 @@ function renderExpand(r) {
       ${acqPriceField}
       ${listingPriceField}
       ${isViewer() ? '' : field('Date of AMA', fmtDate(r.ama_date))}
-      ${field('Key Handover Status', r.key_handover_date ? 'Done' : 'Pending', r.key_handover_date ? 'green' : 'amber')}
+      ${(() => {
+        const done = keyHandoverDone(r);
+        // Pending covers "date present but Form 9 not submitted yet" — the tooltip
+        // says so, since a filled-in date otherwise makes Pending look like a bug.
+        const tip = (!done && r.key_handover_date && r.origin !== 'legacy')
+          ? 'Date recorded, but handover is not confirmed: Form 9 (Key Handover '
+            + 'Acknowledgement) has not been submitted and the supply pipeline has '
+            + 'not reached Key Handover Done.'
+          : '';
+        return field('Key Handover Status', done ? 'Done' : 'Pending',
+                     done ? 'green' : 'amber', tip);
+      })()}
       ${isViewer()
         ? ''
-        : editableDate('Key Handover Date', 'key_handover_date', r.key_handover_date, { uid: r.uid })}
+        : editableDate('Key Handover Date', 'key_handover_date', r.key_handover_date, {
+            uid: r.uid,
+            adminOnly: true,
+            readOnlyTooltip: 'Set by Form 9 (Key Handover Acknowledgement) in the supply forms. Admin-only correction.',
+          })}
       <span data-occupancy-for="${esc(r.uid)}">${field('Current Occupancy', r.possession_status || r.occupancy_status)}</span>
       ${field('Furnishing Status', r.furnishing)}
       ${field('Furnishing Items', formatList(r.furnishing_details))}
@@ -895,14 +910,19 @@ function editableText(label, fieldName, value, opts) {
 }
 
 function editableDate(label, fieldName, value, opts) {
-  const { uid } = opts;
+  const { uid, adminOnly, readOnlyTooltip } = opts;
   // Normalize value to YYYY-MM-DD for the picker
   let dateVal = '';
   if (value) {
     const d = new Date(value);
     if (!isNaN(d.getTime())) dateVal = d.toISOString().slice(0, 10);
   }
-  if (!canEdit()) return field(label, value ? fmtDate(value) : '');
+  // adminOnly downgrades managers to the read-only view, with a tooltip
+  // explaining where the value actually comes from.
+  if (!canEdit() || (adminOnly && !isAdmin())) {
+    return field(label, value ? fmtDate(value) : '',
+                 readOnlyTooltip ? 'tooltipped' : '', readOnlyTooltip);
+  }
   // type="text" so flatpickr can manage display via altInput. The original
   // input is hidden by flatpickr but stays the canonical YYYY-MM-DD source
   // (which the delegated change handler + /api/property-edits expect). The
@@ -960,6 +980,26 @@ function field(label, value, cls, tooltip) {
       <div class="field-lbl">${esc(label)}${tipHtml}</div>
       <div class="field-val ${klass}">${isEmpty ? '—' : esc(v)}</div>
     </div>`;
+}
+
+// Key Handover "Done" needs a real handover signal, not just a date — a date on
+// its own may be the tentative value captured back in Form 3, or a manual admin
+// correction. Two signals qualify:
+//   1. final_submitted_at — Form 9 (Key Handover Acknowledgement) was submitted.
+//   2. supply_status 'Key Handover Done' — the supply pipeline's terminal state,
+//      which additionally requires deal transfer, docs reviewed, draft AMA,
+//      seller approval and the AMA date passed.
+// Form 9 alone would be too strict: ~64 fully-progressed units predate or bypassed
+// the form and would wrongly read Pending. Requiring only a date would be too lax:
+// 23 units sitting at AMA Signed carry a date and are genuinely not handed over.
+// Legacy rows never pass through the supply forms, so for them the date is the
+// only signal available.
+// Kept in sync with syncKeyHandoverVacancy() in api/list.js, which flips occupancy
+// on the same definition.
+function keyHandoverDone(r) {
+  if (r.origin === 'legacy') return !!r.key_handover_date;
+  if (!r.key_handover_date) return false;
+  return !!r.final_submitted_at || r.supply_status === 'Key Handover Done';
 }
 
 function extractBedrooms(config) {
@@ -1272,8 +1312,39 @@ document.addEventListener('change', (e) => {
     syncAvailabilityUI(uid, el.value);
   }
 
+  // Key Handover Date already carries a value: warn before overwriting. The date
+  // normally comes from Form 9 (Key Handover Acknowledgement), so replacing one
+  // puts this dashboard out of step with the form's record — and, through the
+  // auto-vacant rule, can re-label the unit's occupancy. Admin-only field, so
+  // this confirm is the last guard before an intentional correction.
+  if (el.dataset.field === 'key_handover_date') {
+    const row = state.rows.find(x => x.uid === uid);
+    const prev = row ? row.key_handover_date : null;
+    if (prev && !confirm(
+      'Overwrite the existing Key Handover Date?\n\n' +
+      `Current value: ${fmtDate(prev)}\n\n` +
+      'This date is normally set by Form 9 (Key Handover Acknowledgement) in the supply forms. ' +
+      'Changing it here will not update that form, and it may flip the unit\'s occupancy to Vacant. ' +
+      'The change is recorded in the activity log against your account.'
+    )) {
+      // Put the picker back so the UI never shows a value that was not saved.
+      const revertTo = isoDateOnly(prev);
+      if (el._flatpickr) el._flatpickr.setDate(revertTo || null, false);
+      else el.value = revertTo;
+      return;
+    }
+  }
+
   saveField(uid, el);
 });
+
+// YYYY-MM-DD for a date value, or '' when absent/unparseable — the format both
+// flatpickr and /api/property-edits expect.
+function isoDateOnly(v) {
+  if (!v) return '';
+  const d = new Date(v);
+  return isNaN(d.getTime()) ? '' : d.toISOString().slice(0, 10);
+}
 
 // Update all DOM nodes tied to a uid's availability_status: header select color,
 // main row pill, row-level Dead highlight, and Submit Details button visibility.
@@ -1500,7 +1571,7 @@ function exportCsv() {
     ['Date of AMA', r => fmtDate(r.ama_date)],
     ['Owner Name', 'owner_name'],
     ['Owner Physical Location', 'seller_location'],
-    ['Key Handover Status', r => r.key_handover_date ? 'Done' : 'Pending'],
+    ['Key Handover Status', r => keyHandoverDone(r) ? 'Done' : 'Pending'],
     ['Key Handover Date', r => fmtDate(r.key_handover_date)],
     ['Documents Available', r => formatList(r.documents_available)],
     ['Loan Status', r => r.loan_status || (r.outstanding_loan ? 'Active' : 'No Loan')],
