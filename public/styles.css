@@ -1169,6 +1169,14 @@ body.role-viewer .col-contact { display: none; }
   .cp-lookup-or { display: none; }
 }
 .cp-lookup-or { font-size: 12px; color: #9ca3af; }
+
+/* The code/phone placeholders are format examples, not instructions — keep them
+   faint so they read as a hint and never as a filled-in value. */
+#cpLookupCode::placeholder,
+#cpLookupPhone::placeholder {
+  color: #dfe3e8;
+  opacity: 1;            /* Firefox dims placeholders by default; we set our own */
+}
 .cp-lookup-status { font-size: 12px; line-height: 1.5; color: #6b7280; min-height: 1em; }
 .cp-lookup-status.is-ok { color: #166534; font-weight: 600; }
 .cp-lookup-status.is-warn { color: #b45309; }
