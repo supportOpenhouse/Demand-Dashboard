@@ -1786,9 +1786,17 @@ function stopBookingAutosave() {
   _draftTimer = null;
 }
 
-async function saveBookingDraft({ quiet = true } = {}) {
-  if (!bookingState.uid) return;
-  if (_draftInFlight) return;               // a save is already covering this edit
+let _draftChain = Promise.resolve();
+
+// Queue behind any save already running rather than skipping — dropping a save
+// loses whatever was typed since the one in flight started.
+function saveBookingDraft(opts = {}) {
+  _draftChain = _draftChain.then(() => doSaveBookingDraft(opts)).catch(() => {});
+  return _draftChain;
+}
+
+async function doSaveBookingDraft({ quiet = true } = {}) {
+  if (!bookingState.uid) return false;
   _draftInFlight = true;
   try {
     const form = collectBookingForm();
@@ -1810,16 +1818,28 @@ async function saveBookingDraft({ quiet = true } = {}) {
     if (r.ok && data.success && data.id) {
       bookingState.draftId = data.id;       // subsequent saves update this row
       _draftDirty = false;
+      markBookingSaved();
       if (!quiet) showToast('Draft saved', 'success');
-    } else if (!quiet) {
-      showToast(data.error || 'Could not save draft', 'error');
+      return true;
     }
+    if (!quiet) showToast(data.error || 'Could not save draft', 'error');
+    return false;
   } catch (e) {
     // Autosave is best-effort: a dropped save must never block data entry.
     if (!quiet) showToast('Could not save draft: ' + e.message, 'error');
+    return false;
   } finally {
     _draftInFlight = false;
   }
+}
+
+// Timestamp in the footer so a save is visibly confirmed, whether it came from
+// the button, a step change, or the ticker.
+function markBookingSaved() {
+  const hint = $('#bookingSaveHint');
+  if (!hint) return;
+  hint.textContent = 'Saved ' + new Date().toLocaleTimeString();
+  hint.classList.add('is-saved');
 }
 
 // Called on every edit: flag the change and let the 10s ticker pick it up.
@@ -2518,10 +2538,6 @@ function flushPendingBookingInputs() {
       saveBookingDraft({ quiet: false }).finally(() => {
         btn.disabled = false;
         btn.textContent = label;
-        if (hint) {
-          hint.textContent = bookingState.draftId ? 'Saved ' + new Date().toLocaleTimeString() : '';
-          hint.classList.toggle('is-saved', !!bookingState.draftId);
-        }
       });
       return;
     }
@@ -2547,7 +2563,10 @@ function flushPendingBookingInputs() {
           coBuyerEmailEl?.focus();
           return;
         }
-        saveBookingDraft({ quiet: true });
+        // Persist the CP lookup + recipients before leaving page 1.
+        saveBookingDraft({ quiet: true }).then(ok => {
+          if (!ok) showToast('Could not save the CP details — check your connection', 'error');
+        });
         goToBookingStep(2);
       }
     }
