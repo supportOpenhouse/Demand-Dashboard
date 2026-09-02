@@ -1769,6 +1769,26 @@ function cpIdentity(email, code) {
   };
 }
 
+// Source now leads page 1 and decides whether a channel partner is involved at
+// all. Direct means there is no CP, so the lookup is hidden rather than blocking
+// a booking that can never satisfy it.
+function isDirectDeal() {
+  return currentSource() === 'Direct';
+}
+
+function applyDirectDeal(direct) {
+  const block = $('.cp-lookup');
+  if (block) block.classList.toggle('is-direct', direct);
+  if (direct) {
+    bookingState.cpId = null;
+    ['cpLookupCode', 'cpLookupPhone', 'cpName', 'cpCompany']
+      .forEach(id => { const el = document.getElementById(id); if (el) el.value = ''; });
+    const m = $('#cpLookupMatches'); if (m) { m.hidden = true; m.innerHTML = ''; }
+    setCpFieldsLocked(true);
+    cpStatus('');
+  }
+}
+
 function currentCpIdentity() {
   return cpIdentity(bookingState.brokers[0], (($('#cpLookupCode') || {}).value) || '');
 }
@@ -1935,6 +1955,8 @@ function resetCpLookup() {
 // Fill the form from one resolved CP.
 function applyCpMatch(cp) {
   bookingState.cpId = cp.id;
+  const src = document.querySelector('#bookingModal [data-bf="source"]');
+  if (src && src.value !== 'CP') { src.value = 'CP'; applySource('CP'); }
   const set = (id, v) => { const el = document.getElementById(id); if (el) el.value = v == null ? '' : v; };
   set('cpLookupCode', cp.cpCode);
   set('cpLookupPhone', cp.phone);
@@ -2049,6 +2071,9 @@ async function openBookingModal(uid) {
   bookingState.cpMatches = [];
   bookingState.draftId = null;
   bookingState.loadedCp = null;
+  const srcEl = document.querySelector('#bookingModal [data-bf="source"]');
+  if (srcEl) srcEl.value = '';
+  applyDirectDeal(false);
   _draftDirty = false;
   startBookingAutosave();
   resetCpLookup();
@@ -2160,6 +2185,9 @@ async function openBookingModal(uid) {
     bookingState.draftId = l.id != null ? l.id : null;
     bookingState.loadedCp = (l.selling_cp_email || l.selling_cp_code)
       ? cpIdentity(l.selling_cp_email, l.selling_cp_code) : null;
+    // Source is stored on the row, so reopening restores whether this booking
+    // involved a CP at all.
+    if (l.source) { setBF('source', l.source); applySource(l.source); }
     setBF('buyer_name', l.buyer_name);
     setBF('buyer_email', l.buyer_email);
     setBF('co_buyer_name', l.co_buyer_name);
@@ -2337,6 +2365,12 @@ function recomputeSplitTwo() {
 }
 
 // Current Source select value ('CP' | 'Direct'), defaulting to 'CP'.
+// The raw selection, empty until the operator picks one — Next requires it.
+function currentSourceRaw() {
+  const el = document.querySelector('#bookingModal [data-bf="source"]');
+  return (el && el.value) || '';
+}
+
 function currentSource() {
   const el = document.querySelector('#bookingModal [data-bf="source"]');
   return (el && el.value) || 'CP';
@@ -2352,6 +2386,7 @@ function clearBF(field) {
 // the CP-only payment-schedule block, and the footer's CP buttons. In Direct mode
 // the CP-only fields are cleared so they aren't submitted.
 function applySource(mode) {
+  applyDirectDeal(mode === 'Direct');
   document.querySelectorAll('#bookingModal [data-source-show]').forEach(el => {
     el.style.display = el.dataset.sourceShow === mode ? '' : 'none';
   });
@@ -2607,12 +2642,23 @@ function flushPendingBookingInputs() {
           coBuyerEmailEl?.focus();
           return;
         }
+        if (!currentSourceRaw()) {
+          showToast('Select a Source — CP or Direct', 'error');
+          document.querySelector('#bookingModal [data-bf="source"]')?.focus();
+          return;
+        }
+        if (!isDirectDeal() && !bookingState.cpId) {
+          showToast('Look up the selling CP, or set Source to Direct', 'error');
+          $('#cpLookupCode')?.focus();
+          return;
+        }
+
         // A different CP on an existing row means a rebooking through another
         // partner: the previous buyer's terms are not ours to carry forward, so
         // page 2 is wiped before it is shown. The same CP keeps its details,
         // prefilled and editable.
-        const cpNow = currentCpIdentity();
-        if (bookingState.loadedCp && !isSameCp(bookingState.loadedCp, cpNow)) {
+        const cpNow = isDirectDeal() ? null : currentCpIdentity();
+        if (!isDirectDeal() && bookingState.loadedCp && !isSameCp(bookingState.loadedCp, cpNow)) {
           clearBookingDetailFields();
           showToast('Different CP — previous booking details cleared for a fresh booking', 'warn');
         }

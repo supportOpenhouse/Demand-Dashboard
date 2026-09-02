@@ -200,7 +200,15 @@
              email is captured by the existing "Add CP email" box below rather
              than a second field for the same thing. -->
         <div class="cp-lookup">
-          <div class="cp-lookup-title">Selling channel partner <span class="req">*</span></div>
+          <div class="fg cp-source-field">
+            <label for="bookingSource">Source <span class="req">*</span></label>
+            <select class="booking-input" data-bf="source" id="bookingSource">
+              <option value="">Select…</option>
+              <option value="CP">CP — sold through a channel partner</option>
+              <option value="Direct">Direct — no channel partner</option>
+            </select>
+          </div>
+          <div class="cp-lookup-title" id="cpLookupTitle">Selling channel partner</div>
           <div class="cp-lookup-keys">
             <input type="text" class="booking-input" id="cpLookupCode"
                    data-bf="selling_cp_code" placeholder="CP code — CP01234" autocomplete="off">
@@ -266,14 +274,7 @@
              Registry split) that feeds the separate broker mail; Direct only
              asks the amount to be collected and sends no broker mail. -->
         <div class="booking-source-block" style="margin-bottom:14px;">
-          <div class="form-grid" style="display:grid;grid-template-columns:200px 1fr;gap:12px;align-items:start;">
-            <div class="fg">
-              <label>Source <span class="req">*</span></label>
-              <select class="booking-input" data-bf="source">
-                <option value="CP">CP</option>
-                <option value="Direct">Direct</option>
-              </select>
-            </div>
+          <div class="form-grid" style="display:grid;grid-template-columns:1fr;gap:12px;align-items:start;">
             <div class="fg">
               <label>
                 <span data-source-label="CP">Brokerage to be paid (₹)</span>

@@ -1214,3 +1214,14 @@ body.role-viewer .col-contact { display: none; }
 /* Explicit draft-save feedback in the booking footer. */
 .booking-save-hint { font-size: 12px; color: #6b7280; }
 .booking-save-hint.is-saved { color: #166534; }
+
+/* Direct-deal escape from the CP lookup: a booking with no channel partner
+   must not be blocked by a lookup it can never satisfy. */
+.cp-source-field { max-width: 320px; }
+/* Direct deals have no CP, so the whole lookup is hidden rather than greyed —
+   there is nothing to look up and nothing to read. */
+.cp-lookup.is-direct #cpLookupTitle,
+.cp-lookup.is-direct .cp-lookup-keys,
+.cp-lookup.is-direct .cp-lookup-status,
+.cp-lookup.is-direct .cp-lookup-matches,
+.cp-lookup.is-direct .cp-lookup-fields { display: none; }
