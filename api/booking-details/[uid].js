@@ -53,7 +53,12 @@ const BOOKING_COLS = [
 const JSON_COLS = new Set(['recipients', 'broker_emails']);
 
 function bookingValues(clean) {
-  return BOOKING_COLS.map(c => JSON_COLS.has(c) ? JSON.stringify(clean[c] || []) : clean[c]);
+  return BOOKING_COLS.map(c => {
+    if (JSON_COLS.has(c)) return JSON.stringify(clean[c] || []);
+    // A value that failed validation was skipped, so it is undefined here.
+    // Postgres wants NULL, and a draft legitimately has empty fields.
+    return clean[c] === undefined ? null : clean[c];
+  });
 }
 const ISO_DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 
@@ -394,7 +399,13 @@ module.exports = async (req, res) => {
   }
 
   const { clean, errors } = validate(req.body);
-  if (errors.length) return res.status(400).json({ success: false, error: errors.join('; ') });
+  // Drafts are partial by definition — a half-typed email or an incomplete date
+  // is the normal state of a form being filled in, not an error. Autosave keeps
+  // whatever currently validates and drops the rest; the strict check still
+  // applies to preview and send, which is where completeness actually matters.
+  if (errors.length && action !== 'save') {
+    return res.status(400).json({ success: false, error: errors.join('; ') });
+  }
 
   // Load property for email body
   const property = await loadProperty(uid);

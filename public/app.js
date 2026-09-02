@@ -301,12 +301,19 @@ function bindUI() {
     });
   });
 
-  // Modals
+  // Modals. Closing the booking modal flushes any unsaved edit first — waiting
+  // for the next 10s tick would lose whatever was typed just before closing.
+  const closingBookingModal = (id) => {
+    if (id !== 'bookingModal') return;
+    if (_draftDirty) saveBookingDraft({ quiet: true });
+    stopBookingAutosave();
+  };
   $$('[data-close]').forEach(b => b.addEventListener('click', () => {
+    closingBookingModal(b.dataset.close);
     $('#' + b.dataset.close).classList.remove('open');
   }));
   $$('.modal-overlay').forEach(o => o.addEventListener('click', (e) => {
-    if (e.target === o) o.classList.remove('open');
+    if (e.target === o) { closingBookingModal(o.id); o.classList.remove('open'); }
   }));
   $('#addUserBtn').addEventListener('click', addUser);
   $('#forceLogoutAllBtn').addEventListener('click', forceLogoutAll);
@@ -1759,6 +1766,25 @@ const bookingState = {
 // does that — and it updates one row rather than inserting per keystroke.
 let _draftTimer = null;
 let _draftInFlight = false;
+let _draftTicker = null;
+let _draftDirty = false;
+
+// Save on a fixed 10s cadence while the modal is open, but only when something
+// actually changed — a ticker that writes an unchanged row every 10s is just
+// load. Edits set the dirty flag; a successful save clears it.
+function startBookingAutosave() {
+  stopBookingAutosave();
+  _draftTicker = setInterval(() => {
+    if (_draftDirty && !_draftInFlight) saveBookingDraft({ quiet: true });
+  }, 10000);
+}
+
+function stopBookingAutosave() {
+  clearInterval(_draftTicker);
+  _draftTicker = null;
+  clearTimeout(_draftTimer);
+  _draftTimer = null;
+}
 
 async function saveBookingDraft({ quiet = true } = {}) {
   if (!bookingState.uid) return;
@@ -1783,6 +1809,7 @@ async function saveBookingDraft({ quiet = true } = {}) {
     const data = await r.json();
     if (r.ok && data.success && data.id) {
       bookingState.draftId = data.id;       // subsequent saves update this row
+      _draftDirty = false;
       if (!quiet) showToast('Draft saved', 'success');
     } else if (!quiet) {
       showToast(data.error || 'Could not save draft', 'error');
@@ -1795,9 +1822,9 @@ async function saveBookingDraft({ quiet = true } = {}) {
   }
 }
 
+// Called on every edit: flag the change and let the 10s ticker pick it up.
 function scheduleBookingDraft() {
-  clearTimeout(_draftTimer);
-  _draftTimer = setTimeout(() => saveBookingDraft({ quiet: true }), 800);
+  _draftDirty = true;
 }
 
 // ── Selling channel partner lookup ──────────────────────────────────────────
@@ -1959,7 +1986,8 @@ async function openBookingModal(uid) {
   bookingState.cpId = null;
   bookingState.cpMatches = [];
   bookingState.draftId = null;
-  clearTimeout(_draftTimer);
+  _draftDirty = false;
+  startBookingAutosave();
   resetCpLookup();
   bookingState.fixedRecipients = [];
   bookingState.paymentMethods = [];
