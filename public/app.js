@@ -1754,8 +1754,50 @@ const bookingState = {
   previewMode: 'buyer', // 'buyer' | 'cp' — which mail Step 3 is showing/sending
   cpId: null,           // channel_partners.id once a CP is resolved
   draftId: null,        // booking_details row being autosaved into
+  loadedCp: null,       // { email, code } the loaded row's details belong to
   form: {},
 };
+
+// Who the booking belongs to, as both identifiers. Kept as a pair rather than a
+// single key because the two sides are not always populated the same way — a
+// stored row may carry only the email while the form carries only the code, and
+// collapsing that into one string makes the same CP look like a different one.
+function cpIdentity(email, code) {
+  return {
+    email: String(email || '').trim().toLowerCase() || null,
+    code: String(code || '').trim().toUpperCase() || null,
+  };
+}
+
+function currentCpIdentity() {
+  return cpIdentity(bookingState.brokers[0], (($('#cpLookupCode') || {}).value) || '');
+}
+
+// Compare on the code when both sides have one — it is the stable key — else on
+// the email. When there is nothing comparable, treat it as the SAME CP: this
+// decides whether to wipe the operator's booking terms, and an uncertain answer
+// must never destroy data.
+function isSameCp(a, b) {
+  if (!a || !b) return true;
+  if (a.code && b.code) return a.code === b.code;
+  if (a.email && b.email) return a.email === b.email;
+  return true;
+}
+
+// Wipe page 2 — the booking terms — leaving the CP block and recipients alone.
+// Used when the CP changes, because a rebooking through a different partner is
+// a different deal and the previous buyer's figures must not carry over.
+function clearBookingDetailFields() {
+  document.querySelectorAll('#bookingModal .booking-page[data-page="2"] [data-bf]')
+    .forEach(el => {
+      if (el.tagName === 'SELECT') el.selectedIndex = 0;
+      else el.value = '';
+    });
+  bookingState.payMode = 'single';
+  applyPayMode('single');
+  applyBrokerageTiming();
+  refreshAllAmountHints();
+}
 
 // ── Draft autosave ──────────────────────────────────────────────────────────
 // The booking used to reach the database only when the mail was sent, so a
@@ -2006,6 +2048,7 @@ async function openBookingModal(uid) {
   bookingState.cpId = null;
   bookingState.cpMatches = [];
   bookingState.draftId = null;
+  bookingState.loadedCp = null;
   _draftDirty = false;
   startBookingAutosave();
   resetCpLookup();
@@ -2115,6 +2158,8 @@ async function openBookingModal(uid) {
   if (data.latest) {
     const l = data.latest;
     bookingState.draftId = l.id != null ? l.id : null;
+    bookingState.loadedCp = (l.selling_cp_email || l.selling_cp_code)
+      ? cpIdentity(l.selling_cp_email, l.selling_cp_code) : null;
     setBF('buyer_name', l.buyer_name);
     setBF('buyer_email', l.buyer_email);
     setBF('co_buyer_name', l.co_buyer_name);
@@ -2562,7 +2607,18 @@ function flushPendingBookingInputs() {
           coBuyerEmailEl?.focus();
           return;
         }
-        // Persist the CP lookup + recipients before leaving page 1.
+        // A different CP on an existing row means a rebooking through another
+        // partner: the previous buyer's terms are not ours to carry forward, so
+        // page 2 is wiped before it is shown. The same CP keeps its details,
+        // prefilled and editable.
+        const cpNow = currentCpIdentity();
+        if (bookingState.loadedCp && !isSameCp(bookingState.loadedCp, cpNow)) {
+          clearBookingDetailFields();
+          showToast('Different CP — previous booking details cleared for a fresh booking', 'warn');
+        }
+        bookingState.loadedCp = cpNow;   // don't re-clear on the next Next
+
+        // Persist the CP block, and the cleared terms, before leaving page 1.
         saveBookingDraft({ quiet: true }).then(ok => {
           if (!ok) showToast('Could not save the CP details — check your connection', 'error');
         });
