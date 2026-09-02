@@ -2531,7 +2531,6 @@ function flushPendingBookingInputs() {
     // Next
     if (e.target.id === 'bookingSaveBtn') {
       const btn = e.target;
-      const hint = $('#bookingSaveHint');
       btn.disabled = true;
       const label = btn.textContent;
       btn.textContent = 'Saving…';
