@@ -615,20 +615,29 @@ const handleBookingRequest = async (req, res) => {
   try {
     await client.query('BEGIN');
 
-    // If the form autosaved a draft, promote that row rather than inserting a
-    // second one for the same booking. A row that has already been mailed is
-    // deliberately excluded: sending again is a REBOOKING, and the earlier
-    // submission has to survive as history. (Editing a mailed booking in place
-    // is still possible via the draft save above.)
+    // ONE booking row per property. A resubmission — including a rebooking
+    // after a cancellation — updates the existing row rather than adding
+    // another, so `booking_details` stays one-row-per-uid and queries like
+    // "which CP sold this" return a single answer.
+    //
+    // Trade-off, stated plainly: the previous submission's values are
+    // overwritten and are not recoverable from this table. The audit trail for
+    // a resubmission lives in activity_logs (booking_sent / booking_resubmitted),
+    // not here.
     const draftId = Number((req.body || {}).booking_id) || null;
-    if (draftId) {
+    const existing = draftId
+      ? { rows: [{ id: draftId }] }
+      : await client.query(
+          `SELECT id FROM booking_details WHERE uid = $1 ORDER BY created_at DESC LIMIT 1`,
+          [uid]
+        );
+    if (existing.rows.length) {
       const sets = BOOKING_COLS.map((c, i) => `"${c}" = $${i + 1}`).join(', ');
       const upd = await client.query(
         `UPDATE booking_details SET ${sets}, submitted_by = $${BOOKING_COLS.length + 1}, updated_at = NOW()
           WHERE id = $${BOOKING_COLS.length + 2} AND uid = $${BOOKING_COLS.length + 3}
-            AND mail_sent_at IS NULL
           RETURNING id`,
-        [...bookingValues(clean), user.email, draftId, uid]
+        [...bookingValues(clean), user.email, existing.rows[0].id, uid]
       );
       if (upd.rows.length) insertedId = upd.rows[0].id;
     }
