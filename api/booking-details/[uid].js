@@ -312,7 +312,7 @@ async function loadProperty(uid) {
   return null;
 }
 
-module.exports = async (req, res) => {
+const handleBookingRequest = async (req, res) => {
   setCors(res);
   if (req.method === 'OPTIONS') return res.status(200).end();
 
@@ -551,7 +551,7 @@ module.exports = async (req, res) => {
   //     unit to Booked — only an actually-sent booking means that.
   // A row that has already been mailed is immutable here.
   if (action === 'save') {
-    const draftId = Number(body.booking_id) || null;
+    const draftId = Number((req.body || {}).booking_id) || null;
     const sets = BOOKING_COLS.map((c, i) => `"${c}" = $${i + 1}`).join(', ');
     if (draftId) {
       const { rows } = await pool.query(
@@ -620,7 +620,7 @@ module.exports = async (req, res) => {
     // deliberately excluded: sending again is a REBOOKING, and the earlier
     // submission has to survive as history. (Editing a mailed booking in place
     // is still possible via the draft save above.)
-    const draftId = Number(body.booking_id) || null;
+    const draftId = Number((req.body || {}).booking_id) || null;
     if (draftId) {
       const sets = BOOKING_COLS.map((c, i) => `"${c}" = $${i + 1}`).join(', ');
       const upd = await client.query(
@@ -733,4 +733,17 @@ module.exports = async (req, res) => {
   });
 
   return res.status(200).json({ success: true, id: insertedId, sent: true });
+};
+
+module.exports = async (req, res) => {
+  try {
+    return await handleBookingRequest(req, res);
+  } catch (err) {
+    // Without this an unhandled throw rejects the async handler and Vercel
+    // reports only FUNCTION_INVOCATION_FAILED, with no clue which line failed.
+    console.error('[/api/booking-details] unhandled:', err && err.stack || err);
+    if (!res.headersSent) {
+      res.status(500).json({ success: false, error: err && err.message || 'Server error' });
+    }
+  }
 };
