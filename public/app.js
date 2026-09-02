@@ -2323,6 +2323,10 @@ function refreshBookingFooter() {
   $('#bookingBackBtn').style.display = step === 1 ? 'none' : '';
   $('#bookingNextBtn').style.display = step === 1 ? '' : 'none';
 
+  // Explicit save — the autosave still runs, but this gives a definite "it is
+  // stored" moment before sending rather than trusting a timer.
+  $('#bookingSaveBtn').style.display = step === 3 ? 'none' : '';
+
   const onDetails = step === 2;
   $('#bookingPreviewBtn').style.display = onDetails ? '' : 'none';
   $('#bookingPreviewCpBtn').style.display = (onDetails && isCp) ? '' : 'none';
@@ -2505,6 +2509,22 @@ function flushPendingBookingInputs() {
       applyPayMode(payTab.dataset.payMode);
     }
     // Next
+    if (e.target.id === 'bookingSaveBtn') {
+      const btn = e.target;
+      const hint = $('#bookingSaveHint');
+      btn.disabled = true;
+      const label = btn.textContent;
+      btn.textContent = 'Saving…';
+      saveBookingDraft({ quiet: false }).finally(() => {
+        btn.disabled = false;
+        btn.textContent = label;
+        if (hint) {
+          hint.textContent = bookingState.draftId ? 'Saved ' + new Date().toLocaleTimeString() : '';
+          hint.classList.toggle('is-saved', !!bookingState.draftId);
+        }
+      });
+      return;
+    }
     if (e.target.id === 'bookingNextBtn') {
       if (bookingState.step === 1) {
         // Commit any email typed but not yet + Added so it isn't dropped.
