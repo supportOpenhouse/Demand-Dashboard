@@ -67,6 +67,11 @@ module.exports = async (req, res) => {
 
       const raw = req.body[field];
 
+      // Any human edit to the listing price — including clearing it — makes it
+      // no longer auto. Clearing also re-opens it to the auto-pricer on the next
+      // list load, which is the intended way to ask for a fresh derivation.
+      if (field === 'listing_price') updates.listing_price_is_auto = false;
+
       if (field === 'listing_price') {
         if (raw === null || raw === '' || raw === undefined) {
           updates[field] = null;

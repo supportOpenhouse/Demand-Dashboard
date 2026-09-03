@@ -134,6 +134,13 @@ const INIT_SQL = `
   ALTER TABLE booking_details ADD COLUMN IF NOT EXISTS brokerage_registry_amount REAL;
   ALTER TABLE booking_details ADD COLUMN IF NOT EXISTS cp_mail_sent_at           TIMESTAMPTZ;
 
+  -- listing_price_is_auto: TRUE when the listing price was derived from the
+  -- acquisition price rather than typed by a person. Drives the small "A" marker
+  -- in the UI, and — more importantly — is what lets the auto-pricer tell its own
+  -- earlier output apart from a real human figure. Any manual edit clears it, and
+  -- the pricer only ever fills a NULL price, so a typed value is never overwritten.
+  ALTER TABLE demand_details ADD COLUMN IF NOT EXISTS listing_price_is_auto BOOLEAN DEFAULT FALSE;
+
   -- Selling channel partner, resolved from the CP inventory database by cp_code
   -- or registered phone at booking time. That database is a SEPARATE Postgres
   -- instance, so no foreign key is possible and no join can be done at query

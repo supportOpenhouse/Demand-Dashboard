@@ -1225,3 +1225,21 @@ body.role-viewer .col-contact { display: none; }
 .cp-lookup.is-direct .cp-lookup-status,
 .cp-lookup.is-direct .cp-lookup-matches,
 .cp-lookup.is-direct .cp-lookup-fields { display: none; }
+
+/* Auto-derived listing price marker. Small and low-contrast: it annotates the
+   number, it is not a status of its own. */
+.price-auto {
+  display: block;
+  margin-top: 1px;
+  font-size: 9px;
+  font-weight: 700;
+  line-height: 1;
+  letter-spacing: .04em;
+  color: #9ca3af;
+  cursor: help;
+}
+.field-lbl .price-auto {
+  display: inline-block;
+  margin: 0 0 0 5px;
+  vertical-align: 1px;
+}

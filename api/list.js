@@ -156,6 +156,67 @@ function buildLegacyProjection() {
 //                  be living there sends the demand team to visit an occupied
 //                  home. Those units keep their label for a human to resolve.
 //
+// Auto listing price: derive a listing price from the acquisition price for
+// units that have none. Same self-healing-on-read pattern as the materialization
+// above — no cron, no hook.
+//
+// Multipliers, by city:
+//   Gurgaon + affordable society  x 1.10
+//   Gurgaon (not affordable)      x 1.08
+//   Noida                         x 1.08
+//   Ghaziabad                     x 1.10
+//   anywhere else                 no auto price (left NULL for a human)
+//
+// Three guarantees, in order of importance:
+//   1. It only ever touches rows where listing_price IS NULL, so a price someone
+//      typed is never overwritten — not on the next load, not ever.
+//   2. What it writes is flagged listing_price_is_auto = TRUE, so the UI can mark
+//      it and a person can tell a derived number from a real one.
+//   3. Clearing a price by hand lets it re-derive; editing one clears the flag
+//      (see api/demand-details/[uid].js), and a manual value stays put.
+//
+// Prices are stored in lakhs on both sides, so the multiply needs no conversion.
+async function autoFillListingPrices(hasAffordable) {
+  const affordableExpr = hasAffordable
+    ? `(SELECT ms.affordable FROM master_societies ms
+         WHERE LOWER(TRIM(ms.society_name)) = LOWER(TRIM(src.society_name)) LIMIT 1)`
+    : 'NULL::boolean';
+
+  try {
+    const { rowCount } = await pool.query(`
+      WITH src AS (
+        SELECT p.uid, p.city, p.society_name, p.guaranteed_sale_price AS acq
+          FROM properties p
+        UNION ALL
+        SELECT lp.uid, lp.city, lp.society_name, lp.guaranteed_sale_price
+          FROM legacy_properties lp
+      ), priced AS (
+        SELECT src.uid,
+               ROUND((src.acq * CASE
+                 WHEN src.city ILIKE '%gurgaon%' OR src.city ILIKE '%gurugram%'
+                   THEN CASE WHEN COALESCE(${affordableExpr}, FALSE) THEN 1.10 ELSE 1.08 END
+                 WHEN src.city ILIKE '%noida%'     THEN 1.08
+                 WHEN src.city ILIKE '%ghaziabad%' THEN 1.10
+                 ELSE NULL
+               END)::numeric, 2) AS price
+          FROM src
+         WHERE src.acq IS NOT NULL AND src.acq > 0
+      )
+      UPDATE demand_details dd
+         SET listing_price = priced.price,
+             listing_price_is_auto = TRUE,
+             updated_at = NOW()
+        FROM priced
+       WHERE dd.uid = priced.uid
+         AND priced.price IS NOT NULL
+         AND dd.listing_price IS NULL`);
+    if (rowCount) console.log('[autoFillListingPrices] priced', rowCount, 'units');
+  } catch (err) {
+    // Never let pricing break the list — it is a convenience, not the payload.
+    console.warn('[autoFillListingPrices]', err.message);
+  }
+}
+
 // Runs on every list load rather than through a hook, following the same
 // self-healing pattern as the demand_details materialization above — this app
 // has no callback from the supply forms. It is cheap and idempotent: the WHERE
@@ -398,6 +459,8 @@ module.exports = async (req, res) => {
       SELECT u.uid FROM unified u
       ON CONFLICT (uid) DO NOTHING`, baseParams);
 
+    await autoFillListingPrices(hasAffordable);
+
     await syncKeyHandoverVacancy(allCols);
 
     // Total count across both halves, with filters applied.
@@ -442,6 +505,7 @@ module.exports = async (req, res) => {
       SELECT u.*,
              ${msSelect}
              dd.listing_price          AS listing_price,
+             COALESCE(dd.listing_price_is_auto, FALSE) AS listing_price_is_auto,
              COALESCE(dd.demand_status, 'Buyer Visit') AS demand_status,
              COALESCE(dd.availability_status, 'Available') AS availability_status,
              dd.buyer_visit_date,

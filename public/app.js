@@ -587,8 +587,13 @@ function renderRow(r) {
     ? '<span class="supply-badge legacy" title="Imported from legacy CSV">Legacy</span>'
     : '';
 
+  // An auto-derived price is marked so it is never mistaken for a quoted one.
+  // The marker sits under the figure rather than beside it, so the price column
+  // stays scannable.
+  const autoTip = 'Auto-derived from the acquisition price. Edit to set your own.';
   const listingPriceCell = r.listing_price != null
     ? `<span class="price-val">${esc(toLakhs(r.listing_price))}</span>`
+      + (r.listing_price_is_auto ? `<span class="price-auto" title="${esc(autoTip)}">A</span>` : '')
     : '<span class="price-empty">— Not set —</span>';
 
   // Inline-editable remarks for editor + admin; static text for viewer.
@@ -682,7 +687,7 @@ function renderExpand(r) {
   // Listing price input — admin-only; editor/viewer see read-only.
   const listingPriceField = `
     <div class="field-row">
-      <div class="field-lbl">Listing Price (Lakhs) ${isAdmin() ? '' : '<span class="admin-only-note">— admin only</span>'}</div>
+      <div class="field-lbl">Listing Price (Lakhs) ${isAdmin() ? '' : '<span class="admin-only-note">— admin only</span>'}${r.listing_price_is_auto ? `<span class="price-auto" title="${esc(autoTip)}">A</span>` : ''}</div>
       <input type="number" step="0.01" class="inline-input"
              data-uid="${esc(r.uid)}" data-field="listing_price"
              value="${r.listing_price != null ? esc(r.listing_price) : ''}"
