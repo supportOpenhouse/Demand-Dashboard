@@ -1266,3 +1266,7 @@ body.role-viewer .col-contact { display: none; }
   padding: 7px 16px;
   font-size: 12.5px;
 }
+
+/* A field that spans the whole booking grid (Other Conditions sits inline with
+   the other fields now, but a textarea needs the full row). */
+.booking-form-grid .booking-fullwidth-field { grid-column: 1 / -1; }
