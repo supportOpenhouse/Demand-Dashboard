@@ -356,6 +356,14 @@
             <input type="number" min="1" max="365" step="1" class="booking-input" data-bf="registry_timeline" placeholder="e.g. 45" required>
           </div>
           <div class="fg">
+            <label>Amount Payable at ATS (%) <span class="req">*</span></label>
+            <div style="display:flex;gap:8px;align-items:center;">
+              <input type="number" min="0" max="100" step="0.01" class="booking-input booking-pct-input"
+                     data-bf="amount_on_ats_pct" style="flex:1;min-width:0;" required>
+              <span id="atsPctRupeeHint" class="ats-pct-hint" style="font-size:13px;color:#4f46e5;font-weight:600;white-space:nowrap;">= ₹—</span>
+            </div>
+          </div>
+          <div class="fg">
             <label>Payment Structure <span class="req">*</span></label>
             <div class="pay-mode-tabs" role="tablist" id="payStructureTabs">
               <button type="button" class="pay-mode-tab" data-pay-structure="Flexible"
@@ -379,14 +387,6 @@
                        data-bf="payment_range_max_pct" placeholder="Max">
                 <span class="pay-range-pct">%</span>
               </div>
-            </div>
-          </div>
-          <div class="fg">
-            <label>Amount Payable at ATS (%) <span class="req">*</span></label>
-            <div style="display:flex;gap:8px;align-items:center;">
-              <input type="number" min="0" max="100" step="0.01" class="booking-input booking-pct-input"
-                     data-bf="amount_on_ats_pct" style="flex:1;min-width:0;" required>
-              <span id="atsPctRupeeHint" class="ats-pct-hint" style="font-size:13px;color:#4f46e5;font-weight:600;white-space:nowrap;">= ₹—</span>
             </div>
           </div>
         </div>

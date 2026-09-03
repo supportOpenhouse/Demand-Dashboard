@@ -1250,3 +1250,19 @@ body.role-viewer .col-contact { display: none; }
 .pay-range-cell .booking-input { flex: 1; min-width: 0; }
 .pay-range-pct { font-size: 13px; color: #6b7280; }
 .pay-range-sep { font-size: 12px; color: #9ca3af; flex: none; }
+
+/* Payment Structure reuses the Payment Mode pill, but its labels are far longer
+   ("Non-Flexible" vs "Split"), so the shared 90px per-tab minimum blew the
+   control out to the full width of its grid cell. Size it to its content. */
+#payStructureTabs {
+  width: -moz-fit-content;
+  width: fit-content;
+  align-self: start;
+  justify-self: start;
+  max-width: 100%;
+}
+#payStructureTabs .pay-mode-tab {
+  min-width: 0;
+  padding: 7px 16px;
+  font-size: 12.5px;
+}
