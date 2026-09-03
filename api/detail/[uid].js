@@ -1,4 +1,4 @@
-const { pool, SUPPLY_READY_STATUSES } = require('../_db');
+const { pool, getPropertiesColumns, hasCol, SUPPLY_READY_STATUSES } = require('../_db');
 const { requireAuth, setCors } = require('../_auth');
 
 // Acquisition price (guaranteed_sale_price) is admin-only — our cost basis, not
@@ -30,6 +30,12 @@ module.exports = async (req, res) => {
   try {
     const supplyReadyParams = SUPPLY_READY_STATUSES.map((_, i) => `$${i + 2}`).join(',');
 
+    // Match /api/list: a replicated row has been superseded by a copy and must
+    // not be reachable here either, or a hidden unit stays openable by URL.
+    // legacy_properties has no such column, so only the real side is gated.
+    const notReplicated = hasCol(await getPropertiesColumns(), 'replicated')
+      ? 'AND p.replicated IS NOT TRUE' : '';
+
     // Real properties path. SELECT p.* gives us every column for the detail view.
     // Supply-ready gate uses ap_details.status (replaces the deleted v_property_status view).
     const realRes = await pool.query(`
@@ -50,6 +56,7 @@ module.exports = async (req, res) => {
       INNER JOIN ap_details apd ON apd.uid = p.uid
       LEFT JOIN demand_details dd ON dd.uid = p.uid
       WHERE p.uid = $1 AND apd.status IN (${supplyReadyParams})
+        ${notReplicated}
     `, [uid, ...SUPPLY_READY_STATUSES]);
 
     if (realRes.rows.length) {

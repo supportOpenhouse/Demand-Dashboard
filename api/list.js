@@ -176,7 +176,7 @@ function buildLegacyProjection() {
 //      (see api/demand-details/[uid].js), and a manual value stays put.
 //
 // Prices are stored in lakhs on both sides, so the multiply needs no conversion.
-async function autoFillListingPrices(hasAffordable) {
+async function autoFillListingPrices(hasAffordable, hasReplicated) {
   const affordableExpr = hasAffordable
     ? `(SELECT ms.affordable FROM master_societies ms
          WHERE LOWER(TRIM(ms.society_name)) = LOWER(TRIM(src.society_name)) LIMIT 1)`
@@ -187,6 +187,7 @@ async function autoFillListingPrices(hasAffordable) {
       WITH src AS (
         SELECT p.uid, p.city, p.society_name, p.guaranteed_sale_price AS acq
           FROM properties p
+         WHERE ${hasReplicated ? 'p.replicated IS NOT TRUE' : 'TRUE'}
         UNION ALL
         SELECT lp.uid, lp.city, lp.society_name, lp.guaranteed_sale_price
           FROM legacy_properties lp
@@ -238,7 +239,8 @@ async function syncKeyHandoverVacancy(allCols) {
                TRIM(COALESCE(p.occupancy_status,  '')) AS old_occ,
                (TRIM(COALESCE(p.owner_will_vacate, '')) NOT IN ('', 'No')) AS owner_vacating
         FROM properties p
-        WHERE p.final_submitted_at IS NOT NULL
+        WHERE ${hasCol(allCols, 'replicated') ? 'p.replicated IS NOT TRUE' : 'TRUE'}
+          AND p.final_submitted_at IS NOT NULL
           AND p.key_handover_date IS NOT NULL
           AND (
             TRIM(COALESCE(p.possession_status, '')) = 'Tenant'
@@ -431,6 +433,13 @@ module.exports = async (req, res) => {
     // Real side: INNER JOIN ap_details + status filter — properties without an
     // ap_details row, or whose status isn't AMA Signed / Key Handover Done, are
     // excluded. Legacy side: every row in legacy_properties is shown.
+    // `properties.replicated` marks a row that has been superseded by a copy —
+    // the supply forms exclude these everywhere (`replicated IS NOT TRUE`), and
+    // showing them here would double-count the unit. NOT TRUE rather than
+    // = FALSE so NULLs on older rows still pass.
+    const notReplicated = hasCol(allCols, 'replicated')
+      ? 'AND p.replicated IS NOT TRUE' : '';
+
     const baseCte = `
       WITH unified AS (
         SELECT
@@ -438,6 +447,7 @@ module.exports = async (req, res) => {
         FROM properties p
         INNER JOIN ap_details apd ON apd.uid = p.uid
         WHERE apd.status IN (${supplyReadyParams})
+          ${notReplicated}
 
         UNION ALL
 
@@ -459,7 +469,7 @@ module.exports = async (req, res) => {
       SELECT u.uid FROM unified u
       ON CONFLICT (uid) DO NOTHING`, baseParams);
 
-    await autoFillListingPrices(hasAffordable);
+    await autoFillListingPrices(hasAffordable, hasCol(allCols, 'replicated'));
 
     await syncKeyHandoverVacancy(allCols);
 
