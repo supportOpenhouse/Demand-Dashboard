@@ -1892,6 +1892,7 @@ function clearBookingDetailFields() {
     });
   bookingState.payMode = 'single';
   applyPayMode('single');
+  applyPayStructure('');
   applyBrokerageTiming();
   refreshAllAmountHints();
 }
@@ -2278,6 +2279,11 @@ async function openBookingModal(uid) {
     setBF('source', l.source || 'CP');
     setBF('brokerage_amount', l.brokerage_amount);
     setBF('brokerage_timing', l.brokerage_timing);
+    if (l.payment_structure) {
+      applyPayStructure(l.payment_structure);
+      setBF('payment_range_min_pct', l.payment_range_min_pct);
+      setBF('payment_range_max_pct', l.payment_range_max_pct);
+    }
     setBF('brokerage_ats_amount', l.brokerage_ats_amount);
     setBF('brokerage_registry_amount', l.brokerage_registry_amount);
     applySource(l.source || 'CP');
@@ -2402,9 +2408,33 @@ function refreshAllAmountHints() {
 
 // Updates the visibility of payment-mode bodies (single vs split) and the
 // readonly state on Method 1's amount input. Called whenever the tabs flip.
+// Payment Structure mirrors Payment Mode's segmented control. The chosen value
+// lives in a hidden [data-bf] input so it flows through collectBookingForm()
+// like every other field; the tabs are just the control surface.
+//
+// Flexible means the payable share is a negotiated band rather than a fixed
+// figure, so it reveals a Min/Max pair. Switching to Non-Flexible clears that
+// pair — a stale range must not travel with a booking that no longer has one.
+function applyPayStructure(value) {
+  const hidden = document.querySelector('#bookingModal [data-bf="payment_structure"]');
+  if (hidden) hidden.value = value || '';
+  document.querySelectorAll('#bookingModal .pay-mode-tab[data-pay-structure]').forEach(t => {
+    const active = t.dataset.payStructure === value;
+    t.classList.toggle('active', active);
+    t.setAttribute('aria-selected', active ? 'true' : 'false');
+  });
+  const range = document.querySelector('#bookingModal [data-pay-structure-range]');
+  const flexible = value === 'Flexible';
+  if (range) range.style.display = flexible ? '' : 'none';
+  if (!flexible) {
+    clearBF('payment_range_min_pct');
+    clearBF('payment_range_max_pct');
+  }
+}
+
 function applyPayMode(mode) {
   bookingState.payMode = mode;
-  document.querySelectorAll('#bookingModal .pay-mode-tab').forEach(t => {
+  document.querySelectorAll('#bookingModal .pay-mode-tab[data-pay-mode]').forEach(t => {
     const active = t.dataset.payMode === mode;
     t.classList.toggle('active', active);
     t.setAttribute('aria-selected', active ? 'true' : 'false');
@@ -2577,6 +2607,14 @@ function validateCpForm(form) {
   const missing = [];
   const has = k => form[k] || form[k] === 0;
   if (!has('brokerage_amount')) missing.push('Brokerage amount');
+  if (!form.payment_structure) missing.push('Payment Structure');
+  if (form.payment_structure === 'Flexible') {
+    const lo = parseFloat(form.payment_range_min_pct);
+    const hi = parseFloat(form.payment_range_max_pct);
+    if (isNaN(lo)) missing.push('Payment Range Min (%)');
+    if (isNaN(hi)) missing.push('Payment Range Max (%)');
+    if (!isNaN(lo) && !isNaN(hi) && lo > hi) missing.push('Payment Range Min must not exceed Max');
+  }
   if (!form.brokerage_timing) missing.push('Brokerage payable (timing)');
   if (form.brokerage_timing === 'ATS & Registry') {
     if (!has('brokerage_ats_amount')) missing.push('Brokerage at ATS');
@@ -2681,7 +2719,13 @@ function flushPendingBookingInputs() {
       renderBookingBrokers();
     }
     // Payment Mode tabs
-    const payTab = e.target.closest('#bookingModal .pay-mode-tab');
+    const structTab = e.target.closest('#bookingModal .pay-mode-tab[data-pay-structure]');
+    if (structTab) {
+      applyPayStructure(structTab.dataset.payStructure);
+      scheduleBookingDraft();
+      return;
+    }
+    const payTab = e.target.closest('#bookingModal .pay-mode-tab[data-pay-mode]');
     if (payTab) {
       applyPayMode(payTab.dataset.payMode);
     }

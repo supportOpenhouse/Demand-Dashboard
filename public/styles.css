@@ -1243,3 +1243,10 @@ body.role-viewer .col-contact { display: none; }
   margin: 0 0 0 5px;
   vertical-align: 1px;
 }
+
+/* Payment Range (shown only for a Flexible payment structure). */
+.pay-range-row { display: flex; align-items: center; gap: 8px; }
+.pay-range-cell { position: relative; flex: 1 1 0; min-width: 0; display: flex; align-items: center; gap: 4px; }
+.pay-range-cell .booking-input { flex: 1; min-width: 0; }
+.pay-range-pct { font-size: 13px; color: #6b7280; }
+.pay-range-sep { font-size: 12px; color: #9ca3af; flex: none; }

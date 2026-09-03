@@ -134,6 +134,13 @@ const INIT_SQL = `
   ALTER TABLE booking_details ADD COLUMN IF NOT EXISTS brokerage_registry_amount REAL;
   ALTER TABLE booking_details ADD COLUMN IF NOT EXISTS cp_mail_sent_at           TIMESTAMPTZ;
 
+  -- Payment structure for the buyer's schedule: 'Flexible' means the payable
+  -- share is a negotiated band rather than a fixed figure, so a min/max pair
+  -- accompanies it. Both percentages stay NULL for 'Non-Flexible'.
+  ALTER TABLE booking_details ADD COLUMN IF NOT EXISTS payment_structure     TEXT;
+  ALTER TABLE booking_details ADD COLUMN IF NOT EXISTS payment_range_min_pct REAL;
+  ALTER TABLE booking_details ADD COLUMN IF NOT EXISTS payment_range_max_pct REAL;
+
   -- listing_price_is_auto: TRUE when the listing price was derived from the
   -- acquisition price rather than typed by a person. Drives the small "A" marker
   -- in the UI, and — more importantly — is what lets the auto-pricer tell its own

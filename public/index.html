@@ -270,49 +270,6 @@
       <div class="booking-page" data-page="2" style="display:none;">
         <div class="booking-property-summary" id="bookingPropertySummary"></div>
 
-        <!-- Source + brokerage. CP shows a payment schedule (and optional ATS/
-             Registry split) that feeds the separate broker mail; Direct only
-             asks the amount to be collected and sends no broker mail. -->
-        <div class="booking-source-block" style="margin-bottom:14px;">
-          <div class="form-grid" style="display:grid;grid-template-columns:1fr;gap:12px;align-items:start;">
-            <div class="fg">
-              <label>
-                <span data-source-label="CP">Brokerage to be paid (₹)</span>
-                <span data-source-label="Direct" style="display:none;">Brokerage to be collected (₹)</span>
-              </label>
-              <input type="number" min="0" step="1" class="booking-input booking-amount-input"
-                     data-bf="brokerage_amount" data-amount-hint="brokerage_amount">
-              <div class="amount-hint" data-amount-hint-for="brokerage_amount"></div>
-            </div>
-          </div>
-
-          <div data-source-show="CP" style="margin-top:10px;">
-            <div class="fg" style="max-width:340px;">
-              <label>Brokerage Payable</label>
-              <select class="booking-input" data-bf="brokerage_timing">
-                <option value="">Select…</option>
-                <option value="Registry Only">At the time of Registry Only</option>
-                <option value="ATS &amp; Registry">At the time of ATS &amp; Registry</option>
-              </select>
-            </div>
-            <div class="form-grid" data-brokerage-split
-                 style="display:none;grid-template-columns:1fr 1fr;gap:12px;margin-top:10px;">
-              <div class="fg">
-                <label>Brokerage at ATS (₹)</label>
-                <input type="number" min="0" step="1" class="booking-input booking-amount-input"
-                       data-bf="brokerage_ats_amount" data-amount-hint="brokerage_ats_amount">
-                <div class="amount-hint" data-amount-hint-for="brokerage_ats_amount"></div>
-              </div>
-              <div class="fg">
-                <label>Brokerage at Registry (₹)</label>
-                <input type="number" min="0" step="1" class="booking-input booking-amount-input"
-                       data-bf="brokerage_registry_amount" data-amount-hint="brokerage_registry_amount">
-                <div class="amount-hint" data-amount-hint-for="brokerage_registry_amount"></div>
-              </div>
-            </div>
-          </div>
-        </div>
-
         <div class="booking-section-divider"></div>
 
         <div class="form-grid booking-form-grid">
@@ -399,11 +356,82 @@
             <input type="number" min="1" max="365" step="1" class="booking-input" data-bf="registry_timeline" placeholder="e.g. 45" required>
           </div>
           <div class="fg">
+            <label>Payment Structure <span class="req">*</span></label>
+            <div class="pay-mode-tabs" role="tablist" id="payStructureTabs">
+              <button type="button" class="pay-mode-tab" data-pay-structure="Flexible"
+                      role="tab" aria-selected="false">Flexible</button>
+              <button type="button" class="pay-mode-tab" data-pay-structure="Non-Flexible"
+                      role="tab" aria-selected="false">Non-Flexible</button>
+            </div>
+            <input type="hidden" data-bf="payment_structure">
+          </div>
+          <div class="fg" data-pay-structure-range style="display:none;">
+            <label>Payment Range <span class="req">*</span></label>
+            <div class="pay-range-row">
+              <div class="pay-range-cell">
+                <input type="number" min="0" max="100" step="0.01" class="booking-input booking-pct-input"
+                       data-bf="payment_range_min_pct" placeholder="Min">
+                <span class="pay-range-pct">%</span>
+              </div>
+              <span class="pay-range-sep">to</span>
+              <div class="pay-range-cell">
+                <input type="number" min="0" max="100" step="0.01" class="booking-input booking-pct-input"
+                       data-bf="payment_range_max_pct" placeholder="Max">
+                <span class="pay-range-pct">%</span>
+              </div>
+            </div>
+          </div>
+          <div class="fg">
             <label>Amount Payable at ATS (%) <span class="req">*</span></label>
             <div style="display:flex;gap:8px;align-items:center;">
               <input type="number" min="0" max="100" step="0.01" class="booking-input booking-pct-input"
                      data-bf="amount_on_ats_pct" style="flex:1;min-width:0;" required>
               <span id="atsPctRupeeHint" class="ats-pct-hint" style="font-size:13px;color:#4f46e5;font-weight:600;white-space:nowrap;">= ₹—</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="booking-section-divider"></div>
+
+        <!-- Source + brokerage. CP shows a payment schedule (and optional ATS/
+             Registry split) that feeds the separate broker mail; Direct only
+             asks the amount to be collected and sends no broker mail. -->
+        <div class="booking-source-block" style="margin-bottom:14px;">
+          <div class="form-grid" style="display:grid;grid-template-columns:1fr;gap:12px;align-items:start;">
+            <div class="fg">
+              <label>
+                <span data-source-label="CP">Brokerage to be paid (₹)</span>
+                <span data-source-label="Direct" style="display:none;">Brokerage to be collected (₹)</span>
+              </label>
+              <input type="number" min="0" step="1" class="booking-input booking-amount-input"
+                     data-bf="brokerage_amount" data-amount-hint="brokerage_amount">
+              <div class="amount-hint" data-amount-hint-for="brokerage_amount"></div>
+            </div>
+          </div>
+
+          <div data-source-show="CP" style="margin-top:10px;">
+            <div class="fg" style="max-width:340px;">
+              <label>Brokerage Payable</label>
+              <select class="booking-input" data-bf="brokerage_timing">
+                <option value="">Select…</option>
+                <option value="Registry Only">At the time of Registry Only</option>
+                <option value="ATS &amp; Registry">At the time of ATS &amp; Registry</option>
+              </select>
+            </div>
+            <div class="form-grid" data-brokerage-split
+                 style="display:none;grid-template-columns:1fr 1fr;gap:12px;margin-top:10px;">
+              <div class="fg">
+                <label>Brokerage at ATS (₹)</label>
+                <input type="number" min="0" step="1" class="booking-input booking-amount-input"
+                       data-bf="brokerage_ats_amount" data-amount-hint="brokerage_ats_amount">
+                <div class="amount-hint" data-amount-hint-for="brokerage_ats_amount"></div>
+              </div>
+              <div class="fg">
+                <label>Brokerage at Registry (₹)</label>
+                <input type="number" min="0" step="1" class="booking-input booking-amount-input"
+                       data-bf="brokerage_registry_amount" data-amount-hint="brokerage_registry_amount">
+                <div class="amount-hint" data-amount-hint-for="brokerage_registry_amount"></div>
+              </div>
             </div>
           </div>
         </div>

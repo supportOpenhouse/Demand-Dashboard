@@ -32,6 +32,7 @@ const { buildBookingEmail, buildBrokerEmail, sendMail } = require('../_email');
 const PAYMENT_METHODS = ['UPI', 'NEFT', 'IMPS', 'RTGS', 'Cheque', 'Cash', 'Other'];
 const SOURCES = ['CP', 'Direct'];
 const BROKERAGE_TIMINGS = ['Registry Only', 'ATS & Registry'];
+const PAYMENT_STRUCTURES = ['Flexible', 'Non-Flexible'];
 const SALUTATIONS = ['Mr.', 'Mrs.', 'Ms.', 'Dr.'];
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
@@ -45,6 +46,7 @@ const BOOKING_COLS = [
   'booking_amount_split_1', 'booking_amount_split_2',
   'ats_timeline', 'registry_timeline', 'booking_amount_forfeitable',
   'amount_on_ats_pct', 'other_conditions', 'recipients', 'broker_emails',
+  'payment_structure', 'payment_range_min_pct', 'payment_range_max_pct',
   'source', 'brokerage_amount', 'brokerage_timing',
   'brokerage_ats_amount', 'brokerage_registry_amount',
   'selling_cp_id', 'selling_cp_code', 'selling_cp_phone',
@@ -153,6 +155,36 @@ function validate(body) {
     clean.booking_amount_forfeitable = false;
   } else {
     errors.push('booking_amount_forfeitable must be Yes/No');
+  }
+
+  // Payment structure. 'Flexible' carries a negotiated min/max band; anything
+  // else must not keep one, so the pair is nulled server-side too — the client
+  // clears it on switch, but a stale range must never reach the row regardless
+  // of what the browser sent.
+  const structure = String(body.payment_structure || '').trim();
+  if (!structure) {
+    clean.payment_structure = null;
+    clean.payment_range_min_pct = null;
+    clean.payment_range_max_pct = null;
+  } else if (PAYMENT_STRUCTURES.includes(structure)) {
+    clean.payment_structure = structure;
+    if (structure === 'Flexible') {
+      for (const f of ['payment_range_min_pct', 'payment_range_max_pct']) {
+        if (body[f] === undefined || body[f] === null || body[f] === '') { clean[f] = null; continue; }
+        const n = parseFloat(body[f]);
+        if (isNaN(n) || n < 0 || n > 100) errors.push(`${f} must be between 0 and 100`);
+        else clean[f] = n;
+      }
+      if (clean.payment_range_min_pct != null && clean.payment_range_max_pct != null
+          && clean.payment_range_min_pct > clean.payment_range_max_pct) {
+        errors.push('payment_range_min_pct must not exceed payment_range_max_pct');
+      }
+    } else {
+      clean.payment_range_min_pct = null;
+      clean.payment_range_max_pct = null;
+    }
+  } else {
+    errors.push(`payment_structure must be one of: ${PAYMENT_STRUCTURES.join(', ')}`);
   }
 
   // Recipients — array of valid-looking emails
@@ -493,15 +525,16 @@ const handleBookingRequest = async (req, res) => {
          JSON.stringify(clean.broker_emails || []), JSON.stringify(clean.recipients || [])]
       );
     } else {
+      // Generated from BOOKING_COLS like the other write paths. This used to
+      // list only the brokerage fields, which meant a CP mail sent BEFORE the
+      // buyer mail created a row missing the CP snapshot and payment structure —
+      // the form has all of it at this point, so write all of it.
+      const cpInsCols = ['uid', ...BOOKING_COLS, 'submitted_by'];
       const ins = await pool.query(
-        `INSERT INTO booking_details (
-           uid, source, brokerage_amount, brokerage_timing,
-           brokerage_ats_amount, brokerage_registry_amount, buyer_name,
-           recipients, broker_emails, submitted_by
-         ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) RETURNING id`,
-        [uid, clean.source, clean.brokerage_amount, clean.brokerage_timing,
-         clean.brokerage_ats_amount, clean.brokerage_registry_amount, clean.buyer_name,
-         JSON.stringify(clean.recipients || []), JSON.stringify(clean.broker_emails || []), user.email]
+        `INSERT INTO booking_details (${cpInsCols.map(c => `"${c}"`).join(', ')})
+         VALUES (${cpInsCols.map((_, i) => `$${i + 1}`).join(', ')})
+         RETURNING id`,
+        [uid, ...bookingValues(clean), user.email]
       );
       cpRowId = ins.rows[0].id;
       await pool.query(
@@ -642,38 +675,15 @@ const handleBookingRequest = async (req, res) => {
       if (upd.rows.length) insertedId = upd.rows[0].id;
     }
 
+    // Generated from BOOKING_COLS rather than written out: a hand-listed INSERT
+    // silently drifts from the shared list every time a column is added, and the
+    // new column is then simply never persisted on this path.
+    const insCols = ['uid', ...BOOKING_COLS, 'submitted_by'];
     const { rows } = insertedId ? { rows: [{ id: insertedId }] } : await client.query(
-      `INSERT INTO booking_details (
-         uid, buyer_salutation, buyer_name, co_buyer_name, buyer_email, co_buyer_email,
-         consideration_amount, booking_amount_received,
-         booking_amount_method, booking_amount_method_2,
-         booking_amount_split_1, booking_amount_split_2,
-         ats_timeline, registry_timeline, booking_amount_forfeitable,
-         amount_on_ats_pct, other_conditions, recipients, broker_emails, submitted_by,
-         source, brokerage_amount, brokerage_timing,
-         brokerage_ats_amount, brokerage_registry_amount,
-         selling_cp_id, selling_cp_code, selling_cp_phone,
-         selling_cp_name, selling_cp_company, selling_cp_email
-       ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20,
-                 $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31)
+      `INSERT INTO booking_details (${insCols.map(c => `"${c}"`).join(', ')})
+       VALUES (${insCols.map((_, i) => `$${i + 1}`).join(', ')})
        RETURNING id`,
-      [
-        uid, clean.buyer_salutation, clean.buyer_name, clean.co_buyer_name,
-        clean.buyer_email, clean.co_buyer_email,
-        clean.consideration_amount, clean.booking_amount_received,
-        clean.booking_amount_method, clean.booking_amount_method_2,
-        clean.booking_amount_split_1, clean.booking_amount_split_2,
-        clean.ats_timeline, clean.registry_timeline,
-        clean.booking_amount_forfeitable, clean.amount_on_ats_pct,
-        clean.other_conditions,
-        JSON.stringify(clean.recipients || []),
-        JSON.stringify(clean.broker_emails || []),
-        user.email,
-        clean.source, clean.brokerage_amount, clean.brokerage_timing,
-        clean.brokerage_ats_amount, clean.brokerage_registry_amount,
-        clean.selling_cp_id, clean.selling_cp_code, clean.selling_cp_phone,
-        clean.selling_cp_name, clean.selling_cp_company, clean.selling_cp_email,
-      ]
+      [uid, ...bookingValues(clean), user.email]
     );
     insertedId = rows[0].id;
 
