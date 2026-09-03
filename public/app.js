@@ -2471,6 +2471,42 @@ function recomputeSplitTwo() {
   s2El.value = remainder;
 }
 
+// When brokerage is payable at both ATS and Registry, the two legs must sum to
+// the total — the server rejects a split that doesn't. So whichever leg the
+// operator types, the other is derived, and editing the total re-derives from
+// whichever leg is already filled.
+//
+// Assigning .value does not fire an `input` event, so the counterpart's own
+// handler never runs and there is no feedback loop.
+function recomputeBrokerageSplit(changedField) {
+  const q = f => document.querySelector(`#bookingModal [data-bf="${f}"]`);
+  const totalEl = q('brokerage_amount');
+  const atsEl = q('brokerage_ats_amount');
+  const regEl = q('brokerage_registry_amount');
+  if (!totalEl || !atsEl || !regEl) return;
+
+  const total = parseFloat(totalEl.value);
+  if (isNaN(total)) return;
+
+  // Clamp to [0, total]: a leg larger than the whole brokerage is never valid,
+  // and a negative counterpart would be nonsense on screen.
+  const derive = (fromEl, toEl) => {
+    const v = parseFloat(fromEl.value);
+    if (isNaN(v)) { toEl.value = ''; updateAmountHint(toEl); return; }
+    const other = Math.min(Math.max(Math.round((total - v) * 100) / 100, 0), total);
+    toEl.value = other;
+    updateAmountHint(toEl);
+  };
+
+  if (changedField === 'brokerage_ats_amount') derive(atsEl, regEl);
+  else if (changedField === 'brokerage_registry_amount') derive(regEl, atsEl);
+  else if (changedField === 'brokerage_amount') {
+    // The total moved: keep whichever leg was typed and re-derive the other.
+    if (String(atsEl.value).trim() !== '') derive(atsEl, regEl);
+    else if (String(regEl.value).trim() !== '') derive(regEl, atsEl);
+  }
+}
+
 // Current Source select value ('CP' | 'Direct'), defaulting to 'CP'.
 // The raw selection, empty until the operator picks one — Next requires it.
 function currentSourceRaw() {
@@ -2869,6 +2905,10 @@ function flushPendingBookingInputs() {
     if (bookingState.payMode === 'split' &&
         (field === 'booking_amount_received' || field === 'booking_amount_split_1')) {
       recomputeSplitTwo();
+    }
+    if (field === 'brokerage_amount' || field === 'brokerage_ats_amount'
+        || field === 'brokerage_registry_amount') {
+      recomputeBrokerageSplit(field);
     }
   });
 })();
