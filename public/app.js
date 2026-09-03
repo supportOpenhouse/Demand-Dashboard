@@ -772,8 +772,7 @@ function renderExpand(r) {
         // says so, since a filled-in date otherwise makes Pending look like a bug.
         const tip = (!done && r.key_handover_date && r.origin !== 'legacy')
           ? 'Date recorded, but handover is not confirmed: Form 9 (Key Handover '
-            + 'Acknowledgement) has not been submitted and the supply pipeline has '
-            + 'not reached Key Handover Done.'
+            + 'Acknowledgement) has not been submitted.'
           : '';
         return field('Key Handover Status', done ? 'Done' : 'Pending',
                      done ? 'green' : 'amber', tip);
@@ -982,24 +981,24 @@ function field(label, value, cls, tooltip) {
     </div>`;
 }
 
-// Key Handover "Done" needs a real handover signal, not just a date — a date on
-// its own may be the tentative value captured back in Form 3, or a manual admin
-// correction. Two signals qualify:
-//   1. final_submitted_at — Form 9 (Key Handover Acknowledgement) was submitted.
-//   2. supply_status 'Key Handover Done' — the supply pipeline's terminal state,
-//      which additionally requires deal transfer, docs reviewed, draft AMA,
-//      seller approval and the AMA date passed.
-// Form 9 alone would be too strict: ~64 fully-progressed units predate or bypassed
-// the form and would wrongly read Pending. Requiring only a date would be too lax:
-// 23 units sitting at AMA Signed carry a date and are genuinely not handed over.
-// Legacy rows never pass through the supply forms, so for them the date is the
-// only signal available.
+// Key Handover "Done" requires a witnessed handover, not an inferred one:
+// Form 9 (Key Handover Acknowledgement) submitted AND a handover date on record.
+// Form 9 writes both in a single statement, so in practice they arrive together.
+//
+// The supply pipeline's computed 'Key Handover Done' status is deliberately NOT
+// accepted. That status is derived on read from seven gates (deal transfer, docs
+// reviewed, draft AMA, seller approval, AMA date, handover date) and can flip to
+// Done on its own when a future-dated handover date simply arrives — nothing
+// actually happened. A date alone may also be the tentative value from Form 3 or
+// a manual correction.
+//
+// Legacy rows never pass through the supply forms at all, so the date is the only
+// signal that exists for them.
 // Kept in sync with syncKeyHandoverVacancy() in api/list.js, which flips occupancy
 // on the same definition.
 function keyHandoverDone(r) {
   if (r.origin === 'legacy') return !!r.key_handover_date;
-  if (!r.key_handover_date) return false;
-  return !!r.final_submitted_at || r.supply_status === 'Key Handover Done';
+  return !!r.key_handover_date && !!r.final_submitted_at;
 }
 
 function extractBedrooms(config) {

@@ -1,6 +1,5 @@
 const { pool, getPropertiesColumns, hasCol, masterSocietiesHasAffordable,
-        masterSocietiesHasMicroMarket, SUPPLY_READY_STATUSES,
-        KEY_HANDOVER_DONE_STATUS } = require('./_db');
+        masterSocietiesHasMicroMarket, SUPPLY_READY_STATUSES } = require('./_db');
 const { requireAuth, setCors } = require('./_auth');
 
 // Typed projection list shared by both sides of the UNION ALL. Each tuple is:
@@ -178,8 +177,7 @@ async function syncKeyHandoverVacancy(allCols) {
                TRIM(COALESCE(p.occupancy_status,  '')) AS old_occ,
                (TRIM(COALESCE(p.owner_will_vacate, '')) NOT IN ('', 'No')) AS owner_vacating
         FROM properties p
-        LEFT JOIN ap_details apd ON apd.uid = p.uid
-        WHERE (p.final_submitted_at IS NOT NULL OR apd.status = $1)
+        WHERE p.final_submitted_at IS NOT NULL
           AND p.key_handover_date IS NOT NULL
           AND (
             TRIM(COALESCE(p.possession_status, '')) = 'Tenant'
@@ -213,7 +211,7 @@ async function syncKeyHandoverVacancy(allCols) {
              ),
              'Demand Dashboard'
       FROM cand c
-    `, [KEY_HANDOVER_DONE_STATUS]);
+    `);
   } catch (err) {
     // Never let the sync break the listing — the dashboard still renders the
     // pre-flip values and the next load retries.
