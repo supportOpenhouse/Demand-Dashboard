@@ -305,7 +305,9 @@ function bindUI() {
   // for the next 10s tick would lose whatever was typed just before closing.
   const closingBookingModal = (id) => {
     if (id !== 'bookingModal') return;
-    if (_draftDirty) saveBookingDraft({ quiet: true });
+    // Only flush from page 2 onward. Flushing on page 1 would recreate exactly
+    // the accidental row the ticker guard above prevents.
+    if (_draftDirty && bookingState.step >= 2) saveBookingDraft({ quiet: true });
     stopBookingAutosave();
   };
   $$('[data-close]').forEach(b => b.addEventListener('click', () => {
@@ -1909,12 +1911,18 @@ let _draftInFlight = false;
 let _draftTicker = null;
 let _draftDirty = false;
 
-// Save on a fixed 10s cadence while the modal is open, but only when something
-// actually changed — a ticker that writes an unchanged row every 10s is just
-// load. Edits set the dirty flag; a successful save clears it.
+// Save on a fixed 10s cadence, but only when something actually changed — a
+// ticker that writes an unchanged row every 10s is just load.
+//
+// Page 1 is excluded on purpose. Opening the modal on a unit by mistake and
+// closing it again used to leave a half-empty booking row behind, because the
+// ticker fired on a page the operator had not committed to anything on. On
+// page 1 a row is only written by an explicit Save or by Next; from page 2
+// onward the operator has committed, and autosave takes over.
 function startBookingAutosave() {
   stopBookingAutosave();
   _draftTicker = setInterval(() => {
+    if (bookingState.step < 2) return;
     if (_draftDirty && !_draftInFlight) saveBookingDraft({ quiet: true });
   }, 10000);
 }
