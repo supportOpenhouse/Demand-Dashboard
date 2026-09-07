@@ -204,6 +204,10 @@ function buildBookingEmail({ property, booking, submittedBy, submittedByName }) 
       ${showForfeitClause ? `Please note that if you choose not to proceed with the ATS, the booking amount will be forfeited.` : ''}
     </p>
 
+    ${b.work_committed ? `
+      <p style="margin:0 0 14px;white-space:pre-wrap;"><strong>Work Committed:</strong> ${esc(b.work_committed)}</p>
+    ` : ''}
+
     ${b.other_conditions ? `
       <p style="margin:0 0 14px;white-space:pre-wrap;">${esc(b.other_conditions)}</p>
     ` : ''}
@@ -332,6 +336,10 @@ function buildBrokerEmail({ property, booking, submittedByName, submittedBy }) {
     <p style="margin:0 0 14px;">
       As agreed, you will be entitled to ${brokerageHtml}.
     </p>
+
+    ${b.work_committed ? `
+      <p style="margin:0 0 14px;white-space:pre-wrap;"><strong>Work Committed:</strong> ${esc(b.work_committed)}</p>
+    ` : ''}
 
     ${b.other_conditions ? `
       <p style="margin:0 0 14px;white-space:pre-wrap;">${esc(b.other_conditions)}</p>

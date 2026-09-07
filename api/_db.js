@@ -134,6 +134,10 @@ const INIT_SQL = `
   ALTER TABLE booking_details ADD COLUMN IF NOT EXISTS brokerage_registry_amount REAL;
   ALTER TABLE booking_details ADD COLUMN IF NOT EXISTS cp_mail_sent_at           TIMESTAMPTZ;
 
+  -- work_committed: free text shown in both mails immediately above
+  -- other_conditions, as "Work Committed: <text>".
+  ALTER TABLE booking_details ADD COLUMN IF NOT EXISTS work_committed TEXT;
+
   -- Payment structure for the buyer's schedule: 'Flexible' means the payable
   -- share is a negotiated band rather than a fixed figure, so a min/max pair
   -- accompanies it. Both percentages stay NULL for 'Non-Flexible'.

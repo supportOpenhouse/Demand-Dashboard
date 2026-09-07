@@ -2300,6 +2300,7 @@ async function openBookingModal(uid) {
     setBF('registry_timeline', l.registry_timeline);
     setBF('booking_amount_forfeitable', l.booking_amount_forfeitable === true ? 'Yes' : l.booking_amount_forfeitable === false ? 'No' : '');
     setBF('amount_on_ats_pct', l.amount_on_ats_pct);
+    setBF('work_committed', l.work_committed);
     setBF('other_conditions', l.other_conditions);
     if (Array.isArray(l.recipients) && l.recipients.length) {
       bookingState.recipients = l.recipients;

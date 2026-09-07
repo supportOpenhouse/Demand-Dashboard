@@ -45,7 +45,7 @@ const BOOKING_COLS = [
   'booking_amount_method', 'booking_amount_method_2',
   'booking_amount_split_1', 'booking_amount_split_2',
   'ats_timeline', 'registry_timeline', 'booking_amount_forfeitable',
-  'amount_on_ats_pct', 'other_conditions', 'recipients', 'broker_emails',
+  'amount_on_ats_pct', 'work_committed', 'other_conditions', 'recipients', 'broker_emails',
   'payment_structure', 'payment_range_min_pct', 'payment_range_max_pct',
   'source', 'brokerage_amount', 'brokerage_timing',
   'brokerage_ats_amount', 'brokerage_registry_amount',
@@ -88,7 +88,7 @@ function validate(body) {
 
   // Strings (trim, max length)
   const textFields = ['buyer_name', 'co_buyer_name', 'booking_amount_method',
-                      'buyer_salutation', 'other_conditions'];
+                      'buyer_salutation', 'work_committed', 'other_conditions'];
   for (const f of textFields) {
     if (body[f] === undefined || body[f] === null || body[f] === '') { clean[f] = null; continue; }
     const v = String(body[f]).trim();
