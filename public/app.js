@@ -214,6 +214,7 @@ function renderUserMenu() {
     $('#userAvatar').src = `data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='32' height='32' viewBox='0 0 32 32'><circle cx='16' cy='16' r='16' fill='%234f46e5'/><text x='16' y='21' text-anchor='middle' fill='white' font-family='Inter' font-size='14' font-weight='600'>${initial}</text></svg>`;
   }
   if (isAdmin()) $('#manageUsersBtn').style.display = 'inline-flex';
+  if (isAdmin()) $('#ohLoanFormBtn').style.display = 'inline-flex';
   // Strip any admin-only options from filter dropdowns for non-admins so they
   // can't select filters that would return zero rows for them (Dead units are
   // hidden server-side).
@@ -290,6 +291,7 @@ function bindUI() {
   $('#csvBtn').addEventListener('click', exportCsv);
 
   $('#manageUsersBtn').addEventListener('click', openUsersModal);
+  $('#ohLoanFormBtn').addEventListener('click', () => window.open('/loan-form', '_blank', 'noopener'));
 
   // Sort handlers
   $$('thead th[data-sort]').forEach(th => {

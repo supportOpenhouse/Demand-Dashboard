@@ -297,6 +297,47 @@ const INIT_SQL = `
   );
   CREATE INDEX IF NOT EXISTS idx_logs_uid     ON activity_logs(uid);
   CREATE INDEX IF NOT EXISTS idx_logs_created ON activity_logs(created_at DESC);
+
+  -- ── OH Loan Form ──────────────────────────────────────────────────────────
+  -- Public, unauthenticated intake. Mirrored in docs/loan-form-tables.sql for
+  -- manual creation: INIT_SQL only runs inside requireAuth() on a cold start,
+  -- and the loan route never authenticates, so it cannot rely on this having
+  -- run. See ensureLoanTables() below, which the route calls directly.
+  CREATE TABLE IF NOT EXISTS loan_applications (
+    id                  SERIAL PRIMARY KEY,
+    reference           TEXT UNIQUE NOT NULL,
+    primary_name        TEXT,
+    primary_email       TEXT,
+    primary_mobile      TEXT,
+    property_interest   TEXT,
+    loan_amount         NUMERIC(14, 2),
+    notes               TEXT,
+    -- One JSONB array rather than fixed columns: the form is explicitly "all
+    -- applicants" and the count is not known ahead of time.
+    applicants          JSONB NOT NULL DEFAULT '[]',
+    -- Cloudinary secure_urls, keyed by applicant index then document slug.
+    documents           JSONB NOT NULL DEFAULT '{}',
+    submitted_ip        TEXT,
+    user_agent          TEXT,
+    mail_sent_at        TIMESTAMPTZ,
+    mail_error          TEXT,
+    created_at          TIMESTAMPTZ DEFAULT NOW(),
+    updated_at          TIMESTAMPTZ DEFAULT NOW()
+  );
+  CREATE INDEX IF NOT EXISTS idx_loan_apps_created ON loan_applications(created_at DESC);
+  CREATE INDEX IF NOT EXISTS idx_loan_apps_email   ON loan_applications(LOWER(primary_email));
+  CREATE INDEX IF NOT EXISTS idx_loan_apps_mobile  ON loan_applications(primary_mobile);
+
+  -- Per-IP rate limiting for the public route. Kept in Postgres, not memory:
+  -- serverless instances do not share memory, so an in-process counter resets
+  -- on every cold start and limits nothing in practice.
+  CREATE TABLE IF NOT EXISTS loan_form_rate_limit (
+    ip              TEXT PRIMARY KEY,
+    window_started  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    hits            INTEGER     NOT NULL DEFAULT 0,
+    last_hit        TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  );
+  CREATE INDEX IF NOT EXISTS idx_loan_rl_window ON loan_form_rate_limit(window_started);
 `;
 
 async function ensureTable() {
@@ -304,6 +345,55 @@ async function ensureTable() {
     await pool.query(INIT_SQL);
   } catch (err) {
     console.error('[ensureTable] INIT_SQL error:', err.message);
+  }
+}
+
+// The loan form is a public route, so it never passes through requireAuth() and
+// therefore never triggers ensureTable(). It calls this instead: the same two
+// CREATE statements, isolated so a public request cannot run the whole INIT_SQL
+// (which touches every table in the app). Cached after the first success so it
+// costs one round trip per warm instance, not one per submission.
+let _loanTablesReady = false;
+
+async function ensureLoanTables() {
+  if (_loanTablesReady) return true;
+  try {
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS loan_applications (
+        id                  SERIAL PRIMARY KEY,
+        reference           TEXT UNIQUE NOT NULL,
+        primary_name        TEXT,
+        primary_email       TEXT,
+        primary_mobile      TEXT,
+        property_interest   TEXT,
+        loan_amount         NUMERIC(14, 2),
+        notes               TEXT,
+        applicants          JSONB NOT NULL DEFAULT '[]',
+        documents           JSONB NOT NULL DEFAULT '{}',
+        submitted_ip        TEXT,
+        user_agent          TEXT,
+        mail_sent_at        TIMESTAMPTZ,
+        mail_error          TEXT,
+        created_at          TIMESTAMPTZ DEFAULT NOW(),
+        updated_at          TIMESTAMPTZ DEFAULT NOW()
+      );
+      CREATE INDEX IF NOT EXISTS idx_loan_apps_created ON loan_applications(created_at DESC);
+      CREATE INDEX IF NOT EXISTS idx_loan_apps_email   ON loan_applications(LOWER(primary_email));
+      CREATE INDEX IF NOT EXISTS idx_loan_apps_mobile  ON loan_applications(primary_mobile);
+
+      CREATE TABLE IF NOT EXISTS loan_form_rate_limit (
+        ip              TEXT PRIMARY KEY,
+        window_started  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        hits            INTEGER     NOT NULL DEFAULT 0,
+        last_hit        TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      );
+      CREATE INDEX IF NOT EXISTS idx_loan_rl_window ON loan_form_rate_limit(window_started);
+    `);
+    _loanTablesReady = true;
+    return true;
+  } catch (err) {
+    console.error('[ensureLoanTables]', err.message);
+    return false;
   }
 }
 
@@ -384,6 +474,7 @@ function projectIfExists(allCols, col, alias) {
 module.exports = {
   pool,
   ensureTable,
+  ensureLoanTables,
   logActivity,
   getPropertiesColumns,
   hasCol,

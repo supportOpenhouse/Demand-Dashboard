@@ -1,0 +1,415 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Loan Application – Openhouse</title>
+<link rel="icon" type="image/png" href="/favicon.png">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+:root{
+  --ink:#111827;--muted:#6b7280;--line:#e5e7eb;--soft:#f9fafb;
+  --accent:#4f46e5;--ok:#166534;--warn:#b45309;--err:#b91c1c;
+}
+body{font-family:Inter,system-ui,-apple-system,sans-serif;background:#f3f4f6;color:var(--ink);
+  line-height:1.55;padding:28px 16px 80px;-webkit-font-smoothing:antialiased}
+.wrap{max-width:860px;margin:0 auto}
+header{background:#fff;border:1px solid var(--line);border-radius:12px;padding:22px 24px;margin-bottom:16px}
+h1{font-size:22px;font-weight:700;letter-spacing:-.01em}
+.sub{color:var(--muted);font-size:14px;margin-top:6px}
+.card{background:#fff;border:1px solid var(--line);border-radius:12px;padding:20px 24px;margin-bottom:14px}
+.card h2{font-size:13px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;
+  color:var(--muted);margin-bottom:14px}
+.grid{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+@media(max-width:620px){.grid{grid-template-columns:1fr}}
+.full{grid-column:1/-1}
+label{display:block;font-size:12.5px;font-weight:600;color:#374151;margin-bottom:5px}
+.req{color:var(--err)}
+input[type=text],input[type=email],input[type=tel],input[type=number],select,textarea{
+  width:100%;padding:9px 11px;border:1px solid var(--line);border-radius:7px;
+  font:inherit;font-size:14px;background:#fff;color:var(--ink)}
+input:focus,select:focus,textarea:focus{outline:2px solid var(--accent);outline-offset:-1px;border-color:var(--accent)}
+textarea{resize:vertical;min-height:76px}
+.hint{font-size:12px;color:var(--muted);margin-top:4px}
+.applicant{border:1px solid var(--line);border-radius:10px;padding:16px 18px;margin-bottom:14px;background:var(--soft)}
+.applicant-head{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:14px}
+.applicant-title{font-size:14px;font-weight:700}
+.btn{border:0;border-radius:7px;font:inherit;font-size:14px;font-weight:600;cursor:pointer;padding:10px 18px}
+.btn-primary{background:var(--accent);color:#fff}
+.btn-primary:disabled{opacity:.55;cursor:not-allowed}
+.btn-ghost{background:#fff;border:1px solid var(--line);color:#374151;padding:7px 13px;font-size:13px}
+.btn-link{background:none;border:0;color:var(--err);font:inherit;font-size:12.5px;font-weight:600;cursor:pointer;padding:0}
+.docs{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:6px}
+@media(max-width:620px){.docs{grid-template-columns:1fr}}
+.doc{border:1px dashed var(--line);border-radius:8px;padding:10px 12px;background:#fff}
+.doc-label{font-size:12.5px;font-weight:600;color:#374151}
+.doc-note{font-size:11.5px;color:var(--muted);margin-top:2px}
+.doc input[type=file]{margin-top:7px;font-size:12px;width:100%}
+.doc-state{font-size:11.5px;margin-top:5px;min-height:1em}
+.doc-state.ok{color:var(--ok);font-weight:600}
+.doc-state.err{color:var(--err)}
+.doc-state.busy{color:var(--muted)}
+.foot{display:flex;align-items:center;gap:14px;flex-wrap:wrap;margin-top:6px}
+.status{font-size:13px;min-height:1em}
+.status.err{color:var(--err)}
+.status.busy{color:var(--muted)}
+.done{background:#fff;border:1px solid var(--line);border-radius:12px;padding:36px 28px;text-align:center}
+.done h2{font-size:19px;font-weight:700;color:var(--ok);margin-bottom:8px;text-transform:none;letter-spacing:0}
+.ref{font-family:ui-monospace,Menlo,monospace;font-size:15px;font-weight:700;
+  background:var(--soft);border:1px solid var(--line);border-radius:6px;padding:5px 11px;display:inline-block;margin-top:6px}
+[hidden]{display:none!important}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header>
+    <h1>Loan Application</h1>
+    <p class="sub">Please share the documents and details below so we can start your loan application.
+       Every applicant needs their own set. Nothing is submitted until you press <strong>Submit application</strong> at the end.</p>
+  </header>
+
+  <form id="loanForm">
+    <div class="card">
+      <h2>Application</h2>
+      <div class="grid">
+        <div>
+          <label for="propertyInterest">Property of interest</label>
+          <input type="text" id="propertyInterest" placeholder="Society and unit, if known">
+        </div>
+        <div>
+          <label for="loanAmount">Loan amount required (₹)</label>
+          <input type="number" id="loanAmount" min="0" step="1" placeholder="e.g. 5000000">
+        </div>
+      </div>
+    </div>
+
+    <div id="applicants"></div>
+
+    <div class="card" style="text-align:center">
+      <button type="button" class="btn btn-ghost" id="addApplicant">+ Add another applicant</button>
+      <p class="hint" style="margin-top:8px">Add a co-applicant if the loan is being applied for jointly.</p>
+    </div>
+
+    <div class="card">
+      <h2>Anything else</h2>
+      <label for="notes">Notes (optional)</label>
+      <textarea id="notes" placeholder="Preferred bank, timelines, or anything else we should know…"></textarea>
+    </div>
+
+    <div class="card">
+      <div class="foot">
+        <button type="submit" class="btn btn-primary" id="submitBtn">Submit application</button>
+        <span class="status" id="formStatus"></span>
+      </div>
+    </div>
+  </form>
+
+  <div class="done" id="doneCard" hidden>
+    <h2>Application received</h2>
+    <p class="sub">Thank you. Our loan team will be in touch shortly.</p>
+    <p class="sub" style="margin-top:12px">Your reference</p>
+    <div class="ref" id="doneRef"></div>
+  </div>
+
+</div>
+
+<script>
+// Public loan intake. No auth: the page is shared directly with applicants.
+// Documents upload to Cloudinary one at a time via /api/loan/upload as they are
+// chosen, so the final submit carries URLs rather than megabytes of base64 —
+// which also means a slow connection fails on one file, not the whole form.
+(function () {
+  'use strict';
+
+  var MAX_MB = 3;
+
+  // Which documents each applicant is asked for. `when` gates a document on the
+  // applicant's own answers, so a self-employed applicant is never asked for
+  // salary slips and a rent agreement only appears if the address differs.
+  var DOCS = [
+    { slug:'photo',   label:'Passport-size photograph', note:'Image only' },
+    { slug:'pan',     label:'PAN card',   note:'PDF or image' },
+    { slug:'aadhaar', label:'Aadhaar card', note:'PDF or image' },
+    { slug:'address_proof', label:'Current address proof', note:'PDF or image' },
+    { slug:'rent_agreement', label:'Rent agreement', note:'Needed when your current address differs from Aadhaar',
+      when:function (a) { return a.sameAddress === 'no'; } },
+    { slug:'salary_slips', label:'Salary slips — last 6 months', note:'Employed applicants',
+      when:function (a) { return a.employment === 'Salaried'; } },
+    { slug:'form16', label:'Form 16 — last 2 years (Part A & B)', note:'Employed applicants',
+      when:function (a) { return a.employment === 'Salaried'; } },
+    { slug:'salary_bank_statement', label:'Salary account statement — 1 year', note:'Employed applicants',
+      when:function (a) { return a.employment === 'Salaried'; } },
+    { slug:'savings_bank_statement', label:'Savings account statement — 1 year', note:'All applicants' },
+    { slug:'itr', label:'ITR — last 3 years', note:'All available' }
+  ];
+
+  var EMPLOYMENT = ['Salaried','Self-employed','Business','Retired','Not employed'];
+  var QUALIFICATIONS = ['Post-graduate or higher','Graduate','Diploma','Class 12','Other'];
+
+  var state = [];              // one entry per applicant
+  var host = document.getElementById('applicants');
+
+  function blank() {
+    return { name:'', relationship:'', mothers:'', mobile:'', email:'',
+             employment:'', qualification:'', careerStart:'', orgSince:'',
+             sameAddress:'', addlIncome:'', addlIncomeAmt:'', emi:'', emiAmt:'',
+             docs:{} };
+  }
+
+  function esc(s) {
+    return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) {
+      return { '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c];
+    });
+  }
+
+  function options(list, chosen) {
+    return '<option value="">Select…</option>' + list.map(function (o) {
+      return '<option value="' + esc(o) + '"' + (o === chosen ? ' selected' : '') + '>' + esc(o) + '</option>';
+    }).join('');
+  }
+
+  function render() {
+    host.innerHTML = state.map(function (a, i) {
+      var salaried = a.employment === 'Salaried';
+      var docs = DOCS.filter(function (d) { return !d.when || d.when(a); });
+
+      return '' +
+      '<div class="card applicant" data-i="' + i + '">' +
+        '<div class="applicant-head">' +
+          '<span class="applicant-title">' + (i === 0 ? 'Primary applicant' : 'Co-applicant ' + i) + '</span>' +
+          (i > 0 ? '<button type="button" class="btn-link" data-remove="' + i + '">Remove</button>' : '') +
+        '</div>' +
+
+        '<div class="grid">' +
+          '<div><label>Full name <span class="req">*</span></label>' +
+            '<input type="text" data-f="name" value="' + esc(a.name) + '"></div>' +
+
+          (i > 0
+            ? '<div><label>Relationship to primary applicant</label>' +
+                '<input type="text" data-f="relationship" value="' + esc(a.relationship) + '" placeholder="Spouse, parent, sibling…"></div>'
+            : '<div><label>Mobile number <span class="req">*</span></label>' +
+                '<input type="tel" data-f="mobile" inputmode="numeric" value="' + esc(a.mobile) + '" placeholder="10 digits"></div>') +
+
+          (i > 0
+            ? '<div><label>Mobile number</label>' +
+                '<input type="tel" data-f="mobile" inputmode="numeric" value="' + esc(a.mobile) + '" placeholder="10 digits"></div>'
+            : '') +
+
+          '<div><label>Email address</label>' +
+            '<input type="email" data-f="email" value="' + esc(a.email) + '"></div>' +
+
+          '<div><label>Mother’s name</label>' +
+            '<input type="text" data-f="mothers" value="' + esc(a.mothers) + '"></div>' +
+
+          '<div><label>Employment type</label>' +
+            '<select data-f="employment">' + options(EMPLOYMENT, a.employment) + '</select></div>' +
+
+          '<div><label>Highest educational qualification</label>' +
+            '<select data-f="qualification">' + options(QUALIFICATIONS, a.qualification) + '</select></div>' +
+
+          (salaried
+            ? '<div><label>Career started (year)</label>' +
+                '<input type="number" data-f="careerStart" min="1950" max="2100" value="' + esc(a.careerStart) + '" placeholder="e.g. 2014"></div>' +
+              '<div><label>In current organisation since (year)</label>' +
+                '<input type="number" data-f="orgSince" min="1950" max="2100" value="' + esc(a.orgSince) + '" placeholder="e.g. 2019"></div>'
+            : '') +
+
+          '<div><label>Is your current address the same as on Aadhaar?</label>' +
+            '<select data-f="sameAddress">' +
+              '<option value="">Select…</option>' +
+              '<option value="yes"' + (a.sameAddress === 'yes' ? ' selected' : '') + '>Yes</option>' +
+              '<option value="no"' + (a.sameAddress === 'no' ? ' selected' : '') + '>No — I live elsewhere</option>' +
+            '</select></div>' +
+
+          '<div><label>Any additional income?</label>' +
+            '<select data-f="addlIncome">' +
+              '<option value="">Select…</option>' +
+              '<option value="no"' + (a.addlIncome === 'no' ? ' selected' : '') + '>No</option>' +
+              '<option value="yes"' + (a.addlIncome === 'yes' ? ' selected' : '') + '>Yes</option>' +
+            '</select></div>' +
+
+          (a.addlIncome === 'yes'
+            ? '<div><label>Additional income (₹ per year)</label>' +
+                '<input type="number" data-f="addlIncomeAmt" min="0" value="' + esc(a.addlIncomeAmt) + '"></div>'
+            : '') +
+
+          '<div><label>Any ongoing EMIs?</label>' +
+            '<select data-f="emi">' +
+              '<option value="">Select…</option>' +
+              '<option value="no"' + (a.emi === 'no' ? ' selected' : '') + '>No</option>' +
+              '<option value="yes"' + (a.emi === 'yes' ? ' selected' : '') + '>Yes</option>' +
+            '</select></div>' +
+
+          (a.emi === 'yes'
+            ? '<div><label>Total ongoing EMI (₹ per month)</label>' +
+                '<input type="number" data-f="emiAmt" min="0" value="' + esc(a.emiAmt) + '"></div>'
+            : '') +
+        '</div>' +
+
+        '<p style="font-size:12.5px;font-weight:600;color:#374151;margin:16px 0 2px;">Documents</p>' +
+        '<div class="docs">' +
+          docs.map(function (d) {
+            var done = a.docs[d.slug];
+            return '<div class="doc">' +
+              '<div class="doc-label">' + esc(d.label) + '</div>' +
+              '<div class="doc-note">' + esc(d.note) + '</div>' +
+              '<input type="file" data-doc="' + d.slug + '" accept=".pdf,image/*">' +
+              '<div class="doc-state ' + (done ? 'ok' : '') + '" data-state="' + d.slug + '">' +
+                (done ? 'Uploaded' : '') + '</div>' +
+            '</div>';
+          }).join('') +
+        '</div>' +
+      '</div>';
+    }).join('');
+  }
+
+  // Re-rendering on every keystroke would steal focus, so text inputs update
+  // state silently and only the fields that reveal others force a redraw.
+  var REDRAW = { employment:1, sameAddress:1, addlIncome:1, emi:1 };
+
+  host.addEventListener('input', function (e) {
+    var f = e.target.getAttribute('data-f');
+    if (!f) return;
+    var i = +e.target.closest('.applicant').dataset.i;
+    state[i][f] = e.target.value;
+  });
+
+  host.addEventListener('change', function (e) {
+    var f = e.target.getAttribute('data-f');
+    if (f) {
+      var i = +e.target.closest('.applicant').dataset.i;
+      state[i][f] = e.target.value;
+      if (REDRAW[f]) render();
+      return;
+    }
+    var slug = e.target.getAttribute('data-doc');
+    if (slug) uploadDoc(e.target, slug);
+  });
+
+  host.addEventListener('click', function (e) {
+    var rm = e.target.getAttribute('data-remove');
+    if (rm != null) { state.splice(+rm, 1); render(); }
+  });
+
+  document.getElementById('addApplicant').addEventListener('click', function () {
+    if (state.length >= 6) return;
+    state.push(blank());
+    render();
+  });
+
+  function uploadDoc(input, slug) {
+    var card = input.closest('.applicant');
+    var i = +card.dataset.i;
+    var out = card.querySelector('[data-state="' + slug + '"]');
+    var file = input.files && input.files[0];
+    if (!file) return;
+
+    if (file.size > MAX_MB * 1024 * 1024) {
+      out.className = 'doc-state err';
+      out.textContent = (file.size / 1048576).toFixed(1) + ' MB — max ' + MAX_MB + ' MB';
+      input.value = '';
+      return;
+    }
+    out.className = 'doc-state busy';
+    out.textContent = 'Uploading…';
+
+    var fr = new FileReader();
+    fr.onerror = function () { out.className = 'doc-state err'; out.textContent = 'Could not read that file'; };
+    fr.onload = function () {
+      fetch('/api/loan/upload', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ dataUrl: fr.result, label: slug })
+      })
+      .then(function (r) { return r.json(); })
+      .then(function (d) {
+        if (!d.success) { out.className = 'doc-state err'; out.textContent = d.error || 'Upload failed'; return; }
+        state[i].docs[slug] = d.url;
+        out.className = 'doc-state ok';
+        out.textContent = 'Uploaded';
+      })
+      .catch(function (err) { out.className = 'doc-state err'; out.textContent = err.message; });
+    };
+    fr.readAsDataURL(file);
+  }
+
+  // Map the page's own shape onto what /api/loan/submit accepts.
+  function payload() {
+    var documents = {};
+    state.forEach(function (a, i) {
+      if (Object.keys(a.docs).length) documents[String(i)] = a.docs;
+    });
+    return {
+      property_interest: document.getElementById('propertyInterest').value,
+      loan_amount: document.getElementById('loanAmount').value,
+      notes: document.getElementById('notes').value,
+      documents: documents,
+      applicants: state.map(function (a, i) {
+        return {
+          name: a.name,
+          relationship: i === 0 ? '' : a.relationship,
+          mothers_name: a.mothers,
+          mobile: a.mobile,
+          email: a.email,
+          employment_type: a.employment,
+          qualification: a.qualification,
+          career_start_year: a.careerStart,
+          current_org_since: a.orgSince,
+          current_address_same_as_aadhaar:
+            a.sameAddress === 'yes' ? true : a.sameAddress === 'no' ? false : null,
+          additional_income_amount: a.addlIncome === 'yes' ? a.addlIncomeAmt : null,
+          ongoing_emi_amount: a.emi === 'yes' ? a.emiAmt : null
+        };
+      })
+    };
+  }
+
+  document.getElementById('loanForm').addEventListener('submit', function (e) {
+    e.preventDefault();
+    var btn = document.getElementById('submitBtn');
+    var out = document.getElementById('formStatus');
+
+    if (!state[0].name.trim()) {
+      out.className = 'status err'; out.textContent = 'Please enter the primary applicant’s name.'; return;
+    }
+    if (state[0].mobile.replace(/\D/g, '').length < 10) {
+      out.className = 'status err'; out.textContent = 'Please enter a 10-digit mobile number for the primary applicant.'; return;
+    }
+
+    btn.disabled = true;
+    out.className = 'status busy';
+    out.textContent = 'Submitting…';
+
+    fetch('/api/loan/submit', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload())
+    })
+    .then(function (r) { return r.json(); })
+    .then(function (d) {
+      if (!d.success) {
+        btn.disabled = false;
+        out.className = 'status err';
+        out.textContent = d.error || 'Could not submit. Please try again.';
+        return;
+      }
+      document.getElementById('loanForm').hidden = true;
+      document.getElementById('doneRef').textContent = d.reference;
+      document.getElementById('doneCard').hidden = false;
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+    })
+    .catch(function (err) {
+      btn.disabled = false;
+      out.className = 'status err';
+      out.textContent = 'Network error: ' + err.message;
+    });
+  });
+
+  state.push(blank());
+  render();
+})();
+</script>
+</body>
+</html>

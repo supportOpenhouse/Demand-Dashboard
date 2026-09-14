@@ -357,6 +357,109 @@ function buildBrokerEmail({ property, booking, submittedByName, submittedBy }) {
   return { subject, html: wrapEmailShell('Brokerage Details', bodyHtml) };
 }
 
+
+// ── OH Loan Form ────────────────────────────────────────────────────────────
+// Notification for a public loan application. Renders every applicant as its
+// own block, because the form collects the same details for each one and a
+// flat list would make it impossible to tell whose salary slip is whose.
+//
+// Document links point at Cloudinary. They are publicly readable (unsigned
+// preset), so this mail should not be forwarded outside the loan team.
+function buildLoanApplicationEmail({ application }) {
+  const a = application || {};
+  const applicants = Array.isArray(a.applicants) ? a.applicants : [];
+  const docs = a.documents || {};
+
+  const row = (label, value) => value
+    ? `<tr>
+         <td style="padding:4px 12px 4px 0;color:#6b7280;white-space:nowrap;vertical-align:top;">${esc(label)}</td>
+         <td style="padding:4px 0;color:#111827;">${esc(value)}</td>
+       </tr>`
+    : '';
+
+  const money = (n) => (n == null || n === '')
+    ? '' : '₹' + Number(n).toLocaleString('en-IN');
+
+  const docLinks = (idx) => {
+    const set = docs[String(idx)] || {};
+    const keys = Object.keys(set).filter(k => set[k]);
+    if (!keys.length) {
+      return '<p style="margin:6px 0 0;color:#b45309;font-size:13px;">No documents uploaded.</p>';
+    }
+    return `<ul style="margin:6px 0 0;padding-left:18px;font-size:13px;">
+      ${keys.map(k => `<li style="margin:2px 0;">
+        <a href="${esc(set[k])}" style="color:#4f46e5;">${esc(DOC_LABELS[k] || k)}</a>
+      </li>`).join('')}
+    </ul>`;
+  };
+
+  const blocks = applicants.map((p, i) => `
+    <div style="margin:0 0 18px;padding:14px 16px;border:1px solid #e5e7eb;border-radius:8px;">
+      <p style="margin:0 0 10px;font-weight:700;color:#111827;">
+        ${i === 0 ? 'Primary applicant' : `Co-applicant ${i}`}${p.name ? ' — ' + esc(p.name) : ''}
+      </p>
+      <table style="border-collapse:collapse;font-size:14px;width:100%;">
+        ${row('Relationship', i === 0 ? '' : p.relationship)}
+        ${row("Mother's name", p.mothers_name)}
+        ${row('Mobile', p.mobile)}
+        ${row('Email', p.email)}
+        ${row('Employment', p.employment_type)}
+        ${row('Highest qualification', p.qualification)}
+        ${row('Career started', p.career_start_year)}
+        ${row('In current organisation since', p.current_org_since)}
+        ${row('Current address matches Aadhaar', p.current_address_same_as_aadhaar === false ? 'No' : (p.current_address_same_as_aadhaar === true ? 'Yes' : ''))}
+        ${row('Additional income', money(p.additional_income_amount))}
+        ${row('Ongoing EMIs', money(p.ongoing_emi_amount))}
+      </table>
+      <p style="margin:12px 0 0;font-size:12px;font-weight:600;color:#374151;">Documents</p>
+      ${docLinks(i)}
+    </div>`).join('');
+
+  const bodyHtml = `
+    <p style="margin:0 0 14px;">
+      A new loan application has been submitted through the OH Loan Form.
+    </p>
+
+    <table style="border-collapse:collapse;font-size:14px;margin:0 0 18px;">
+      ${row('Reference', a.reference)}
+      ${row('Applicants', String(applicants.length))}
+      ${row('Property of interest', a.property_interest)}
+      ${row('Loan amount required', money(a.loan_amount))}
+    </table>
+
+    ${blocks}
+
+    ${a.notes ? `
+      <p style="margin:0 0 6px;font-weight:600;color:#374151;">Notes from the applicant</p>
+      <p style="margin:0 0 14px;white-space:pre-wrap;">${esc(a.notes)}</p>
+    ` : ''}
+
+    <p style="margin:18px 0 0;font-size:12px;color:#6b7280;">
+      Document links are hosted on Cloudinary and are accessible to anyone with
+      the URL. Please do not forward this email outside the loan team.
+    </p>
+  `;
+
+  return {
+    subject: 'Openhouse Loan Application',
+    html: wrapEmailShell('Loan Application', bodyHtml),
+  };
+}
+
+// Slug -> human label, shared by the form and this email.
+const DOC_LABELS = {
+  photo: 'Passport-size photograph',
+  pan: 'PAN card',
+  aadhaar: 'Aadhaar card',
+  address_proof: 'Current address proof',
+  rent_agreement: 'Rent agreement',
+  salary_slips: 'Salary slips (last 6 months)',
+  form16: 'Form 16 (last 2 years, Part A & B)',
+  salary_bank_statement: 'Salary account statement (1 year)',
+  savings_bank_statement: 'Savings account statement (1 year)',
+  itr: 'ITR (last 3 years)',
+};
+
 async function sendMail({ to, subject, html }) {
   const transporter = getTransporter();
   const from = process.env.SMTP_FROM || process.env.SMTP_USER;
@@ -369,4 +472,4 @@ async function sendMail({ to, subject, html }) {
   return info;
 }
 
-module.exports = { buildBookingEmail, buildBrokerEmail, sendMail };
+module.exports = { buildBookingEmail, buildBrokerEmail, buildLoanApplicationEmail, DOC_LABELS, sendMail };
