@@ -1214,6 +1214,11 @@ body.role-viewer .col-contact { display: none; }
 /* Explicit draft-save feedback in the booking footer. */
 .booking-save-hint { font-size: 12px; color: #6b7280; }
 .booking-save-hint.is-saved { color: #166534; }
+/* Saving is explicit, so the footer has to carry all three states — a failure
+   that left the last "Saved HH:MM:SS" standing is what hid the expired-session
+   bug that autosave used to cause. */
+.booking-save-hint.is-dirty  { color: #92400e; }
+.booking-save-hint.is-failed { color: #b91c1c; font-weight: 600; }
 
 /* Direct-deal escape from the CP lookup: a booking with no channel partner
    must not be blocked by a lookup it can never satisfy. */

@@ -326,21 +326,33 @@ function bindUI() {
     });
   });
 
-  // Modals. Closing the booking modal flushes any unsaved edit first — waiting
-  // for the next 10s tick would lose whatever was typed just before closing.
+  // Modals. Closing the booking modal asks about unsaved edits first; there is
+  // no background save to fall back on. Returns true when the modal may close —
+  // every OTHER modal returns true immediately and is unaffected.
   const closingBookingModal = (id) => {
-    if (id !== 'bookingModal') return;
-    // Only flush from page 2 onward. Flushing on page 1 would recreate exactly
-    // the accidental row the ticker guard above prevents.
-    if (_draftDirty && bookingState.step >= 2) saveBookingDraft({ quiet: true });
+    if (id !== 'bookingModal') return true;
+    // Nothing is written in the background any more, so unsaved edits would just
+    // be lost. Ask first. Page 1 is still excluded: a row saved from there is the
+    // accidental half-empty booking the old ticker guard existed to prevent.
+    // Returns false to keep the modal open.
+    if (_draftDirty && bookingState.step >= 2) {
+      const choice = window.confirm(
+        'You have unsaved booking details.\n\n'
+        + 'OK to save them before closing, or Cancel to discard them.');
+      if (choice) saveBookingDraft({ quiet: false });
+    }
     stopBookingAutosave();
+    return true;
   };
   $$('[data-close]').forEach(b => b.addEventListener('click', () => {
-    closingBookingModal(b.dataset.close);
+    if (!closingBookingModal(b.dataset.close)) return;
     $('#' + b.dataset.close).classList.remove('open');
   }));
   $$('.modal-overlay').forEach(o => o.addEventListener('click', (e) => {
-    if (e.target === o) { closingBookingModal(o.id); o.classList.remove('open'); }
+    if (e.target === o) {
+      if (!closingBookingModal(o.id)) return;
+      o.classList.remove('open');
+    }
   }));
   $('#addUserBtn').addEventListener('click', addUser);
   $('#forceLogoutAllBtn').addEventListener('click', forceLogoutAll);
@@ -1953,28 +1965,18 @@ function clearBookingDetailFields() {
 // does that — and it updates one row rather than inserting per keystroke.
 let _draftTimer = null;
 let _draftInFlight = false;
-let _draftTicker = null;
 let _draftDirty = false;
 
-// Save on a fixed 10s cadence, but only when something actually changed — a
-// ticker that writes an unchanged row every 10s is just load.
+// The 10s autosave ticker was REMOVED. It wrote in the background on a cadence
+// the operator could not see, and because the save was `quiet` a failure —
+// including a 401 once the 7-day session cookie expired — showed nothing at all
+// while the footer kept displaying the timestamp of the last save that HAD
+// worked. That reads as "your work is safe" at exactly the moment it is not.
 //
-// Page 1 is excluded on purpose. Opening the modal on a unit by mistake and
-// closing it again used to leave a half-empty booking row behind, because the
-// ticker fired on a page the operator had not committed to anything on. On
-// page 1 a row is only written by an explicit Save or by Next; from page 2
-// onward the operator has committed, and autosave takes over.
-function startBookingAutosave() {
-  stopBookingAutosave();
-  _draftTicker = setInterval(() => {
-    if (bookingState.step < 2) return;
-    if (_draftDirty && !_draftInFlight) saveBookingDraft({ quiet: true });
-  }, 10000);
-}
-
+// Saving is now explicit: the Save button, and the step changes (Next/Back)
+// that have to persist the CP block between pages. Closing with unsaved edits
+// prompts instead of silently flushing — see closingBookingModal.
 function stopBookingAutosave() {
-  clearInterval(_draftTicker);
-  _draftTicker = null;
   clearTimeout(_draftTimer);
   _draftTimer = null;
 }
@@ -2007,6 +2009,15 @@ async function doSaveBookingDraft({ quiet = true } = {}) {
         ...form,
       }),
     });
+    if (r.status === 401) {
+      // Every other call in the app redirects on 401 (see the fetch wrapper).
+      // This one used to swallow it, so the session could expire mid-booking and
+      // the footer would keep showing the last good "Saved HH:MM:SS".
+      markBookingSaveFailed('Session expired — log in again');
+      showToast('Your session expired. Redirecting to login…', 'error');
+      setTimeout(() => { window.location.href = '/login'; }, 1500);
+      return false;
+    }
     const data = await r.json();
     if (r.ok && data.success && data.id) {
       bookingState.draftId = data.id;       // subsequent saves update this row
@@ -2015,11 +2026,14 @@ async function doSaveBookingDraft({ quiet = true } = {}) {
       if (!quiet) showToast('Draft saved', 'success');
       return true;
     }
-    if (!quiet) showToast(data.error || 'Could not save draft', 'error');
+    markBookingSaveFailed('Not saved');
+    showToast(data.error || 'Could not save the booking details', 'error');
     return false;
   } catch (e) {
-    // Autosave is best-effort: a dropped save must never block data entry.
-    if (!quiet) showToast('Could not save draft: ' + e.message, 'error');
+    // Never silent: saving is explicit now, so a failure has to be visible or the
+    // operator will close the modal believing the work is stored.
+    markBookingSaveFailed('Not saved');
+    showToast('Could not save: ' + e.message, 'error');
     return false;
   } finally {
     _draftInFlight = false;
@@ -2033,11 +2047,33 @@ function markBookingSaved() {
   if (!hint) return;
   hint.textContent = 'Saved ' + new Date().toLocaleTimeString();
   hint.classList.add('is-saved');
+  hint.classList.remove('is-failed', 'is-dirty');
 }
 
-// Called on every edit: flag the change and let the 10s ticker pick it up.
+// A failed save must replace the timestamp, not sit next to it — a stale
+// "Saved 17:47:32" beside a failure is what made the old bug invisible.
+function markBookingSaveFailed(msg) {
+  const hint = $('#bookingSaveHint');
+  if (!hint) return;
+  hint.textContent = msg;
+  hint.classList.remove('is-saved', 'is-dirty');
+  hint.classList.add('is-failed');
+}
+
+// Unsaved edits are now the operator's to resolve, so say so in the footer.
+function markBookingDirty() {
+  const hint = $('#bookingSaveHint');
+  if (!hint) return;
+  hint.textContent = 'Unsaved changes';
+  hint.classList.remove('is-saved', 'is-failed');
+  hint.classList.add('is-dirty');
+}
+
+// Called on every edit: flag the change so the footer shows "Unsaved changes"
+// and closing the modal knows to prompt. Nothing saves until Save or Next.
 function scheduleBookingDraft() {
   _draftDirty = true;
+  markBookingDirty();
 }
 
 // ── Selling channel partner lookup ──────────────────────────────────────────
@@ -2206,7 +2242,6 @@ async function openBookingModal(uid) {
   if (srcEl) srcEl.value = '';
   applyDirectDeal(false);
   _draftDirty = false;
-  startBookingAutosave();
   resetCpLookup();
   bookingState.fixedRecipients = [];
   bookingState.paymentMethods = [];
