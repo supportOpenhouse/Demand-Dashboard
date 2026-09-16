@@ -3,22 +3,26 @@ const { requireAuth, canEdit, setCors } = require('../_auth');
 
 // Pipeline tracking (demand_status + 8 stage dates) was removed from the UI.
 // Schema columns remain but are no longer writable through this endpoint.
-// availability_status (Available/Booked/Sold/Dead) — Available/Booked/Sold are
-// editable by admin + manager; 'Dead' is admin-only (soft-delete: once a unit
-// is Dead it's hidden from viewers + managers by /api/list, so allowing them
-// to set it would immediately lose the row from their view). Strict enum
-// validation. Changing status on a unit that already has a mailed booking is
-// the cancellation/rebooking case — permitted for managers and admins alike,
-// and flagged as after_booking on the activity log.
+//
+// availability_status is now only Available <-> Booked from this dashboard.
+// 'Sold' and 'Dead' are set by an external app and are deliberately NOT
+// settable here — they remain valid values in the column, they just cannot be
+// written through this endpoint.
+//
+// Once a booking mail has been sent for a unit, the dashboard's involvement
+// ends: the unit is frozen here for EVERY role, admins included, and all
+// further changes happen externally. This is a hard refusal rather than an
+// audit flag — see BOOKED_LOCK below.
 const EDITOR_FIELDS = ['internal_remarks', 'availability_status'];
 const ADMIN_ONLY_FIELDS = ['listing_price'];
 const TEXT_FIELDS = ['internal_remarks'];
 const ENUM_FIELDS = {
-  availability_status: ['Available', 'Booked', 'Sold', 'Dead'],
+  availability_status: ['Available', 'Booked'],
 };
-const ADMIN_ONLY_ENUM_VALUES = {
-  availability_status: ['Dead'],
-};
+
+const BOOKED_LOCK =
+  'This property has a submitted booking. It is now managed outside the '
+  + 'Demand Dashboard and can no longer be changed here.';
 const MAX_LEN = 5000;
 
 module.exports = async (req, res) => {
@@ -41,9 +45,25 @@ module.exports = async (req, res) => {
 
     const updates = {};
     const isAdmin = user.role === 'admin';
-    // Set when availability_status is changed on a unit that already has a
-    // mailed booking (cancellation / rebooking). Recorded on the audit log.
-    let afterBookingOverride = false;
+
+    // Hard lock: a unit whose booking mail has gone out is owned by the
+    // external system. Applies to every field and every role — deliberately
+    // not admin-exempt, because a silent admin edit here would diverge from
+    // the external record with nothing to reconcile against.
+    //
+    // Wrapped so a missing booking_details table (pre-Phase-2 deployments)
+    // leaves the dashboard working rather than locking everything.
+    try {
+      const { rows: mailed } = await pool.query(
+        `SELECT 1 FROM booking_details WHERE uid = $1 AND mail_sent_at IS NOT NULL LIMIT 1`,
+        [uid]
+      );
+      if (mailed.length) {
+        return res.status(403).json({ success: false, error: BOOKED_LOCK, locked: true });
+      }
+    } catch (e) {
+      if (!/relation .*booking_details.* does not exist/i.test(e.message)) throw e;
+    }
     // Previous availability_status, read before the write so the log can show
     // the actual transition (e.g. Booked → Available) rather than just the new value.
     let prevAvailability = null;
@@ -90,37 +110,17 @@ module.exports = async (req, res) => {
             error: `${field} must be one of: ${ENUM_FIELDS[field].join(', ')}`,
           });
         }
-        // Admin-only values (e.g. availability_status = 'Dead'). Also blocks
-        // non-admins from clearing an existing Dead value, since they can't
-        // see the row via /api/list — checked further below against the
-        // current DB value.
-        if ((ADMIN_ONLY_ENUM_VALUES[field] || []).includes(val) && !isAdmin) {
+        // A unit already Sold or Dead was put there by the external system, so
+        // the dashboard must not move it back — those values are no longer in
+        // ENUM_FIELDS and cannot be submitted, but an existing one must also
+        // not be overwritten with Available/Booked from here.
+        if (field === 'availability_status'
+            && (prevAvailability === 'Sold' || prevAvailability === 'Dead')) {
           return res.status(403).json({
             success: false,
-            error: `Only admins can set ${field} to "${val}"`,
+            locked: true,
+            error: `This property is marked ${prevAvailability} and is managed outside the Demand Dashboard.`,
           });
-        }
-        if (field === 'availability_status' && !isAdmin && prevAvailability === 'Dead') {
-          return res.status(403).json({
-            success: false,
-            error: 'Only admins can change status on a Dead unit',
-          });
-        }
-        // A status change on a unit that already has a mailed booking is a
-        // cancellation/rebooking. Managers may do it (same as admins), but it's
-        // flagged on the audit log so the override is traceable. Wrapped to
-        // tolerate the booking_details table not existing yet (pre-Phase-2 deploys).
-        if (field === 'availability_status') {
-          try {
-            const { rows: booked } = await pool.query(
-              `SELECT 1 FROM booking_details WHERE uid = $1 AND mail_sent_at IS NOT NULL LIMIT 1`,
-              [uid]
-            );
-            if (booked.length) afterBookingOverride = true;
-          } catch (e) {
-            // booking_details table not yet created — nothing to flag.
-            if (!/relation .*booking_details.* does not exist/i.test(e.message)) throw e;
-          }
         }
         updates[field] = val;
       } else if (TEXT_FIELDS.includes(field)) {
@@ -169,9 +169,6 @@ module.exports = async (req, res) => {
       const details = { field, value };
       if (field === 'availability_status') {
         details.previous = prevAvailability;
-        // Flags a status change made after a booking mail already went out —
-        // i.e. a cancellation or rebooking, worth surfacing in the audit trail.
-        if (afterBookingOverride) details.after_booking = true;
       }
       logActivity(uid, 'demand_update', category, user, details);
     }

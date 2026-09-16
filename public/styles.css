@@ -1270,3 +1270,17 @@ body.role-viewer .col-contact { display: none; }
 /* A field that spans the whole booking grid (Other Conditions sits inline with
    the other fields now, but a textarea needs the full row). */
 .booking-form-grid .booking-fullwidth-field { grid-column: 1 / -1; }
+
+/* Status control for a property that has left the dashboard's control — a
+   booking mail has gone out, or an external app marked it Sold/Dead. */
+.inline-select.avail-select.is-locked {
+  opacity: .75;
+  cursor: not-allowed;
+  background-image: none;   /* drop the dropdown caret: nothing to open */
+}
+.avail-locked-note {
+  margin-left: 6px;
+  font-size: 11px;
+  cursor: help;
+  user-select: none;
+}

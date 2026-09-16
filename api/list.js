@@ -529,7 +529,14 @@ module.exports = async (req, res) => {
              dd.internal_remarks,
              dd.legacy_raw_values,
              dd.updated_by,
-             dd.updated_at
+             dd.updated_at,
+             -- Once a booking mail has gone out the unit is handed to the
+             -- external system: the dashboard locks it. Exposed per row so the
+             -- UI can lock the control rather than only failing on save.
+             EXISTS (
+               SELECT 1 FROM booking_details bd
+                WHERE bd.uid = u.uid AND bd.mail_sent_at IS NOT NULL
+             ) AS booking_mailed
       FROM unified u
       LEFT JOIN demand_details dd ON dd.uid = u.uid
       ${msJoin}

@@ -50,6 +50,8 @@ module.exports = async (req, res) => {
              dd.negotiation_meeting_date, dd.booking_done_date,
              dd.ats_signed_date, dd.registry_done_date, dd.sold_date,
              dd.internal_remarks, dd.legacy_raw_values,
+             EXISTS (SELECT 1 FROM booking_details bd
+                      WHERE bd.uid = dd.uid AND bd.mail_sent_at IS NOT NULL) AS booking_mailed,
              dd.updated_by, dd.updated_at,
              'real'::TEXT AS origin
       FROM properties p
@@ -80,6 +82,8 @@ module.exports = async (req, res) => {
              dd.negotiation_meeting_date, dd.booking_done_date,
              dd.ats_signed_date, dd.registry_done_date, dd.sold_date,
              dd.internal_remarks, dd.legacy_raw_values,
+             EXISTS (SELECT 1 FROM booking_details bd
+                      WHERE bd.uid = dd.uid AND bd.mail_sent_at IS NOT NULL) AS booking_mailed,
              dd.updated_by, dd.updated_at,
              'legacy'::TEXT AS origin
       FROM legacy_properties lp

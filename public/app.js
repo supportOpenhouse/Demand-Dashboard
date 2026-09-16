@@ -105,7 +105,10 @@ function fmtSource(v) {
 // "Status" column AND the dropdown in the expand panel's Property header.
 // 'Dead' is admin-only: only admins can pick it, and rows with it are hidden
 // from /api/list for viewers + managers (backend-enforced).
-const AVAILABILITY_OPTIONS = ['Available', 'Booked', 'Sold', 'Dead'];
+// Only Available and Booked are settable from this dashboard. 'Sold' and
+// 'Dead' are set by an external app — they still render (pill + colour) when a
+// row already carries them, they just are not offered as choices.
+const AVAILABILITY_OPTIONS = ['Available', 'Booked'];
 const AVAILABILITY_CLASS = {
   'Available': 'avail-green',
   'Booked':    'avail-amber',
@@ -119,22 +122,40 @@ function renderAvailabilityPill(value) {
 }
 
 // Inline status selector for the Property section header. Posts to
-// /api/demand-details via the delegated change handler. 'Dead' is only
-// exposed to admins — the backend also enforces this, but hiding the option
-// avoids UX confusion for managers.
+// /api/demand-details via the delegated change handler.
+//
+// The control is disabled outright once the unit leaves this dashboard's
+// control — either a booking mail has been sent, or an external app has marked
+// it Sold/Dead. Disabling for EVERY role including admin is deliberate: the
+// server refuses these writes regardless, so leaving the control live would
+// only produce an error toast after the fact.
 function renderAvailabilityHeaderControl(r) {
   const current = r.availability_status || 'Available';
   const cls = AVAILABILITY_CLASS[current] || 'avail-green';
-  const opts = AVAILABILITY_OPTIONS
-    .filter(o => o !== 'Dead' || isAdmin() || current === 'Dead')
+  const external = current === 'Sold' || current === 'Dead';
+  const locked = !!r.booking_mailed || external;
+
+  // A locked row may sit on a value that is no longer offered, so the current
+  // value is always included — otherwise the select would render blank.
+  const values = AVAILABILITY_OPTIONS.includes(current)
+    ? AVAILABILITY_OPTIONS
+    : [current, ...AVAILABILITY_OPTIONS];
+  const opts = values
     .map(o => `<option value="${esc(o)}"${o === current ? ' selected' : ''}>${esc(o)}</option>`)
     .join('');
+
+  const tip = external
+    ? `Marked ${current} by the external system — not editable here.`
+    : 'Booking submitted. This property is now managed outside the Demand Dashboard.';
+
   return `
     <span class="avail-header-control">
-      <select class="inline-select avail-select ${cls}"
-              data-uid="${esc(r.uid)}" data-field="availability_status">
+      <select class="inline-select avail-select ${cls}${locked ? ' is-locked' : ''}"
+              data-uid="${esc(r.uid)}" data-field="availability_status"
+              ${locked ? `disabled title="${esc(tip)}"` : ''}>
         ${opts}
       </select>
+      ${locked ? `<span class="avail-locked-note" title="${esc(tip)}">🔒</span>` : ''}
     </span>`;
 }
 
@@ -143,8 +164,10 @@ function renderAvailabilityHeaderControl(r) {
 // property fields. Present in the DOM for editors; visibility toggled by
 // availability_status === 'Booked'.
 function renderSubmitDetailsRow(r) {
+  // Hidden once the mail has gone out: the booking is complete and re-opening
+  // the modal would only offer edits the server now refuses.
   const isBooked = (r.availability_status || 'Available') === 'Booked';
-  const hidden = isBooked ? '' : 'style="display:none"';
+  const hidden = (isBooked && !r.booking_mailed) ? '' : 'style="display:none"';
   return `
     <div class="submit-details-row" data-submit-row-for="${esc(r.uid)}" ${hidden}>
       <button type="button" class="btn-submit-details"
@@ -1305,17 +1328,15 @@ document.addEventListener('change', (e) => {
     const row = state.rows.find(x => x.uid === uid);
     const prev = row ? (row.availability_status || 'Available') : null;
 
-    // Releasing a booked unit is the cancellation case — a mail has usually
-    // already gone out to the buyer. Confirm before saving, and put the select
-    // back if the user backs out so the UI never shows an unsaved status.
-    if (prev === 'Booked' && el.value === 'Available' && !confirm(
-      'Release this unit back to Available?\n\n' +
-      'It is currently Booked and a booking may already have been mailed to the buyer. ' +
-      'The existing booking record is kept as history, and this change is recorded in the activity log against your account.\n\n' +
-      'You can submit a fresh booking for the unit afterwards.'
-    )) {
+    // A unit whose booking mail has gone out is locked server-side and its
+    // control is disabled, so this only ever runs on a booking that was never
+    // sent — releasing that needs no warning, since nothing left the building.
+    // Guarded anyway: a stale row in memory must not post a write the server
+    // will refuse.
+    if (row && row.booking_mailed) {
       el.value = prev;
       syncAvailabilityUI(uid, prev);
+      showToast('This property has a submitted booking and is managed externally.', 'error');
       return;
     }
 
@@ -1358,6 +1379,28 @@ function isoDateOnly(v) {
 
 // Update all DOM nodes tied to a uid's availability_status: header select color,
 // main row pill, row-level Dead highlight, and Submit Details button visibility.
+// Disable a row's status control in place once its booking mail has gone out.
+// Called after a send so the page reflects the lock immediately; a reload picks
+// the same state up from `booking_mailed` on /api/list.
+function lockBookedRow(uid) {
+  const tip = 'Booking submitted. This property is now managed outside the Demand Dashboard.';
+  const sel = document.querySelector(`select.avail-select[data-uid="${cssEscape(String(uid))}"]`);
+  if (sel && !sel.disabled) {
+    sel.disabled = true;
+    sel.classList.add('is-locked');
+    sel.title = tip;
+    if (!sel.parentElement.querySelector('.avail-locked-note')) {
+      const lock = document.createElement('span');
+      lock.className = 'avail-locked-note';
+      lock.title = tip;
+      lock.textContent = '🔒';
+      sel.parentElement.appendChild(lock);
+    }
+  }
+  const submitRow = document.querySelector(`[data-submit-row-for="${cssEscape(String(uid))}"]`);
+  if (submitRow) submitRow.style.display = 'none';
+}
+
 function syncAvailabilityUI(uid, value) {
   const cls = AVAILABILITY_CLASS[value] || 'avail-green';
 
@@ -2997,10 +3040,15 @@ async function sendBookingMail(mode) {
     // disabled state prevents a double-send race.
     btn.textContent = '✓ Sent';
 
-    // Either send marks the unit Booked.
+    // Either send marks the unit Booked AND hands it to the external system:
+    // from here the dashboard is read-only for this property.
     const row = state.rows.find(x => x.uid === bookingState.uid);
-    if (row) row.availability_status = 'Booked';
+    if (row) {
+      row.availability_status = 'Booked';
+      row.booking_mailed = true;
+    }
     syncAvailabilityUI(bookingState.uid, 'Booked');
+    lockBookedRow(bookingState.uid);
   } catch (e) {
     showToast('Network error: ' + e.message, 'error');
     btn.disabled = false;
