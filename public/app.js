@@ -872,9 +872,13 @@ function renderExpand(r) {
     <div class="expand-section">
       <h4>👤 Owner & Loan</h4>
       ${field('Owner Name', r.owner_name)}
-      ${isViewer() ? '' : field('Contact No', r.contact_no)}
+      ${/* Phone numbers are admin-only: the API drops both columns for every
+            other role, so there is nothing to render for them anyway. Co-owner
+            included because hiding only the owner's number leaves an obvious
+            way around the restriction. */''}
+      ${isAdmin() ? field('Contact No', r.contact_no) : ''}
       ${field('Co-Owner', r.co_owner)}
-      ${isViewer() ? '' : field('Co-Owner No', r.co_owner_number)}
+      ${isAdmin() ? field('Co-Owner No', r.co_owner_number) : ''}
       ${field('Owner Physical Location', r.seller_location)}
       ${field('Seller Residential Status', r.seller_residential_status)}
       ${editableText('Loan Status', 'loan_status', r.loan_status, { uid: r.uid, placeholder: 'No Loan / NA / 60 HDFC / etc.' })}

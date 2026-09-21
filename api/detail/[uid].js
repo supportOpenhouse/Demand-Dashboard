@@ -1,14 +1,11 @@
-const { pool, getPropertiesColumns, hasCol, SUPPLY_READY_STATUSES } = require('../_db');
+const { pool, getPropertiesColumns, hasCol, SUPPLY_READY_STATUSES,
+        stripAdminOnlyColumns } = require('../_db');
 const { requireAuth, setCors } = require('../_auth');
 
-// Acquisition price (guaranteed_sale_price) is admin-only — our cost basis, not
-// something manager/viewer should see. Both SELECTs use `p.*` / `lp.*`, so the
-// column has to be dropped from the response rather than left out of the query.
-// Mirrors the same strip in /api/list.
-function stripAdminOnly(row, user) {
-  if (user.role !== 'admin') delete row.guaranteed_sale_price;
-  return row;
-}
+// Acquisition price (our cost basis) and the owner / co-owner phone numbers are
+// admin-only. Both SELECTs use `p.*` / `lp.*`, so the columns have to be dropped
+// from the response rather than left out of the query. Same strip as /api/list —
+// see ADMIN_ONLY_COLUMNS in _db.js.
 
 // GET /api/detail/:uid
 //
@@ -66,7 +63,7 @@ module.exports = async (req, res) => {
       const row = realRes.rows[0];
       row.owner_name = row.owner_broker_name;
       row.poc = row.assigned_by;
-      stripAdminOnly(row, user);
+      stripAdminOnlyColumns(row, user);
       return res.status(200).json({ success: true, data: row });
     }
 
@@ -95,7 +92,7 @@ module.exports = async (req, res) => {
       const row = legacyRes.rows[0];
       row.owner_name = row.owner_broker_name;
       row.poc = row.assigned_by;
-      stripAdminOnly(row, user);
+      stripAdminOnlyColumns(row, user);
       return res.status(200).json({ success: true, data: row });
     }
 

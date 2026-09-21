@@ -1,5 +1,6 @@
 const { pool, getPropertiesColumns, hasCol, masterSocietiesHasAffordable,
-        masterSocietiesHasMicroMarket, SUPPLY_READY_STATUSES } = require('./_db');
+        masterSocietiesHasMicroMarket, SUPPLY_READY_STATUSES,
+        stripAdminOnlyColumns } = require('./_db');
 const { requireAuth, setCors } = require('./_auth');
 
 // Typed projection list shared by both sides of the UNION ALL. Each tuple is:
@@ -573,13 +574,12 @@ module.exports = async (req, res) => {
       if (!Number.isFinite(r.default_price_lakhs)) r.default_price_lakhs = null;
     }
 
-    // Acquisition price (properties.guaranteed_sale_price) is admin-only — our
-    // cost basis, not something manager/viewer should see. Hiding it in the UI
-    // isn't enough since the raw row lands in the browser, so drop the column
-    // from the payload for everyone but admin.
-    if (user.role !== 'admin') {
-      for (const r of rows) delete r.guaranteed_sale_price;
-    }
+    // Admin-only columns — acquisition price (our cost basis) and the owner /
+    // co-owner phone numbers. Hiding them in the UI isn't enough since the raw
+    // row lands in the browser, so they are dropped from the payload for every
+    // role but admin. See ADMIN_ONLY_COLUMNS in _db.js.
+    // Runs after default_price_lakhs above, which still needs the raw value.
+    for (const r of rows) stripAdminOnlyColumns(r, user);
 
     // Distinct values for filter dropdowns — pulled from the full unified pool
     // (no outer filter conditions applied here) so picking one filter never

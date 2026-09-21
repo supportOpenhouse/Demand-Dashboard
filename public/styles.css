@@ -958,15 +958,19 @@ tbody tr.expand-row td {
 ::-webkit-scrollbar-thumb:hover { background: #9ca3af; }
 
 /* ── Role-Based Visibility ─────────────────────────────────────────────── */
-/* Viewers don't see AMA Date, Key Handover, owner contact_no, or co-owner
-   number. Class is applied to <body> in renderUserMenu(). The rest of the
+/* Viewers don't see AMA Date or Key Handover; phone numbers are admin-only (see
+   below). Class is applied to <body> in renderUserMenu(). The rest of the
    layout flows naturally — the colspan on the expand row still spans all
    physical columns; hidden ones just take 0 width. */
 body.role-viewer th.col-ama-date,
 body.role-viewer td.col-ama-date,
 body.role-viewer th.col-key-handover,
-body.role-viewer td.col-key-handover,
-body.role-viewer .col-contact { display: none; }
+body.role-viewer td.col-key-handover { display: none; }
+
+/* Owner phone number in the main row — admin only, so it is hidden from manager
+   as well as viewer. Negated selector rather than listing the two roles so a new
+   role added later is denied by default. */
+body:not(.role-admin) .col-contact { display: none; }
 
 /* ── Inline Remarks Cell (main row, "Demand Team Remarks" column) ─────── */
 .td-remarks {

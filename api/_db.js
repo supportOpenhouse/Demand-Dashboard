@@ -29,6 +29,22 @@ const SUPPLY_READY_STATUSES = ['AMA Signed', 'Key Handover Done'];
 // date passed AND handover date passed), so it is a credible second signal.
 const KEY_HANDOVER_DONE_STATUS = 'Key Handover Done';
 
+// Columns stripped from API responses for anyone who isn't an admin. Hiding a
+// field in the UI is not a restriction on its own — the raw row still lands in
+// the browser and is readable from devtools — so every admin-only field is
+// dropped from the payload here as well.
+//   guaranteed_sale_price → acquisition price, our cost basis.
+//   contact_no / co_owner_number → owner + co-owner phone numbers. Both, because
+//     hiding only the owner's leaves the co-owner's as a trivial way around it.
+const ADMIN_ONLY_COLUMNS = ['guaranteed_sale_price', 'contact_no', 'co_owner_number'];
+
+// Drop admin-only columns from a row in place. Safe to call on any row shape.
+function stripAdminOnlyColumns(row, user) {
+  if (!row || (user && user.role === 'admin')) return row;
+  for (const col of ADMIN_ONLY_COLUMNS) delete row[col];
+  return row;
+}
+
 // Idempotent — runs on every cold start. Owns demand_users and demand_details only.
 // Reads activity_logs (created by the Acquired dashboard) but does not own its schema.
 const INIT_SQL = `
@@ -490,4 +506,6 @@ module.exports = {
   DEMAND_STATUSES,
   SUPPLY_READY_STATUSES,
   KEY_HANDOVER_DONE_STATUS,
+  ADMIN_ONLY_COLUMNS,
+  stripAdminOnlyColumns,
 };
