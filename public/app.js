@@ -3030,10 +3030,26 @@ async function generateBookingPreview(mode) {
     $('#bookingPreviewTo').textContent = (data.recipients || []).join(', ');
     $('#bookingPreviewSubject').textContent = data.subject;
 
-    const iframe = $('#bookingPreviewIframe');
-    // Write HTML directly into the sandboxed iframe (no script execution).
-    iframe.srcdoc = data.html;
+    // Reveal page 3 BEFORE writing the iframe. srcdoc assigned to an iframe
+    // that is still display:none is frequently never parsed — the element has
+    // no layout box, so the browser skips the navigation and the frame stays
+    // blank even after it becomes visible. This was intermittent rather than
+    // constant because it depends on whether a layout/paint happens to land
+    // between the two statements.
     goToBookingStep(3);
+
+    const iframe = $('#bookingPreviewIframe');
+    // Replacing the element drops any half-loaded document from a previous
+    // preview: assigning srcdoc twice in quick succession (buyer, then CP) can
+    // leave the earlier navigation in flight and win the race.
+    const fresh = iframe.cloneNode(false);
+    fresh.removeAttribute('srcdoc');
+    iframe.parentNode.replaceChild(fresh, iframe);
+
+    // Write on the next frame, once the reveal above has produced layout.
+    requestAnimationFrame(() => {
+      fresh.srcdoc = data.html;
+    });
   } catch (e) {
     showToast('Network error: ' + e.message, 'error');
   }
