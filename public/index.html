@@ -200,6 +200,18 @@
         <!-- Selling channel partner. Resolved by code or registered phone; the
              email is captured by the existing "Add CP email" box below rather
              than a second field for the same thing. -->
+        <!-- Token type comes first: a conditional token means money is taken
+             before terms are settled, so no buyer/CP mail goes out for it. -->
+        <div class="fg cp-source-field" style="margin-bottom:10px">
+          <label for="bookingTokenType">Token type <span class="req">*</span></label>
+          <select class="booking-input" data-bf="token_type" id="bookingTokenType">
+            <option value="normal">Normal token — terms agreed, mails go out</option>
+            <option value="conditional">Conditional token — no mails sent</option>
+          </select>
+          <div id="tokenTypeHint" class="booking-save-hint" style="display:none;margin-top:4px">
+            Conditional token: the buyer and CP mails are not available for this booking.
+          </div>
+        </div>
         <div class="cp-lookup">
           <div class="fg cp-source-field">
             <label for="bookingSource">Source <span class="req">*</span></label>

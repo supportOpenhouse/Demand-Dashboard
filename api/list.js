@@ -530,13 +530,22 @@ module.exports = async (req, res) => {
              dd.legacy_raw_values,
              dd.updated_by,
              dd.updated_at,
-             -- Once a booking mail has gone out the unit is handed to the
-             -- external system: the dashboard locks it. Exposed per row so the
-             -- UI can lock the control rather than only failing on save.
+             -- Whether a booking mail has gone out. No longer used to lock the
+             -- availability control (a booked unit can be released again), but
+             -- still shown so the row says what stage the booking reached.
              EXISTS (
                SELECT 1 FROM booking_details bd
                 WHERE bd.uid = u.uid AND bd.mail_sent_at IS NOT NULL
-             ) AS booking_mailed
+             ) AS booking_mailed,
+             -- Token type of the newest booking — 'normal' or 'conditional'.
+             -- Rendered under the Booked pill so the two are distinguishable
+             -- at a glance on the board.
+             (
+               SELECT bd2.token_type FROM booking_details bd2
+                WHERE bd2.uid = u.uid
+                ORDER BY bd2.created_at DESC NULLS LAST, bd2.id DESC
+                LIMIT 1
+             ) AS token_type
       FROM unified u
       LEFT JOIN demand_details dd ON dd.uid = u.uid
       ${msJoin}

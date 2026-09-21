@@ -171,6 +171,12 @@ const INIT_SQL = `
   ALTER TABLE booking_details ADD COLUMN IF NOT EXISTS selling_cp_name    TEXT;
   ALTER TABLE booking_details ADD COLUMN IF NOT EXISTS selling_cp_company TEXT;
   ALTER TABLE booking_details ADD COLUMN IF NOT EXISTS selling_cp_email   TEXT;
+
+  -- token_type: 'normal' (the existing flow) or 'conditional'. A conditional
+  -- token is money taken before terms are settled, so NO buyer/CP mail goes out
+  -- for it — that is the only behavioural difference. Defaulted to 'normal' so
+  -- every pre-existing booking keeps its current meaning.
+  ALTER TABLE booking_details ADD COLUMN IF NOT EXISTS token_type TEXT DEFAULT 'normal';
   CREATE INDEX IF NOT EXISTS idx_booking_selling_cp_code  ON booking_details(selling_cp_code);
   CREATE INDEX IF NOT EXISTS idx_booking_selling_cp_phone ON booking_details(selling_cp_phone);
 

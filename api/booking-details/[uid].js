@@ -51,7 +51,10 @@ const BOOKING_COLS = [
   'brokerage_ats_amount', 'brokerage_registry_amount',
   'selling_cp_id', 'selling_cp_code', 'selling_cp_phone',
   'selling_cp_name', 'selling_cp_company', 'selling_cp_email',
+  // 'normal' | 'conditional' — a conditional token sends no mails.
+  'token_type',
 ];
+const TOKEN_TYPES = ['normal', 'conditional'];
 const JSON_COLS = new Set(['recipients', 'broker_emails']);
 
 function bookingValues(clean) {
@@ -217,6 +220,17 @@ function validate(body) {
     clean.source = String(body.source).trim();
   } else {
     errors.push(`source must be one of: ${SOURCES.join(', ')}`);
+  }
+
+  // Token type — 'normal' (mails go out) or 'conditional' (none do). Defaults to
+  // 'normal' when omitted so an older client, or a booking saved before this
+  // existed, keeps the behaviour it already had.
+  if (body.token_type === undefined || body.token_type === null || body.token_type === '') {
+    clean.token_type = 'normal';
+  } else if (TOKEN_TYPES.includes(String(body.token_type).trim().toLowerCase())) {
+    clean.token_type = String(body.token_type).trim().toLowerCase();
+  } else {
+    errors.push(`token_type must be one of: ${TOKEN_TYPES.join(', ')}`);
   }
 
   // Brokerage amount — non-negative. Meaning depends on source: for CP it's the

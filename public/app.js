@@ -115,10 +115,18 @@ const AVAILABILITY_CLASS = {
   'Sold':      'avail-red',
   'Dead':      'avail-gray',
 };
-function renderAvailabilityPill(value) {
+// `tokenType` is optional: when the row is Booked it prints "Normal token" /
+// "Conditional token" beneath the pill, so the board distinguishes a settled
+// booking from one taken on a conditional token. Only meaningful while Booked —
+// a Sold or Available unit is past (or without) that distinction.
+function renderAvailabilityPill(value, tokenType) {
   const v = value || 'Available';
   const cls = AVAILABILITY_CLASS[v] || 'avail-green';
-  return `<span class="avail-pill ${cls}">${esc(v)}</span>`;
+  const pill = `<span class="avail-pill ${cls}">${esc(v)}</span>`;
+  if (v !== 'Booked' || !tokenType) return pill;
+  const cond = String(tokenType).toLowerCase() === 'conditional';
+  return pill + `<div class="token-type${cond ? ' is-conditional' : ''}">`
+    + (cond ? 'Conditional token' : 'Normal token') + '</div>';
 }
 
 // Inline status selector for the Property section header. Posts to
@@ -132,8 +140,12 @@ function renderAvailabilityPill(value) {
 function renderAvailabilityHeaderControl(r) {
   const current = r.availability_status || 'Available';
   const cls = AVAILABILITY_CLASS[current] || 'avail-green';
+  // Sold / Dead are set by the external system and stay locked here.
+  // A BOOKED row is editable again: demand needs to release a unit whose buyer
+  // fell through without waiting on the CRM. (It was locked once the booking
+  // mail had gone out; that blanket rule is lifted.)
   const external = current === 'Sold' || current === 'Dead';
-  const locked = !!r.booking_mailed || external;
+  const locked = external;
 
   // A locked row may sit on a value that is no longer offered, so the current
   // value is always included — otherwise the select would render blank.
@@ -144,9 +156,7 @@ function renderAvailabilityHeaderControl(r) {
     .map(o => `<option value="${esc(o)}"${o === current ? ' selected' : ''}>${esc(o)}</option>`)
     .join('');
 
-  const tip = external
-    ? `Marked ${current} by the external system — not editable here.`
-    : 'Booking submitted. This property is now managed outside the Demand Dashboard.';
+  const tip = `Marked ${current} by the external system — not editable here.`;
 
   return `
     <span class="avail-header-control">
@@ -683,7 +693,7 @@ function renderRow(r) {
       <td class="col-key-handover">${esc(fmtDate(r.key_handover_date)) || '—'}</td>
       <td>${esc(r.owner_name || '—')}<div class="prop-unit col-contact">${esc(r.contact_no || '')}</div></td>
       <td class="col-status">
-        ${renderAvailabilityPill(r.availability_status)}
+        ${renderAvailabilityPill(r.availability_status, r.token_type)}
         ${(r.possession_status || r.occupancy_status)
           ? `<div class="prop-unit">${esc(r.possession_status || r.occupancy_status)}</div>`
           : ''}
@@ -1429,7 +1439,14 @@ function syncAvailabilityUI(uid, value) {
   const row = document.querySelector(`tr.data-row[data-uid="${cssEscape(uid)}"]`);
   if (row) {
     const pill = row.querySelector('.avail-pill');
-    if (pill) pill.outerHTML = renderAvailabilityPill(value);
+    if (pill) {
+      // Replace the old token line too, or an out-of-date one is left behind
+      // when the status moves away from Booked.
+      const oldToken = row.querySelector('.token-type');
+      if (oldToken) oldToken.remove();
+      const rowData = (state.rows || []).find(d => d.uid === uid) || {};
+      pill.outerHTML = renderAvailabilityPill(value, rowData.token_type);
+    }
     row.classList.toggle('dead', value === 'Dead');
   }
   const expandRow = document.querySelector(`tr.expand-row[data-uid-expand="${cssEscape(uid)}"]`);
@@ -1534,7 +1551,7 @@ function syncOccupancyDisplay(uid) {
     const cell = tr.querySelector('.col-status');
     if (cell) {
       cell.innerHTML = `
-        ${renderAvailabilityPill(r.availability_status)}
+        ${renderAvailabilityPill(r.availability_status, r.token_type)}
         ${subtitle ? `<div class="prop-unit">${esc(subtitle)}</div>` : ''}
       `;
     }
@@ -2250,6 +2267,8 @@ async function openBookingModal(uid) {
   applyPayMode('single');
   setBF('source', 'CP');
   applySource('CP');
+  setBF('token_type', 'normal');
+  applyTokenType();
   updateAtsPctHint();
 
   // Everything we can render from local state (no network) goes FIRST so the
@@ -2365,6 +2384,8 @@ async function openBookingModal(uid) {
     setBF('booking_amount_split_1', l.booking_amount_split_1);
     setBF('booking_amount_split_2', l.booking_amount_split_2);
     setBF('source', l.source || 'CP');
+    setBF('token_type', l.token_type || 'normal');
+    applyTokenType();
     setBF('brokerage_amount', l.brokerage_amount);
     setBF('brokerage_timing', l.brokerage_timing);
     if (l.payment_structure) {
@@ -2659,13 +2680,34 @@ function refreshBookingFooter() {
   // stored" moment before sending rather than trusting a timer.
   $('#bookingSaveBtn').style.display = step === 3 ? 'none' : '';
 
+  // A conditional token takes the money before terms are settled, so nothing is
+  // mailed — hiding all four mail controls is the ONLY difference from a normal
+  // token. The booking itself still saves and still marks the unit Booked.
+  const mails = !isConditionalToken();
+
   const onDetails = step === 2;
-  $('#bookingPreviewBtn').style.display = onDetails ? '' : 'none';
-  $('#bookingPreviewCpBtn').style.display = (onDetails && isCp) ? '' : 'none';
+  $('#bookingPreviewBtn').style.display = (onDetails && mails) ? '' : 'none';
+  $('#bookingPreviewCpBtn').style.display = (onDetails && isCp && mails) ? '' : 'none';
 
   const onPreview = step === 3;
-  $('#bookingSendBtn').style.display = (onPreview && bookingState.previewMode === 'buyer') ? '' : 'none';
-  $('#bookingSendCpBtn').style.display = (onPreview && bookingState.previewMode === 'cp') ? '' : 'none';
+  $('#bookingSendBtn').style.display = (onPreview && mails && bookingState.previewMode === 'buyer') ? '' : 'none';
+  $('#bookingSendCpBtn').style.display = (onPreview && mails && bookingState.previewMode === 'cp') ? '' : 'none';
+}
+
+// Reflect the chosen token type: show the "no mails" hint and re-evaluate the
+// footer buttons, since the mail controls disappear for a conditional token.
+function applyTokenType() {
+  const hint = document.getElementById('tokenTypeHint');
+  if (hint) hint.style.display = isConditionalToken() ? '' : 'none';
+  refreshBookingFooter();
+}
+
+// 'conditional' | 'normal'. Read from the control so it is correct mid-edit,
+// falling back to the saved value when the modal has not rendered it yet.
+function isConditionalToken() {
+  const el = document.getElementById('bookingTokenType');
+  const v = el ? el.value : (bookingState.tokenType || 'normal');
+  return String(v).toLowerCase() === 'conditional';
 }
 
 // Live rupee equivalent shown next to the Amount Payable at ATS (%) input.
@@ -2958,6 +3000,7 @@ function flushPendingBookingInputs() {
   document.addEventListener('change', (e) => {
     const field = e.target?.dataset?.bf;
     if (field === 'source') applySource(e.target.value);
+    if (field === 'token_type') applyTokenType();
     if (field === 'brokerage_timing') applyBrokerageTiming();
   });
 

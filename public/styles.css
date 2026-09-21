@@ -242,6 +242,12 @@ tbody tr.expand-row td {
 .avail-pill.avail-red   { background: #fee2e2; color: #b91c1c; }
 .avail-pill.avail-gray  { background: #e5e7eb; color: #4b5563; }
 
+/* Token type under the Booked pill. Conditional is called out in amber because
+   it means no mails went out — the booking is real but incomplete. */
+.token-type { margin-top: 3px; font-size: 10px; font-weight: 600; letter-spacing: .02em;
+              color: #6b7280; white-space: nowrap; }
+.token-type.is-conditional { color: #b45309; }
+
 /* Availability dropdown in the Property section header — same color codes. */
 .avail-header-control {
   display: inline-flex; align-items: center; gap: 6px;
