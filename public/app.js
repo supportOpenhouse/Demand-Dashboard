@@ -174,13 +174,20 @@ function renderAvailabilityHeaderControl(r) {
 
 // Submit Details button — rendered on its own row below the section header
 // (instead of next to the dropdown) so it doesn't crowd the header or push the
-// property fields. Present in the DOM for editors; visibility toggled by
-// availability_status === 'Booked'.
+// property fields. Present in the DOM for editors.
+//
+// It used to appear only once someone had set the pill to Booked by hand. With
+// the dropdown now read-only that left no way to start a booking at all, so it
+// shows on an AVAILABLE unit too — submitting the booking is what marks it
+// Booked (api/booking-details does that server-side), which is the right order:
+// the booking creates the status, not the other way round.
 function renderSubmitDetailsRow(r) {
+  const status = r.availability_status || 'Available';
   // Hidden once the mail has gone out: the booking is complete and re-opening
-  // the modal would only offer edits the server now refuses.
-  const isBooked = (r.availability_status || 'Available') === 'Booked';
-  const hidden = (isBooked && !r.booking_mailed) ? '' : 'style="display:none"';
+  // the modal would only offer edits the server now refuses. Sold/Dead are
+  // finished with, and a booking cannot start there.
+  const canBook = (status === 'Available' || status === 'Booked') && !r.booking_mailed;
+  const hidden = canBook ? '' : 'style="display:none"';
   return `
     <div class="submit-details-row" data-submit-row-for="${esc(r.uid)}" ${hidden}>
       <button type="button" class="btn-submit-details"
@@ -1459,13 +1466,15 @@ function syncAvailabilityUI(uid, value) {
   const expandRow = document.querySelector(`tr.expand-row[data-uid-expand="${cssEscape(uid)}"]`);
   if (expandRow) expandRow.classList.toggle('dead', value === 'Dead');
 
-  // Submit Details row visibility — rendered on its own line below the section
-  // header. Already present in the DOM for editors (display:none until Booked);
-  // we just toggle visibility on status change rather than creating/removing.
+  // Submit Details row visibility — same rule as renderSubmitDetailsRow: a
+  // booking can be started on an Available or Booked unit, never on Sold/Dead.
   const submitRow = document.querySelector(
     `.submit-details-row[data-submit-row-for="${cssEscape(uid)}"]`
   );
-  if (submitRow) submitRow.style.display = value === 'Booked' ? '' : 'none';
+  if (submitRow) {
+    submitRow.style.display =
+      (value === 'Available' || value === 'Booked') ? '' : 'none';
+  }
 }
 
 // Remarks history button (admin-only). Live binding via delegation since
