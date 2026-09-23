@@ -140,12 +140,13 @@ function renderAvailabilityPill(value, tokenType) {
 function renderAvailabilityHeaderControl(r) {
   const current = r.availability_status || 'Available';
   const cls = AVAILABILITY_CLASS[current] || 'avail-green';
-  // Sold / Dead are set by the external system and stay locked here.
-  // A BOOKED row is editable again: demand needs to release a unit whose buyer
-  // fell through without waiting on the CRM. (It was locked once the booking
-  // mail had gone out; that blanket rule is lifted.)
+  // Availability is now owned entirely by the Transaction CRM — every status
+  // change (including releasing a booked unit) happens there, so this control is
+  // display-only. The CRM cancel also archives the booking and resets the buyer
+  // journey; flipping the pill here would do none of that and leave the two
+  // systems disagreeing, which is what it did before.
   const external = current === 'Sold' || current === 'Dead';
-  const locked = external;
+  const locked = true;
 
   // A locked row may sit on a value that is no longer offered, so the current
   // value is always included — otherwise the select would render blank.
@@ -156,7 +157,9 @@ function renderAvailabilityHeaderControl(r) {
     .map(o => `<option value="${esc(o)}"${o === current ? ' selected' : ''}>${esc(o)}</option>`)
     .join('');
 
-  const tip = `Marked ${current} by the external system — not editable here.`;
+  const tip = external
+    ? `Marked ${current} by the external system — not editable here.`
+    : 'Availability is managed in the Transaction CRM — change it there.';
 
   return `
     <span class="avail-header-control">
