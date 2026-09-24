@@ -105,31 +105,80 @@ const KH_ACK_RULE_FROM = '2026-09-24';
 // them. Each was checked in the mailbox (24-Sep-2026).
 const KH_ACK_MAILED_BY_HAND = ['OHND1074', 'OHND1433'];
 
-// Handover dates that only the acknowledgement mail still carries, checked in the
-// mailbox (24-Sep-2026). The mail's date is shown only while Supply still holds
-// `supply`, so a later Form 9 correction or an admin edit wins. Drop an entry once
-// Supply's record holds the mail's date.
+// Handover dates only the acknowledgement mail carries and Neon has no record of,
+// checked in the mailbox (24-Sep-2026). A date is shown only while Supply still
+// holds `supply`, so a later Form 9 correction or an admin edit wins. Drop an
+// entry once Supply's record holds the mail's date. Dates Supply blanked after the
+// mail are recovered from the change history instead (see below).
 const KH_DATE_FROM_ACK_MAIL = [
-  { uid: 'OHND1074', mail: '2026-08-14', supply: '2026-08-10' }, // mailed by hand; Supply kept an earlier expected date
-  { uid: 'OHND1076', mail: '2026-07-06', supply: null },         // a Form 3 resubmission blanked it on 07-Sep
-  { uid: 'OHGD1306', mail: '2026-09-02', supply: null },         // a Form 3 resubmission blanked it on 19-Sep
-  { uid: 'OHGC1023', mail: '2026-04-15', supply: null },         // blanked later, with no log of when
+  { uid: 'OHND1074', date: '2026-08-14', supply: '2026-08-10' }, // mailed by hand; Supply kept an earlier expected date
+  { uid: 'OHGC1023', date: '2026-04-15', supply: null },         // blanked later, with no log of when
 ];
 
-function keyHandoverDateSql() {
-  const whens = KH_DATE_FROM_ACK_MAIL.map(({ uid, mail, supply }) =>
+// The calendar day (IST) of a logged date value — 'YYYY-MM-DD', or a DATE
+// serialised as a timestamp ('2026-09-02T00:00:00.000Z'). Anything else → null.
+function istDay(value) {
+  const s = String(value || '').trim();
+  if (!/^\d{4}-\d{2}-\d{2}/.test(s)) return null;
+  const plain = /^\d{4}-\d{2}-\d{2}$/.test(s);
+  const d = new Date(plain ? `${s}T00:00:00+05:30` : s);
+  if (isNaN(d.getTime())) return null;
+  const day = new Date(d.getTime() + 330 * 60000).toISOString().slice(0, 10);
+  return plain && day !== s ? null : day; // rejects impossible dates like 2026-02-30
+}
+
+// A handover date Supply blanked after the acknowledgement mail went out (a later
+// form resubmission clears it — Form 3 does this) comes back from the change
+// history: the last date on record before the blank. Read live on every list
+// load, so no scheduled job is needed. A failure recovers nothing and the list
+// carries on with Supply's own dates.
+async function recoverBlankedKeyHandoverDates() {
+  try {
+    const { rows } = await pool.query(`
+      WITH mail AS (
+        SELECT uid, MAX(created_at) AS last_mail
+          FROM activity_logs
+         WHERE action = 'email_key_handover' AND COALESCE(details->>'gmail_id', '') <> ''
+         GROUP BY uid
+      )
+      SELECT DISTINCT ON (l.uid) l.uid,
+             COALESCE(l.details->'changes'->'key_handover_date'->>'old', l.details->>'from') AS old_value
+        FROM activity_logs l
+        JOIN mail m ON m.uid = l.uid AND l.created_at > m.last_mail
+        JOIN properties p ON p.uid = l.uid AND p.key_handover_date IS NULL
+       WHERE (l.details->'changes' ? 'key_handover_date'
+              AND COALESCE(l.details->'changes'->'key_handover_date'->>'new', '') = ''
+              AND COALESCE(l.details->'changes'->'key_handover_date'->>'old', '') <> '')
+          OR (l.details->>'field' = 'key_handover_date'
+              AND COALESCE(l.details->>'to', '') = ''
+              AND COALESCE(l.details->>'from', '') <> '')
+       ORDER BY l.uid, l.created_at DESC`);
+    return rows
+      .map(r => ({ uid: r.uid, date: istDay(r.old_value), supply: null }))
+      .filter(r => r.date && /^[A-Za-z0-9_-]{1,40}$/.test(r.uid));
+  } catch (err) {
+    console.warn('[recoverBlankedKeyHandoverDates]', err.message);
+    return [];
+  }
+}
+
+// `entries` are {uid, date, supply}; the first match wins, so the hand-kept list
+// goes first.
+function keyHandoverDateSql(entries) {
+  if (!entries.length) return 'p."key_handover_date"';
+  const whens = entries.map(({ uid, date, supply }) =>
     `WHEN p.uid = '${uid}' AND p."key_handover_date" IS NOT DISTINCT FROM `
-    + `${supply ? `DATE '${supply}'` : 'NULL'} THEN DATE '${mail}'`);
+    + `${supply ? `DATE '${supply}'` : 'NULL'} THEN DATE '${date}'`);
   return `CASE ${whens.join(' ')} ELSE p."key_handover_date" END`;
 }
 
 // Build the SELECT projection for the real-properties side of the UNION.
 // Columns that don't exist in the live `properties` table (schema drift) get
 // projected as NULL::<type> — same approach used since launch.
-function buildPropertiesProjection(allCols) {
+function buildPropertiesProjection(allCols, khDates) {
   const cols = UNIFIED_COLS.map(([propsCol, _legacyCol, alias, type]) => {
     if (propsCol && hasCol(allCols, propsCol)) {
-      if (alias === 'key_handover_date') return `(${keyHandoverDateSql()})::${type} AS "${alias}"`;
+      if (alias === 'key_handover_date') return `(${keyHandoverDateSql(khDates)})::${type} AS "${alias}"`;
       return `p."${propsCol}"::${type} AS "${alias}"`;
     }
     return `NULL::${type} AS "${alias}"`;
@@ -433,7 +482,8 @@ module.exports = async (req, res) => {
     const pageNum = Math.max(parseInt(page) || 1, 1);
     const offset = (pageNum - 1) * pageSize;
 
-    const propsProjection = buildPropertiesProjection(allCols);
+    const khDates = [...KH_DATE_FROM_ACK_MAIL, ...await recoverBlankedKeyHandoverDates()];
+    const propsProjection = buildPropertiesProjection(allCols, khDates);
     const legacyProjection = buildLegacyProjection();
 
     // Per-society attributes from master_societies (affordable flag, micro-market)
