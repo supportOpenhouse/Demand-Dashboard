@@ -512,13 +512,13 @@ module.exports = async (req, res) => {
     const limitParamIdx = baseParams.length + outerParams.length + 1;
     const offsetParamIdx = baseParams.length + outerParams.length + 2;
 
-    // Acks the Forms log can't show: final_email_sent is set once the mail goes
-    // out from the Transaction Management Dashboard (which logs it in its own DB)
-    // or from Forms before it began logging (14-Apr-2026). Ignored when Forms did
-    // log an attempt — then the log decides, and a failed send stays unconfirmed.
-    const khAckFlagSql = hasCol(allCols, 'final_email_sent')
+    // Acks sent before Forms began logging them (first log 14-Apr-2026 09:06 UTC)
+    // only left final_email_sent behind. Trusted for those Form 9s alone: after
+    // that date Forms also sets it without a delivered mail, so the log decides.
+    const khAckFlagSql = hasCol(allCols, 'final_email_sent') && hasCol(allCols, 'final_submitted_at')
       ? `OR (EXISTS (SELECT 1 FROM properties kp
-                      WHERE kp.uid = u.uid AND kp.final_email_sent IS TRUE)
+                      WHERE kp.uid = u.uid AND kp.final_email_sent IS TRUE
+                        AND kp.final_submitted_at < TIMESTAMPTZ '2026-04-14 09:06:05+00')
                  AND NOT EXISTS (SELECT 1 FROM activity_logs kl2
                       WHERE kl2.uid = u.uid AND kl2.action = 'email_key_handover'))`
       : '';
@@ -561,7 +561,7 @@ module.exports = async (req, res) => {
              -- Whether a Key Handover Acknowledgement mail to the seller is on
              -- record. Form 9 makes the Forms app send it and log
              -- 'email_key_handover'; an empty gmail_id there is a failed send.
-             -- khAckFlagSql adds acks sent outside that log. The mail certifies
+             -- khAckFlagSql adds acks sent before that log began. The mail certifies
              -- the handover — without it key_handover_date is only an expected
              -- date (the UI tags it Tentative). The date shown stays
              -- key_handover_date, where a later Form 9 correction already lands.
