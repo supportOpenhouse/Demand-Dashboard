@@ -640,8 +640,8 @@ function renderTable() {
 
 // Shared by renderRow() and renderExpand(); must not live inside either.
 const AUTO_PRICE_TIP = 'Auto-derived from the acquisition price. Edit to set your own.';
-const KH_TENTATIVE_TIP = 'Tentative: the Key Handover Acknowledgement mail has not been sent '
-  + 'to the seller, so this is an expected date, not a confirmed handover.';
+const KH_TENTATIVE_TIP = 'Tentative: no Key Handover Acknowledgement mail to the seller is '
+  + 'on record, so this is an expected date, not a confirmed handover.';
 
 function renderRow(r) {
   const isOpen = r.uid === state.openUid;
@@ -1053,9 +1053,9 @@ function field(label, value, cls, tooltip) {
 
 // Key Handover "Done" requires a witnessed handover, not an inferred one: the
 // Key Handover Acknowledgement mail sent to the seller (key_handover_mail_sent,
-// from the Forms 'email_key_handover' log) AND a handover date on record.
-// Submitting Form 9 is not enough on its own — the mail is a separate step and
-// some Form 9 submissions never got one.
+// see api/list.js) AND a handover date on record. Submitting Form 9 is not
+// enough on its own — the mail is a separate step and some Form 9 submissions
+// never got one.
 //
 // The supply pipeline's computed 'Key Handover Done' status is deliberately NOT
 // accepted. That status is derived on read from seven gates (deal transfer, docs
@@ -1066,7 +1066,8 @@ function field(label, value, cls, tooltip) {
 //
 // Legacy rows never pass through the supply forms at all, so the date is the only
 // signal that exists for them.
-// Diverges from syncKeyHandoverVacancy() in api/list.js, which still flips occupancy on final_submitted_at.
+// Diverges from syncKeyHandoverVacancy() in api/list.js, which still flips
+// occupancy on final_submitted_at alone.
 function keyHandoverDone(r) {
   if (r.origin === 'legacy') return !!r.key_handover_date;
   return !!r.key_handover_date && !!r.key_handover_mail_sent;
@@ -1718,10 +1719,6 @@ function exportCsv() {
     ['Supply Status', 'supply_status'],
     ['Availability', r => r.availability_status || 'Available'],
     ['Origin', r => r.origin === 'legacy' ? 'Legacy (CSV)' : 'Supply pipeline'],
-    // Blank for legacy (no acknowledgement mail exists to confirm against) and
-    // for rows with no date.
-    ['Key Handover Confirmed', r => (r.origin === 'legacy' || !r.key_handover_date)
-      ? '' : (keyHandoverDone(r) ? 'Yes' : 'Tentative')],
   ];
 
   const header = cols.map(c => csvCell(c[0])).join(',');

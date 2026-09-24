@@ -88,8 +88,6 @@ const UNIFIED_COLS = [
   // forms app. This — not the presence of a date — is what makes key handover
   // genuinely "Done": key_handover_date alone can be a tentative Form 3 value or a
   // manual entry. Real-side only; legacy rows never pass through the supply forms.
-  // The UI's Done/Tentative now keys on key_handover_mail_sent (rowsSql below);
-  // this stamp still drives syncKeyHandoverVacancy.
   ['final_submitted_at',        null,                        'final_submitted_at',        'TIMESTAMPTZ'],
 
   ['additional_images',         'additional_images',         'additional_images',         'JSONB'],
@@ -514,6 +512,17 @@ module.exports = async (req, res) => {
     const limitParamIdx = baseParams.length + outerParams.length + 1;
     const offsetParamIdx = baseParams.length + outerParams.length + 2;
 
+    // Acks the Forms log can't show: final_email_sent is set once the mail goes
+    // out from the Transaction Management Dashboard (which logs it in its own DB)
+    // or from Forms before it began logging (14-Apr-2026). Ignored when Forms did
+    // log an attempt — then the log decides, and a failed send stays unconfirmed.
+    const khAckFlagSql = hasCol(allCols, 'final_email_sent')
+      ? `OR (EXISTS (SELECT 1 FROM properties kp
+                      WHERE kp.uid = u.uid AND kp.final_email_sent IS TRUE)
+                 AND NOT EXISTS (SELECT 1 FROM activity_logs kl2
+                      WHERE kl2.uid = u.uid AND kl2.action = 'email_key_handover'))`
+      : '';
+
     const rowsSql = `${baseCte}
       SELECT u.*,
              ${msSelect}
@@ -549,18 +558,20 @@ module.exports = async (req, res) => {
                 ORDER BY bd2.created_at DESC NULLS LAST, bd2.id DESC
                 LIMIT 1
              ) AS token_type,
-             -- Whether the Key Handover Acknowledgement mail went to the seller.
-             -- Form 9 makes the Forms app send it and log 'email_key_handover';
-             -- an empty gmail_id there is a failed send. The mail certifies the
-             -- handover — without it key_handover_date is only an expected date
-             -- (the UI tags it Tentative). The date shown stays key_handover_date,
-             -- where a later Form 9 correction already lands. Real rows only;
-             -- boolean only, since details carries the seller's email addresses.
-             (u.origin = 'real' AND EXISTS (
+             -- Whether a Key Handover Acknowledgement mail to the seller is on
+             -- record. Form 9 makes the Forms app send it and log
+             -- 'email_key_handover'; an empty gmail_id there is a failed send.
+             -- khAckFlagSql adds acks sent outside that log. The mail certifies
+             -- the handover — without it key_handover_date is only an expected
+             -- date (the UI tags it Tentative). The date shown stays
+             -- key_handover_date, where a later Form 9 correction already lands.
+             -- Real rows only; boolean only, since details carries the seller's
+             -- email addresses.
+             (u.origin = 'real' AND (EXISTS (
                SELECT 1 FROM activity_logs kl
                 WHERE kl.uid = u.uid AND kl.action = 'email_key_handover'
                   AND COALESCE(kl.details->>'gmail_id', '') <> ''
-             )) AS key_handover_mail_sent
+             ) ${khAckFlagSql})) AS key_handover_mail_sent
       FROM unified u
       LEFT JOIN demand_details dd ON dd.uid = u.uid
       ${msJoin}
