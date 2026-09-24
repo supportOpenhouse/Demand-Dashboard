@@ -85,9 +85,9 @@ const UNIFIED_COLS = [
   ['documents_available',       'documents_available',       'documents_available',       'JSONB'],
   ['ama_date',                  'ama_date',                  'ama_date',                  'DATE'],
   // Form 9 (Key Handover Acknowledgement) submission stamp, written by the supply
-  // forms app. It drives syncKeyHandoverVacancy; the UI's "Done" needs the
-  // acknowledgement mail itself (key_handover_mail_sent, in rowsSql), since some
-  // Form 9s never sent one. key_handover_date alone can be a tentative Form 3 value
+  // forms app. It drives syncKeyHandoverVacancy; the UI's "Done" reads
+  // key_handover_confirmed (in rowsSql), which from KH_ACK_RULE_FROM on needs the
+  // acknowledgement mail itself. key_handover_date alone can be a tentative Form 3 value
   // or a manual entry. Real-side only; legacy rows never pass through the supply forms.
   ['final_submitted_at',        null,                        'final_submitted_at',        'TIMESTAMPTZ'],
 
@@ -96,12 +96,40 @@ const UNIFIED_COLS = [
   ['core_home_id',              null,                        'core_home_id',              'INTEGER'],
 ];
 
+// Key handover confirmation (see key_handover_confirmed in rowsSql). From this
+// date on a handover needs the acknowledgement mail to the seller; earlier ones
+// with a Form 9 on record keep counting as done without a mail on record.
+const KH_ACK_RULE_FROM = '2026-09-24';
+
+// Acknowledgement mails sent by hand, outside Form 9, so no Forms log exists for
+// them. Each was checked in the mailbox (24-Sep-2026).
+const KH_ACK_MAILED_BY_HAND = ['OHND1074', 'OHND1433'];
+
+// Handover dates that only the acknowledgement mail still carries, checked in the
+// mailbox (24-Sep-2026). The mail's date is shown only while Supply still holds
+// `supply`, so a later Form 9 correction or an admin edit wins. Drop an entry once
+// Supply's record holds the mail's date.
+const KH_DATE_FROM_ACK_MAIL = [
+  { uid: 'OHND1074', mail: '2026-08-14', supply: '2026-08-10' }, // mailed by hand; Supply kept an earlier expected date
+  { uid: 'OHND1076', mail: '2026-07-06', supply: null },         // a Form 3 resubmission blanked it on 07-Sep
+  { uid: 'OHGD1306', mail: '2026-09-02', supply: null },         // a Form 3 resubmission blanked it on 19-Sep
+  { uid: 'OHGC1023', mail: '2026-04-15', supply: null },         // blanked later, with no log of when
+];
+
+function keyHandoverDateSql() {
+  const whens = KH_DATE_FROM_ACK_MAIL.map(({ uid, mail, supply }) =>
+    `WHEN p.uid = '${uid}' AND p."key_handover_date" IS NOT DISTINCT FROM `
+    + `${supply ? `DATE '${supply}'` : 'NULL'} THEN DATE '${mail}'`);
+  return `CASE ${whens.join(' ')} ELSE p."key_handover_date" END`;
+}
+
 // Build the SELECT projection for the real-properties side of the UNION.
 // Columns that don't exist in the live `properties` table (schema drift) get
 // projected as NULL::<type> — same approach used since launch.
 function buildPropertiesProjection(allCols) {
   const cols = UNIFIED_COLS.map(([propsCol, _legacyCol, alias, type]) => {
     if (propsCol && hasCol(allCols, propsCol)) {
+      if (alias === 'key_handover_date') return `(${keyHandoverDateSql()})::${type} AS "${alias}"`;
       return `p."${propsCol}"::${type} AS "${alias}"`;
     }
     return `NULL::${type} AS "${alias}"`;
@@ -514,19 +542,6 @@ module.exports = async (req, res) => {
     const limitParamIdx = baseParams.length + outerParams.length + 1;
     const offsetParamIdx = baseParams.length + outerParams.length + 2;
 
-    // Acks sent before Forms began logging them (first log 14-Apr-2026) only left
-    // final_email_sent behind. Trusted for handovers dated up to that day alone:
-    // later on, Forms also sets it without a delivered mail, so the log decides.
-    // Keyed on the handover date, not final_submitted_at, which a Form 9
-    // resubmission moves forward (OHNC1056: mailed 12-Apr, resubmitted 16-Apr).
-    const khAckFlagSql = hasCol(allCols, 'final_email_sent') && hasCol(allCols, 'key_handover_date')
-      ? `OR (EXISTS (SELECT 1 FROM properties kp
-                      WHERE kp.uid = u.uid AND kp.final_email_sent IS TRUE
-                        AND kp.key_handover_date <= DATE '2026-04-14')
-                 AND NOT EXISTS (SELECT 1 FROM activity_logs kl2
-                      WHERE kl2.uid = u.uid AND kl2.action = 'email_key_handover'))`
-      : '';
-
     const rowsSql = `${baseCte}
       SELECT u.*,
              ${msSelect}
@@ -562,20 +577,22 @@ module.exports = async (req, res) => {
                 ORDER BY bd2.created_at DESC NULLS LAST, bd2.id DESC
                 LIMIT 1
              ) AS token_type,
-             -- Whether a Key Handover Acknowledgement mail to the seller is on
-             -- record. Form 9 makes the Forms app send it and log
-             -- 'email_key_handover'; an empty gmail_id there is a failed send.
-             -- khAckFlagSql adds acks sent before that log began. The mail certifies
-             -- the handover — without it key_handover_date is only an expected
-             -- date (the UI tags it Tentative). The date shown stays
-             -- key_handover_date, where a later Form 9 correction already lands.
-             -- Real rows only; boolean only, since details carries the seller's
-             -- email addresses.
+             -- Whether the handover is confirmed. It is when the Key Handover
+             -- Acknowledgement mail went to the seller: Form 9 makes the Forms app
+             -- send it and log 'email_key_handover' (an empty gmail_id there is a
+             -- failed send), or it was mailed by hand. Handovers dated before
+             -- KH_ACK_RULE_FROM with a Form 9 on record also count. Otherwise
+             -- key_handover_date is only an expected date (the UI tags it
+             -- Tentative). Real rows only; boolean only, since the log's details
+             -- carry the seller's email addresses.
              (u.origin = 'real' AND (EXISTS (
                SELECT 1 FROM activity_logs kl
                 WHERE kl.uid = u.uid AND kl.action = 'email_key_handover'
                   AND COALESCE(kl.details->>'gmail_id', '') <> ''
-             ) ${khAckFlagSql})) AS key_handover_mail_sent
+             ) OR (u.final_submitted_at IS NOT NULL
+                   AND u.key_handover_date < DATE '${KH_ACK_RULE_FROM}')
+               OR u.uid IN (${KH_ACK_MAILED_BY_HAND.map(id => `'${id}'`).join(', ')})
+             )) AS key_handover_confirmed
       FROM unified u
       LEFT JOIN demand_details dd ON dd.uid = u.uid
       ${msJoin}

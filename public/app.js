@@ -1051,11 +1051,10 @@ function field(label, value, cls, tooltip) {
     </div>`;
 }
 
-// Key Handover "Done" requires a witnessed handover, not an inferred one: the
-// Key Handover Acknowledgement mail sent to the seller (key_handover_mail_sent,
-// see api/list.js) AND a handover date on record. Submitting Form 9 is not
-// enough on its own — the mail is a separate step and some Form 9 submissions
-// never got one.
+// Key Handover "Done" requires a witnessed handover, not an inferred one: a
+// confirmed handover (key_handover_confirmed, see api/list.js — the
+// acknowledgement mail sent to the seller, or a Form 9 on record for handovers
+// dated before that rule began) AND a handover date on record.
 //
 // The supply pipeline's computed 'Key Handover Done' status is deliberately NOT
 // accepted. That status is derived on read from seven gates (deal transfer, docs
@@ -1072,8 +1071,8 @@ function keyHandoverDone(r) {
   if (r.origin === 'legacy') return !!r.key_handover_date;
   // A payload without the flag (an older API) keeps the previous Form 9 rule
   // rather than tagging every dated row Tentative.
-  if (r.key_handover_mail_sent === undefined) return !!r.key_handover_date && !!r.final_submitted_at;
-  return !!r.key_handover_date && !!r.key_handover_mail_sent;
+  if (r.key_handover_confirmed === undefined) return !!r.key_handover_date && !!r.final_submitted_at;
+  return !!r.key_handover_date && !!r.key_handover_confirmed;
 }
 
 // A real row with a date but no acknowledgement mail: the date is only expected.
