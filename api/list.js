@@ -88,6 +88,8 @@ const UNIFIED_COLS = [
   // forms app. This — not the presence of a date — is what makes key handover
   // genuinely "Done": key_handover_date alone can be a tentative Form 3 value or a
   // manual entry. Real-side only; legacy rows never pass through the supply forms.
+  // The UI's Done/Tentative now keys on key_handover_mail_sent (rowsSql below);
+  // this stamp still drives syncKeyHandoverVacancy.
   ['final_submitted_at',        null,                        'final_submitted_at',        'TIMESTAMPTZ'],
 
   ['additional_images',         'additional_images',         'additional_images',         'JSONB'],
@@ -546,7 +548,19 @@ module.exports = async (req, res) => {
                 WHERE bd2.uid = u.uid
                 ORDER BY bd2.created_at DESC NULLS LAST, bd2.id DESC
                 LIMIT 1
-             ) AS token_type
+             ) AS token_type,
+             -- Whether the Key Handover Acknowledgement mail went to the seller.
+             -- Form 9 makes the Forms app send it and log 'email_key_handover';
+             -- an empty gmail_id there is a failed send. The mail certifies the
+             -- handover — without it key_handover_date is only an expected date
+             -- (the UI tags it Tentative). The date shown stays key_handover_date,
+             -- where a later Form 9 correction already lands. Real rows only;
+             -- boolean only, since details carries the seller's email addresses.
+             (u.origin = 'real' AND EXISTS (
+               SELECT 1 FROM activity_logs kl
+                WHERE kl.uid = u.uid AND kl.action = 'email_key_handover'
+                  AND COALESCE(kl.details->>'gmail_id', '') <> ''
+             )) AS key_handover_mail_sent
       FROM unified u
       LEFT JOIN demand_details dd ON dd.uid = u.uid
       ${msJoin}
