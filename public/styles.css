@@ -1259,6 +1259,19 @@ body:not(.role-admin) .col-contact { display: none; }
   vertical-align: 1px;
 }
 
+/* Key handover date with no acknowledgement mail sent to the seller yet — an
+   expected date, not a confirmed handover. Amber like a conditional token. */
+.kh-tentative {
+  display: block;
+  margin-top: 1px;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: .02em;
+  color: #b45309;
+  cursor: help;
+  white-space: nowrap;
+}
+
 /* Payment Range (shown only for a Flexible payment structure). */
 .pay-range-row { display: flex; align-items: center; gap: 8px; }
 .pay-range-cell { position: relative; flex: 1 1 0; min-width: 0; display: flex; align-items: center; gap: 4px; }
