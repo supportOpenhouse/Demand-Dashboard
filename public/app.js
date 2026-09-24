@@ -1070,6 +1070,9 @@ function field(label, value, cls, tooltip) {
 // occupancy on final_submitted_at alone.
 function keyHandoverDone(r) {
   if (r.origin === 'legacy') return !!r.key_handover_date;
+  // A payload without the flag (an older API) keeps the previous Form 9 rule
+  // rather than tagging every dated row Tentative.
+  if (r.key_handover_mail_sent === undefined) return !!r.key_handover_date && !!r.final_submitted_at;
   return !!r.key_handover_date && !!r.key_handover_mail_sent;
 }
 

@@ -85,9 +85,10 @@ const UNIFIED_COLS = [
   ['documents_available',       'documents_available',       'documents_available',       'JSONB'],
   ['ama_date',                  'ama_date',                  'ama_date',                  'DATE'],
   // Form 9 (Key Handover Acknowledgement) submission stamp, written by the supply
-  // forms app. This — not the presence of a date — is what makes key handover
-  // genuinely "Done": key_handover_date alone can be a tentative Form 3 value or a
-  // manual entry. Real-side only; legacy rows never pass through the supply forms.
+  // forms app. It drives syncKeyHandoverVacancy; the UI's "Done" needs the
+  // acknowledgement mail itself (key_handover_mail_sent, in rowsSql), since some
+  // Form 9s never sent one. key_handover_date alone can be a tentative Form 3 value
+  // or a manual entry. Real-side only; legacy rows never pass through the supply forms.
   ['final_submitted_at',        null,                        'final_submitted_at',        'TIMESTAMPTZ'],
 
   ['additional_images',         'additional_images',         'additional_images',         'JSONB'],
@@ -141,7 +142,8 @@ function buildLegacyProjection() {
 // Once the keys are in Openhouse custody, any Tenant / Owner Staying label is
 // stale and flips to 'Vacant'. Handover counts as real on either signal — a Form 9
 // (Key Handover Acknowledgement) submission, or the supply pipeline reaching
-// 'Key Handover Done' — matching keyHandoverDone() in the frontend. Form 9 alone
+// 'Key Handover Done'. (keyHandoverDone() in the frontend now also needs the
+// acknowledgement mail, so it can read Pending on a unit flipped here.) Form 9 alone
 // would miss the ~64 fully-progressed units that predate / bypassed the form and
 // leave them reading "Done" while still labelled Tenant.
 //
@@ -512,13 +514,15 @@ module.exports = async (req, res) => {
     const limitParamIdx = baseParams.length + outerParams.length + 1;
     const offsetParamIdx = baseParams.length + outerParams.length + 2;
 
-    // Acks sent before Forms began logging them (first log 14-Apr-2026 09:06 UTC)
-    // only left final_email_sent behind. Trusted for those Form 9s alone: after
-    // that date Forms also sets it without a delivered mail, so the log decides.
-    const khAckFlagSql = hasCol(allCols, 'final_email_sent') && hasCol(allCols, 'final_submitted_at')
+    // Acks sent before Forms began logging them (first log 14-Apr-2026) only left
+    // final_email_sent behind. Trusted for handovers dated up to that day alone:
+    // later on, Forms also sets it without a delivered mail, so the log decides.
+    // Keyed on the handover date, not final_submitted_at, which a Form 9
+    // resubmission moves forward (OHNC1056: mailed 12-Apr, resubmitted 16-Apr).
+    const khAckFlagSql = hasCol(allCols, 'final_email_sent') && hasCol(allCols, 'key_handover_date')
       ? `OR (EXISTS (SELECT 1 FROM properties kp
                       WHERE kp.uid = u.uid AND kp.final_email_sent IS TRUE
-                        AND kp.final_submitted_at < TIMESTAMPTZ '2026-04-14 09:06:05+00')
+                        AND kp.key_handover_date <= DATE '2026-04-14')
                  AND NOT EXISTS (SELECT 1 FROM activity_logs kl2
                       WHERE kl2.uid = u.uid AND kl2.action = 'email_key_handover'))`
       : '';
