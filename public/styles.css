@@ -1312,3 +1312,16 @@ body:not(.role-admin) .col-contact { display: none; }
   cursor: help;
   user-select: none;
 }
+
+/* ---- overbooking: Book Again ----------------------------------------------- */
+/* A secondary action, styled quieter than Submit Details on purpose: recording an
+   ADDITIONAL concurrent buyer is deliberate and occasional, not the default path. */
+.btn-book-again {
+  background: #fff;
+  border: 1px solid #C7D2E4;
+  color: #1D4ED8;
+}
+.btn-book-again:hover { background: #F4F7FE; border-color: #A9BEDE; }
+.book-again-note {
+  margin-left: 8px; font-size: 11.5px; color: #6b7280; white-space: nowrap;
+}
