@@ -1532,8 +1532,23 @@ document.addEventListener('click', (e) => {
   const btn = e.target.closest('.btn-submit-details');
   if (!btn) return;
   e.stopPropagation();
-  openBookingModal(btn.dataset.submitBookingUid,
-                   { rebook: btn.dataset.rebook === '1' });
+  const uid = btn.dataset.submitBookingUid;
+  const rebook = btn.dataset.rebook === '1';
+  // A rebooking adds a SECOND buyer to a unit that is already booked — an unusual,
+  // deliberate act, and one the board gives no other signal about. Naming the buyer
+  // already on the unit is what makes a misclick obvious before a second journey
+  // exists. Only on the rebook path: a first booking needs no confirmation.
+  if (rebook) {
+    const row = (state.rows || []).find(r => String(r.uid) === String(uid));
+    const who = (row && row.booked_buyer_name)
+      ? `“${row.booked_buyer_name}”` : 'an existing buyer';
+    if (!confirm(
+      `${uid} is already booked by ${who}.\n\n`
+      + 'Book Again records an ADDITIONAL buyer alongside them — both journeys run in '
+      + 'parallel until one ATS executes, and the rest are then archived with their '
+      + 'tokens flagged for refund.\n\nRecord another buyer?')) return;
+  }
+  openBookingModal(uid, { rebook });
 });
 
 function cssEscape(s) {
