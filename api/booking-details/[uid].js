@@ -600,6 +600,24 @@ const handleBookingRequest = async (req, res) => {
   if (action === 'save') {
     const draftId = Number((req.body || {}).booking_id) || null;
     const sets = BOOKING_COLS.map((c, i) => `"${c}" = $${i + 1}`).join(', ');
+
+    // Capturing a booking means the unit is spoken for, so the pill turns Booked here
+    // rather than waiting for the mail. It used to flip only on `send`/`send_cp`, which
+    // left a saved-but-unsent booking reading Available — the unit looked free to the
+    // rest of the team while someone was already mid-booking on it.
+    //
+    // Idempotent, and never downgrades: this only ever writes 'Booked'. Releasing a
+    // unit is the CRM's job (bookingstate), not a side effect of an autosave.
+    const markBooked = async () => {
+      await pool.query(
+        `INSERT INTO demand_details (uid, availability_status, updated_by)
+         VALUES ($1, 'Booked', $2)
+         ON CONFLICT (uid) DO UPDATE
+           SET availability_status = 'Booked', updated_by = $2, updated_at = NOW()
+         WHERE demand_details.availability_status IS DISTINCT FROM 'Booked'`,
+        [uid, user.email]
+      );
+    };
     if (draftId) {
       const { rows } = await pool.query(
         `UPDATE booking_details SET ${sets}, updated_at = NOW()
@@ -614,6 +632,7 @@ const handleBookingRequest = async (req, res) => {
         if (rows[0].mail_sent_at) {
           logActivity(uid, 'booking_edited_after_send', 'booking', user, { booking_id: rows[0].id });
         }
+        await markBooked();
         return res.status(200).json({
           success: true, id: rows[0].id, sent: !!rows[0].mail_sent_at, draft: true,
           editedAfterSend: !!rows[0].mail_sent_at,
@@ -630,6 +649,7 @@ const handleBookingRequest = async (req, res) => {
       [uid, ...bookingValues(clean), user.email]
     );
     logActivity(uid, 'booking_draft_saved', 'booking', user, { booking_id: rows[0].id });
+    await markBooked();
     return res.status(200).json({ success: true, id: rows[0].id, sent: false, draft: true });
   }
 
