@@ -611,29 +611,53 @@ module.exports = async (req, res) => {
              dd.legacy_raw_values,
              dd.updated_by,
              dd.updated_at,
-             -- Whether a booking mail has gone out. No longer used to lock the
-             -- availability control (a booked unit can be released again), but
-             -- still shown so the row says what stage the booking reached.
+             -- Whether the unit already carries a COMMITTED booking.
+             --
+             -- The test is "a buyer is named", NOT "a mail went out". A conditional
+             -- token is taken before terms are settled and deliberately sends NO
+             -- buyer/CP mail, so mail_sent_at stays NULL forever — and a normal
+             -- booking can simply not have been mailed yet (5 such rows today, with
+             -- real buyers and real money: Anand Kumar, Anita Arora, Vikas Raghav,
+             -- Sant Lal, Arti Anand). Keyed on the mail, all of those showed "Submit
+             -- Details", and clicking it REOPENED the existing booking as a draft to
+             -- be overwritten instead of offering Book Again.
+             --
+             -- This is the same test markBooked() already applies on save — it flips
+             -- the unit to Booked when the booking is stored, precisely so a
+             -- saved-but-unsent booking does not read as free. The action row simply
+             -- never caught up with it.
+             --
+             -- A blank-name row is a genuinely empty draft (3 today) and is still
+             -- resumable via Submit Details, which is what that button is for.
              EXISTS (
                SELECT 1 FROM booking_details bd
-                WHERE bd.uid = u.uid AND bd.mail_sent_at IS NOT NULL
+                WHERE bd.uid = u.uid AND NULLIF(btrim(bd.buyer_name), '') IS NOT NULL
              ) AS booking_mailed,
-             -- How many buyers are in play. Overbooking lets a mailed unit take another
+             -- How many buyers are in play. Overbooking lets a booked unit take another
              -- concurrent booking, and the action row says "2 buyers in progress" rather
              -- than just "Already booked". NOT a status badge: the unit stays "Booked"
              -- and the availability vocabulary is unchanged.
+             --
+             -- DISTINCT buyers, not rows. Four units carry the SAME buyer twice — a
+             -- mailed row plus a later unsent duplicate, the artefact of the old
+             -- send path that UPDATEd instead of inserting (OHNC1476 "Anand Kumar",
+             -- OHNC1291 "Anita Arora", OHGHD1138 "Vikas Raghav", OHND1039 "Sant Lal").
+             -- Counting rows would announce "2 buyers in progress" on a single buyer.
+             -- Same reasoning as the buyer_journeys backfill, which takes the mailed
+             -- row rather than merely the newest.
              (
-               SELECT count(*) FROM booking_details bd2
-                WHERE bd2.uid = u.uid AND bd2.mail_sent_at IS NOT NULL
+               SELECT count(DISTINCT lower(btrim(bd2.buyer_name))) FROM booking_details bd2
+                WHERE bd2.uid = u.uid AND NULLIF(btrim(bd2.buyer_name), '') IS NOT NULL
              ) AS booking_count,
              -- The buyer already on the unit, so "Book Again" can name them in its
              -- confirm. A guard that says "an existing buyer" is not a guard — the
              -- whole point is that a misclick is obvious before a second journey
-             -- exists. Newest mailed booking, matching what the board shows.
+             -- exists. Newest committed booking; ordered by created_at because an
+             -- unmailed one has no mail_sent_at to sort on.
              (
                SELECT bd3.buyer_name FROM booking_details bd3
-                WHERE bd3.uid = u.uid AND bd3.mail_sent_at IS NOT NULL
-                ORDER BY bd3.mail_sent_at DESC NULLS LAST, bd3.id DESC LIMIT 1
+                WHERE bd3.uid = u.uid AND NULLIF(btrim(bd3.buyer_name), '') IS NOT NULL
+                ORDER BY bd3.created_at DESC NULLS LAST, bd3.id DESC LIMIT 1
              ) AS booked_buyer_name,
              -- Token type of the newest booking — 'normal' or 'conditional'.
              -- Rendered under the Booked pill so the two are distinguishable

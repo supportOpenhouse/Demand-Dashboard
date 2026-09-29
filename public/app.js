@@ -181,6 +181,34 @@ function renderAvailabilityHeaderControl(r) {
 // shows on an AVAILABLE unit too — submitting the booking is what marks it
 // Booked (api/booking-details does that server-side), which is the right order:
 // the booking creates the status, not the other way round.
+// Bring a unit's action row back in line with what is actually stored, after the
+// booking modal closes. The row is keyed on whether a COMMITTED booking exists
+// (a named buyer — see api/list.js), and a save inside the modal can have just
+// created one without any mail going out: a conditional token never mails, and a
+// normal booking may not have been sent yet. Without this the row still reads
+// "Submit Details" until the next full reload, and clicking it reopens the booking
+// that was just saved.
+function refreshBookingActionRow(uid) {
+  if (!uid) return;
+  const row = (state.rows || []).find(r => String(r.uid) === String(uid));
+  const el = document.querySelector(`[data-submit-row-for="${cssEscape(String(uid))}"]`);
+  if (!row || !el) return;
+  // The buyer name as it stands in the form — the same value the save posted, and
+  // the same field api/list.js keys "committed" on. Read from the DOM rather than
+  // bookingState: the form is the live truth right up to the moment it closes.
+  const nameEl = document.querySelector('#bookingModal [data-bf="buyer_name"]');
+  const buyerName = String((nameEl && nameEl.value) || '').trim();
+  // Only ever upgrades. Whether a row was already committed is the server's call,
+  // and an abandoned empty draft must keep offering Submit Details.
+  if (buyerName && !row.booking_mailed) {
+    row.booking_mailed = true;
+    row.booking_count = Math.max(1, Number(row.booking_count || 0));
+    row.booked_buyer_name = row.booked_buyer_name || buyerName;
+  }
+  el.outerHTML = renderSubmitDetailsRow(row);
+}
+
+
 function renderSubmitDetailsRow(r) {
   const status = r.availability_status || 'Available';
   // Sold/Dead are finished with — a booking cannot start there. Everything else can
@@ -383,6 +411,12 @@ function bindUI() {
       if (choice) saveBookingDraft({ quiet: false });
     }
     stopBookingAutosave();
+    // A booking that was SAVED but not mailed still occupies the unit — a conditional
+    // token never sends a mail at all. Re-render its action row so it offers Book
+    // Again rather than Submit Details, which would reopen this very booking as a
+    // draft to overwrite. Done on close, not in the autosave: that runs on every
+    // edit and would rebuild the row underneath the operator.
+    refreshBookingActionRow(bookingState.uid);
     return true;
   };
   $$('[data-close]').forEach(b => b.addEventListener('click', () => {
