@@ -618,6 +618,23 @@ module.exports = async (req, res) => {
                SELECT 1 FROM booking_details bd
                 WHERE bd.uid = u.uid AND bd.mail_sent_at IS NOT NULL
              ) AS booking_mailed,
+             -- How many buyers are in play. Overbooking lets a mailed unit take another
+             -- concurrent booking, and the action row says "2 buyers in progress" rather
+             -- than just "Already booked". NOT a status badge: the unit stays "Booked"
+             -- and the availability vocabulary is unchanged.
+             (
+               SELECT count(*) FROM booking_details bd2
+                WHERE bd2.uid = u.uid AND bd2.mail_sent_at IS NOT NULL
+             ) AS booking_count,
+             -- The buyer already on the unit, so "Book Again" can name them in its
+             -- confirm. A guard that says "an existing buyer" is not a guard — the
+             -- whole point is that a misclick is obvious before a second journey
+             -- exists. Newest mailed booking, matching what the board shows.
+             (
+               SELECT bd3.buyer_name FROM booking_details bd3
+                WHERE bd3.uid = u.uid AND bd3.mail_sent_at IS NOT NULL
+                ORDER BY bd3.mail_sent_at DESC NULLS LAST, bd3.id DESC LIMIT 1
+             ) AS booked_buyer_name,
              -- Token type of the newest booking — 'normal' or 'conditional'.
              -- Rendered under the Booked pill so the two are distinguishable
              -- at a glance on the board.

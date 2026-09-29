@@ -183,11 +183,32 @@ function renderAvailabilityHeaderControl(r) {
 // the booking creates the status, not the other way round.
 function renderSubmitDetailsRow(r) {
   const status = r.availability_status || 'Available';
-  // Hidden once the mail has gone out: the booking is complete and re-opening
-  // the modal would only offer edits the server now refuses. Sold/Dead are
-  // finished with, and a booking cannot start there.
-  const canBook = (status === 'Available' || status === 'Booked') && !r.booking_mailed;
-  const hidden = canBook ? '' : 'style="display:none"';
+  // Sold/Dead are finished with — a booking cannot start there. Everything else can
+  // take one; whether it is the FIRST or an ADDITIONAL buyer is the only difference.
+  const open = (status === 'Available' || status === 'Booked');
+  const mailed = !!r.booking_mailed;
+  const hidden = open ? '' : 'style="display:none"';
+
+  // OVERBOOKING. A unit whose booking mail has gone out can take another concurrent
+  // buyer — airline-style — so that a cancellation no longer loses the second interested
+  // party. The winner is decided in the CRM when an ATS executes; the losing journeys are
+  // archived there and their tokens flagged for refund.
+  //
+  // The unit stays "Booked" throughout: no new status, no count badge, and the
+  // availability dropdown is untouched. Overbooking is visible in the CRM's buyer
+  // journey, not here.
+  if (mailed) {
+    const n = Number(r.booking_count || 0);
+    return `
+    <div class="submit-details-row" data-submit-row-for="${esc(r.uid)}" ${hidden}>
+      <button type="button" class="btn-submit-details btn-book-again"
+              data-submit-booking-uid="${esc(r.uid)}" data-rebook="1"
+              title="Record an additional concurrent buyer for this unit">🔁 Book Again</button>
+      <span class="book-again-note">${n > 1
+        ? esc(n) + ' buyers in progress'
+        : 'Already booked'}</span>
+    </div>`;
+  }
   return `
     <div class="submit-details-row" data-submit-row-for="${esc(r.uid)}" ${hidden}>
       <button type="button" class="btn-submit-details"
@@ -1443,8 +1464,18 @@ function lockBookedRow(uid) {
       sel.parentElement.appendChild(lock);
     }
   }
+  // Re-render as "Book Again" rather than hiding: a mailed booking can now take
+  // another concurrent buyer, and hiding the row is what used to make that impossible.
   const submitRow = document.querySelector(`[data-submit-row-for="${cssEscape(String(uid))}"]`);
-  if (submitRow) submitRow.style.display = 'none';
+  if (submitRow) {
+    const row = (state.rows || []).find(r => String(r.uid) === String(uid));
+    if (row) {
+      row.booking_mailed = true;
+      submitRow.outerHTML = renderSubmitDetailsRow(row);
+    } else {
+      submitRow.style.display = 'none';   // row not in view — nothing to re-render
+    }
+  }
 }
 
 function syncAvailabilityUI(uid, value) {
@@ -1501,7 +1532,23 @@ document.addEventListener('click', (e) => {
   const btn = e.target.closest('.btn-submit-details');
   if (!btn) return;
   e.stopPropagation();
-  openBookingModal(btn.dataset.submitBookingUid);
+  const uid = btn.dataset.submitBookingUid;
+  const rebook = btn.dataset.rebook === '1';
+  // A rebooking adds a SECOND buyer to a unit that is already booked — an unusual,
+  // deliberate act, and one the board gives no other signal about. Naming the buyer
+  // already on the unit is what makes a misclick obvious before a second journey
+  // exists. Only on the rebook path: a first booking needs no confirmation.
+  if (rebook) {
+    const row = (state.rows || []).find(r => String(r.uid) === String(uid));
+    const who = (row && row.booked_buyer_name)
+      ? `“${row.booked_buyer_name}”` : 'an existing buyer';
+    if (!confirm(
+      `${uid} is already booked by ${who}.\n\n`
+      + 'Book Again records an ADDITIONAL buyer alongside them — both journeys run in '
+      + 'parallel until one ATS executes, and the rest are then archived with their '
+      + 'tokens flagged for refund.\n\nRecord another buyer?')) return;
+  }
+  openBookingModal(uid, { rebook });
 });
 
 function cssEscape(s) {
@@ -2045,6 +2092,7 @@ async function doSaveBookingDraft({ quiet = true } = {}) {
       body: JSON.stringify({
         action: 'save',
         booking_id: bookingState.draftId,
+        rebook: !!bookingState.rebook,
         recipients: bookingState.recipients,
         broker_emails: bookingState.brokers,
         selling_cp_id: bookingState.cpId,
@@ -2260,7 +2308,9 @@ async function lookupChannelPartner() {
   }
 }
 
-async function openBookingModal(uid) {
+async function openBookingModal(uid, opts = {}) {
+  const rebook = !!opts.rebook;
+  bookingState.rebook = rebook;
   bookingState.uid = uid;
   bookingState.step = 1;
   bookingState.form = {};
@@ -2391,7 +2441,15 @@ async function openBookingModal(uid) {
   // Prefill from the latest booking row, sent or not. A mailed booking stays
   // editable — corrections land on that row — while sending again still forks a
   // fresh row for the rebooking.
-  if (data.latest) {
+  //
+  // SKIPPED ENTIRELY on a rebooking, and the whole block, not just the buyer name.
+  // A rebooking is a DIFFERENT buyer: carrying over their email, consideration, selling
+  // CP, recipients or brokers is the same class of leak as serving buyer A's PAN on
+  // buyer B's contract — and one careless Send would file the new booking under the old
+  // buyer's details. draftId stays null so the send path takes its INSERT branch.
+  // Recipients still populate from the defaults computed above (team addresses, not
+  // buyer data), which is correct for a fresh booking.
+  if (data.latest && !rebook) {
     const l = data.latest;
     bookingState.draftId = l.id != null ? l.id : null;
     bookingState.loadedCp = (l.selling_cp_email || l.selling_cp_code)
@@ -2447,7 +2505,14 @@ async function openBookingModal(uid) {
   // rebooking case — allowed for managers and admins — so warn rather than
   // block; the new submission is saved as a fresh row and the old one is kept.
   if (data.locked) {
-    showToast('This unit already has a submitted booking. Submitting again records a rebooking.', 'warn');
+    // On a deliberate "Book Again" this is the INTENDED action, not a warning — so it
+    // says what will happen rather than cautioning against it.
+    if (rebook) {
+      showToast('Recording an additional buyer. The existing booking stays live — '
+              + 'both run in parallel until one ATS executes.', 'info');
+    } else {
+      showToast('This unit already has a submitted booking. Submitting again records a rebooking.', 'warn');
+    }
   }
 
   renderBookingRecipients();
@@ -3084,6 +3149,7 @@ async function generateBookingPreview(mode) {
       body: JSON.stringify({
         action: mode === 'cp' ? 'preview_cp' : 'preview',
         booking_id: bookingState.draftId,
+        rebook: !!bookingState.rebook,
         recipients: bookingState.recipients,
         broker_emails: bookingState.brokers,
         selling_cp_id: bookingState.cpId,
@@ -3140,6 +3206,7 @@ async function sendBookingMail(mode) {
       body: JSON.stringify({
         action: isCp ? 'send_cp' : 'send',
         booking_id: bookingState.draftId,
+        rebook: !!bookingState.rebook,
         recipients: bookingState.recipients,
         broker_emails: bookingState.brokers,
         selling_cp_id: bookingState.cpId,

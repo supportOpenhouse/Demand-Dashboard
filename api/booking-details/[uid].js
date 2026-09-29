@@ -647,8 +647,9 @@ const handleBookingRequest = async (req, res) => {
 
   // Re-submission after a mailed booking is the cancellation/rebooking case:
   // allowed for managers and admins alike, and inserted as a fresh row so the
-  // earlier booking stays intact as history. Counted here so the audit log can
-  // record which attempt this is.
+  // earlier booking stays intact as history (enforced below by the
+  // `mail_sent_at IS NULL` guard on the update path). Counted here so the audit
+  // log can record which attempt this is.
   const priorSent = await pool.query(
     `SELECT COUNT(*)::int AS n FROM booking_details WHERE uid = $1 AND mail_sent_at IS NOT NULL`,
     [uid]
@@ -662,20 +663,41 @@ const handleBookingRequest = async (req, res) => {
   try {
     await client.query('BEGIN');
 
-    // ONE booking row per property. A resubmission — including a rebooking
-    // after a cancellation — updates the existing row rather than adding
-    // another, so `booking_details` stays one-row-per-uid and queries like
-    // "which CP sold this" return a single answer.
+    // Only an UNSENT row may be updated in place — that is a draft still being
+    // edited, and editing it is the point. A row whose mail has already gone out
+    // belongs to a COMPLETED booking: a further send is a new buyer, and it gets
+    // its own row so the earlier buyer's name, consideration and selling CP
+    // survive.
     //
-    // Trade-off, stated plainly: the previous submission's values are
-    // overwritten and are not recoverable from this table. The audit trail for
-    // a resubmission lives in activity_logs (booking_sent / booking_resubmitted),
-    // not here.
-    const draftId = Number((req.body || {}).booking_id) || null;
-    const existing = draftId
-      ? { rows: [{ id: draftId }] }
+    // This is what the comment above `priorSent` always claimed ("inserted as a
+    // fresh row so the earlier booking stays intact as history") and what the code
+    // did not do: the fallback below took the newest row regardless of
+    // mail_sent_at, so a second Submit Details silently overwrote the first buyer,
+    // unrecoverably. `send_cp` already had this right (it looks for
+    // cp_mail_sent_at IS NULL); this is the same shape.
+    //
+    // The explicit booking_id path carries the same guard on purpose — a client
+    // holding a stale id from a previous, already-mailed booking must not be able
+    // to reopen the overwrite through it.
+    // `rebook: true` is a deliberate "Book Again": never reuse ANY row, even an unsent
+    // draft, because this is a different buyer and the draft may hold the previous one's
+    // half-entered details. Belt-and-braces — the client also clears booking_id on a
+    // rebooking — but it makes the INSERT an explicit decision rather than a consequence
+    // of a null.
+    const rebook = (req.body || {}).rebook === true;
+    const draftId = rebook ? null : (Number((req.body || {}).booking_id) || null);
+    const existing = rebook
+      ? { rows: [] }
+      : draftId
+      ? await client.query(
+          `SELECT id FROM booking_details
+            WHERE id = $1 AND uid = $2 AND mail_sent_at IS NULL`,
+          [draftId, uid]
+        )
       : await client.query(
-          `SELECT id FROM booking_details WHERE uid = $1 ORDER BY created_at DESC LIMIT 1`,
+          `SELECT id FROM booking_details
+            WHERE uid = $1 AND mail_sent_at IS NULL
+            ORDER BY created_at DESC LIMIT 1`,
           [uid]
         );
     if (existing.rows.length) {
