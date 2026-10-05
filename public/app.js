@@ -2822,8 +2822,14 @@ function refreshBookingFooter() {
 // Reflect the chosen token type: show the "no mails" hint and re-evaluate the
 // footer buttons, since the mail controls disappear for a conditional token.
 function applyTokenType() {
+  const cond = isConditionalToken();
   const hint = document.getElementById('tokenTypeHint');
-  if (hint) hint.style.display = isConditionalToken() ? '' : 'none';
+  if (hint) hint.style.display = cond ? '' : 'none';
+  // Buyer Email is only required when a mail will actually be sent.
+  const req = document.getElementById('buyerEmailReq');
+  if (req) req.style.display = cond ? 'none' : '';
+  const email = document.querySelector('#bookingModal [data-bf="buyer_email"]');
+  if (email) email.required = !cond;
   refreshBookingFooter();
 }
 
@@ -3043,8 +3049,16 @@ function flushPendingBookingInputs() {
         }
         const buyerEmailEl = document.querySelector('#bookingModal [data-bf="buyer_email"]');
         const buyerEmail = (buyerEmailEl?.value || '').trim();
-        if (!buyerEmail || !EMAIL_RE_FE.test(buyerEmail)) {
+        // A conditional token sends no mail at all, so there is nothing the buyer's
+        // address is needed for — it is optional then. If one is typed it still has
+        // to be a real address (the server checks the format either way).
+        if (!buyerEmail && !isConditionalToken()) {
           showToast('A valid Buyer Email is required', 'error');
+          buyerEmailEl?.focus();
+          return;
+        }
+        if (buyerEmail && !EMAIL_RE_FE.test(buyerEmail)) {
+          showToast('Buyer Email is not a valid email', 'error');
           buyerEmailEl?.focus();
           return;
         }
