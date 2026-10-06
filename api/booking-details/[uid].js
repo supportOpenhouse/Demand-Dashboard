@@ -24,7 +24,7 @@
 // All writes wrapped in a transaction; mail send happens AFTER commit so a
 // failed send doesn't leave an orphan unsent row in the DB.
 
-const { pool, logActivity } = require('../_db');
+const { pool, logActivity, isHiddenTestUnit } = require('../_db');
 const { saveChannelPartnerEmail } = require('../_cpdb');
 const { requireAuth, canEdit, setCors } = require('../_auth');
 const { buildBookingEmail, buildBrokerEmail, sendMail } = require('../_email');
@@ -367,6 +367,10 @@ const handleBookingRequest = async (req, res) => {
 
   const { uid } = req.query;
   if (!uid) return res.status(400).json({ success: false, error: 'uid is required' });
+  // Test properties are invisible to everyone but the testers — see _db.js.
+  if (await isHiddenTestUnit(uid, user)) {
+    return res.status(404).json({ success: false, error: 'Property not found' });
+  }
 
   // ── GET: prefill data for the modal ────────────────────────────────────
   if (req.method === 'GET') {

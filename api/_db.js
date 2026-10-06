@@ -22,6 +22,42 @@ const DEMAND_STATUSES = [
 // Sourced from ap_details.status (replaces the deleted v_property_status view).
 const SUPPLY_READY_STATUSES = ['AMA Signed', 'Key Handover Done'];
 
+// TEST PROPERTIES. Every unit in these societies is a test listing (owners "Test",
+// towers "test" — OHGC1001, OHGC1785, OHGD1300 and five more), used to exercise the
+// booking and CRM flows end to end. They have to stay on the Demand Dashboard for
+// that, but the demand team kept seeing them and acting on them. So they are visible
+// ONLY to the people who test, and invisible to everyone else: left out of the list
+// and its counts, and "not found" on every per-unit endpoint, so a direct link does
+// not reveal them either.
+const TEST_SOCIETIES = ['DLF The Camellias'];
+const TEST_UNIT_VIEWERS = ['saransh.khera@openhouse.in', 'sahaj.durej@openhouse.in'];
+
+function canSeeTestUnits(user) {
+  return TEST_UNIT_VIEWERS.includes(String((user && user.email) || '').trim().toLowerCase());
+}
+
+// SQL predicate that drops test units. The society names are constants above, never
+// user input, so they are inlined (quote-escaped) rather than bound — which keeps it
+// usable inside queries whose placeholder numbering is already fixed.
+function notTestUnitSql(alias = 'u') {
+  const names = TEST_SOCIETIES.map(s => `'${s.toLowerCase().replace(/'/g, "''")}'`).join(', ');
+  return `LOWER(TRIM(COALESCE(${alias}.society_name, ''))) NOT IN (${names})`;
+}
+
+// True when this uid is a test unit the user may not see. Looks in both tables a
+// Demand unit can come from (properties, legacy_properties).
+async function isHiddenTestUnit(uid, user) {
+  if (canSeeTestUnits(user) || !uid) return false;
+  const { rows } = await pool.query(
+    `SELECT 1 FROM (
+       SELECT society_name FROM properties WHERE uid = $1
+       UNION ALL
+       SELECT society_name FROM legacy_properties WHERE uid = $1
+     ) s WHERE LOWER(TRIM(COALESCE(s.society_name, ''))) = ANY($2::text[]) LIMIT 1`,
+    [uid, TEST_SOCIETIES.map(s => s.toLowerCase())]);
+  return rows.length > 0;
+}
+
 // The supply pipeline's terminal handover state. Treated as equivalent to a Form 9
 // submission when deciding whether key handover is genuinely "Done": ~26% of units
 // that reached this status predate / bypassed Form 9, but the status itself is a
@@ -505,6 +541,10 @@ module.exports = {
   projectIfExists,
   DEMAND_STATUSES,
   SUPPLY_READY_STATUSES,
+  TEST_SOCIETIES,
+  canSeeTestUnits,
+  notTestUnitSql,
+  isHiddenTestUnit,
   KEY_HANDOVER_DONE_STATUS,
   ADMIN_ONLY_COLUMNS,
   stripAdminOnlyColumns,

@@ -1,6 +1,6 @@
 const { pool, getPropertiesColumns, hasCol, masterSocietiesHasAffordable,
         masterSocietiesHasMicroMarket, SUPPLY_READY_STATUSES,
-        stripAdminOnlyColumns } = require('./_db');
+        stripAdminOnlyColumns, canSeeTestUnits, notTestUnitSql } = require('./_db');
 const { requireAuth, setCors } = require('./_auth');
 
 // Typed projection list shared by both sides of the UNION ALL. Each tuple is:
@@ -445,6 +445,9 @@ module.exports = async (req, res) => {
     }
     // Visibility gate: non-admins never see Dead units in any query below.
     if (hideDead) outerConditions.push(notDeadSql);
+    // Test properties (DLF The Camellias): only the testers see them — see _db.js.
+    const hideTest = !canSeeTestUnits(user);
+    if (hideTest) outerConditions.push(notTestUnitSql('u'));
     // Occupancy → unit-level. The dashboard renders the Status subtitle as
     // possession_status with occupancy_status as fallback, so the filter
     // matches the same way.
@@ -569,7 +572,8 @@ module.exports = async (req, res) => {
     // ("Noida · 35 of 182 Properties"). Skipped when no city is set since
     // it would equal grandTotal. Dead-unit visibility gate applied for
     // non-admins so the denominator matches what they can actually see.
-    const totalsExtraWhere = hideDead ? `WHERE ${notDeadSql}` : '';
+    const totalsGates = [hideDead && notDeadSql, hideTest && notTestUnitSql('u')].filter(Boolean);
+    const totalsExtraWhere = totalsGates.length ? `WHERE ${totalsGates.join(' AND ')}` : '';
     const grandTotalSql = `${baseCte}
       SELECT COUNT(*) FROM unified u
       LEFT JOIN demand_details dd ON dd.uid = u.uid
@@ -581,6 +585,7 @@ module.exports = async (req, res) => {
     if (city) {
       const scopeWhereParts = [`u.city = $${baseParams.length + 1}`];
       if (hideDead) scopeWhereParts.push(notDeadSql);
+      if (hideTest) scopeWhereParts.push(notTestUnitSql('u'));
       const scopeSql = `${baseCte}
         SELECT COUNT(*) FROM unified u
         LEFT JOIN demand_details dd ON dd.uid = u.uid

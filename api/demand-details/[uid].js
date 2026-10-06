@@ -1,4 +1,4 @@
-const { pool, ensureTable, logActivity } = require('../_db');
+const { pool, ensureTable, logActivity, isHiddenTestUnit } = require('../_db');
 const { requireAuth, canEdit, setCors } = require('../_auth');
 
 // Pipeline tracking (demand_status + 8 stage dates) was removed from the UI.
@@ -38,6 +38,10 @@ module.exports = async (req, res) => {
 
     const { uid } = req.query;
     if (!uid) return res.status(400).json({ success: false, error: 'uid is required' });
+    // Test properties are invisible to everyone but the testers — see _db.js.
+    if (await isHiddenTestUnit(uid, user)) {
+      return res.status(404).json({ success: false, error: 'Property not found' });
+    }
 
     const updates = {};
     const isAdmin = user.role === 'admin';

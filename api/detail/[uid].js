@@ -1,5 +1,5 @@
 const { pool, getPropertiesColumns, hasCol, SUPPLY_READY_STATUSES,
-        stripAdminOnlyColumns } = require('../_db');
+        stripAdminOnlyColumns, isHiddenTestUnit } = require('../_db');
 const { requireAuth, setCors } = require('../_auth');
 
 // Acquisition price (our cost basis) and the owner / co-owner phone numbers are
@@ -23,6 +23,10 @@ module.exports = async (req, res) => {
 
   const { uid } = req.query;
   if (!uid) return res.status(400).json({ success: false, error: 'uid is required' });
+  // Test properties are invisible to everyone but the testers — see _db.js.
+  if (await isHiddenTestUnit(uid, user)) {
+    return res.status(404).json({ success: false, error: 'Property not found' });
+  }
 
   try {
     const supplyReadyParams = SUPPLY_READY_STATUSES.map((_, i) => `$${i + 2}`).join(',');

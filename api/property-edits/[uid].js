@@ -16,7 +16,7 @@
 // names from the request body — even a compromised client can only modify
 // these specific columns.
 
-const { pool, getPropertiesColumns, SUPPLY_READY_STATUSES } = require('../_db');
+const { pool, getPropertiesColumns, SUPPLY_READY_STATUSES, isHiddenTestUnit } = require('../_db');
 const { requireAuth, canEdit, setCors } = require('../_auth');
 
 const ALLOWED_FIELDS_INT = [
@@ -141,6 +141,10 @@ module.exports = async (req, res) => {
 
   const { uid } = req.query;
   if (!uid) return res.status(400).json({ success: false, error: 'uid is required' });
+  // Test properties are invisible to everyone but the testers — see _db.js.
+  if (await isHiddenTestUnit(uid, user)) {
+    return res.status(404).json({ success: false, error: 'Property not found' });
+  }
 
   // Parse + validate each submitted field. Reject the whole request on any
   // invalid input — no partial saves.

@@ -1,4 +1,4 @@
-const { pool } = require('../_db');
+const { pool, isHiddenTestUnit } = require('../_db');
 const { requireAuth, requireAdmin, setCors } = require('../_auth');
 
 // Returns the full audit trail of internal_remarks edits for a property.
@@ -18,6 +18,10 @@ module.exports = async (req, res) => {
 
   const { uid } = req.query;
   if (!uid) return res.status(400).json({ success: false, error: 'uid is required' });
+  // Test properties are invisible to everyone but the testers — see _db.js.
+  if (await isHiddenTestUnit(uid, user)) {
+    return res.status(404).json({ success: false, error: 'Property not found' });
+  }
 
   try {
     const { rows } = await pool.query(
