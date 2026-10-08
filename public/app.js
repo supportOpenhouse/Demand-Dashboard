@@ -2081,6 +2081,30 @@ function clearBookingDetailFields() {
   renderPayShot();
 }
 
+// ── Booking date ────────────────────────────────────────────────────────────
+// A booking date records when the buyer booked, so it can never be in the future.
+// "Today" is India time, the same day the server checks against. The picker's
+// max greys out future days, but a date can still be typed, hence the change guard.
+function todayIST() {
+  return new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' });
+}
+function bookingDateIsFuture(v) {
+  return !!v && v > todayIST();
+}
+function capBookingDate() {
+  const el = document.querySelector('#bookingModal [data-bf="booking_date"]');
+  if (el) el.max = todayIST();
+}
+document.addEventListener('change', (e) => {
+  const el = e.target;
+  if (!el || !el.matches || !el.matches('#bookingModal [data-bf="booking_date"]')) return;
+  if (bookingDateIsFuture(el.value)) {
+    el.value = '';
+    showToast('Booking Date cannot be a future date', 'error');
+    scheduleBookingDraft();
+  }
+});
+
 // ── Payment screenshot ──────────────────────────────────────────────────────
 // Mandatory proof of the token payment. The file goes to Cloudinary through the
 // booking endpoint (auth-gated, same unsigned preset as the floor plan) and only
@@ -2611,6 +2635,7 @@ async function openBookingModal(uid, opts = {}) {
   renderBookingRecipients();
   renderBookingBrokers();
   renderPayShot();
+  capBookingDate();
   $('#bookingNextBtn').disabled = false;
 }
 
@@ -2954,6 +2979,7 @@ function validateBookingForm(form) {
     required.push('booking_amount_method_2', 'booking_amount_split_1');
   }
   const missing = required.filter(k => !form[k] && form[k] !== 0);
+  if (bookingDateIsFuture(form.booking_date)) missing.push('booking_date (cannot be a future date)');
   // The two legs may use the same instrument (e.g. two separate UPI transfers),
   // so identical methods are allowed — only the split amounts are constrained.
   return missing;
@@ -2965,6 +2991,7 @@ function validateCpForm(form) {
   const missing = [];
   const has = k => form[k] || form[k] === 0;
   if (!form.booking_date) missing.push('Booking Date');
+  else if (bookingDateIsFuture(form.booking_date)) missing.push('Booking Date cannot be a future date');
   if (!form.payment_screenshot_url) missing.push('Payment Screenshot');
   if (!has('brokerage_amount')) missing.push('Brokerage amount');
   if (!form.payment_structure) missing.push('Payment Structure');
@@ -3097,6 +3124,7 @@ function flushPendingBookingInputs() {
         const f = collectBookingForm();
         const miss = [];
         if (!f.booking_date) miss.push('Booking Date');
+        else if (bookingDateIsFuture(f.booking_date)) miss.push('Booking Date (cannot be a future date)');
         if (!f.payment_screenshot_url) miss.push('Payment Screenshot');
         if (miss.length) { showToast('Missing required fields: ' + miss.join(', '), 'error'); return; }
       }

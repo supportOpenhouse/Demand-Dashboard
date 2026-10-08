@@ -112,6 +112,8 @@ function validate(body) {
     const v = body.booking_date == null ? '' : String(body.booking_date).trim();
     if (v === '') clean.booking_date = null;
     else if (!ISO_DATE_RE.test(v) || isNaN(Date.parse(v))) errors.push('booking_date must be a valid date (YYYY-MM-DD)');
+    // Never in the future. "Today" is India time, matching the modal's date picker.
+    else if (v > new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' })) errors.push('Booking Date cannot be a future date');
     else clean.booking_date = v;
   }
   {
