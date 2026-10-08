@@ -776,6 +776,28 @@ tbody tr.expand-row td {
   padding: 6px 14px; min-width: 60px; font-size: 12px;
 }
 
+/* Page 2's first line: Booking Date, Buyer Name and Co-buyer Name side by side.
+   Chained against .form-grid for the same reason as .booking-money-row. */
+.form-grid.booking-names-row {
+  grid-template-columns: minmax(0, 0.8fr) minmax(0, 1fr) minmax(0, 1fr);
+  gap: 12px 16px;
+}
+
+/* Brokerage Payable (CP only) + the mandatory payment screenshot. With Source =
+   Direct the payable field is hidden and the screenshot takes the first column. */
+.booking-payable-row {
+  display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 12px 16px; margin-top: 10px; align-items: start;
+}
+.pay-shot { display: flex; align-items: center; gap: 10px; min-height: 36px; }
+.pay-shot-link { font-size: 12px; font-weight: 600; color: #4f46e5; }
+.pay-shot-status { font-size: 11px; min-height: 14px; line-height: 14px; color: #6b7280; }
+.pay-shot-status.err { color: #b91c1c; }
+
+@media (max-width: 640px) {
+  .form-grid.booking-names-row, .booking-payable-row { grid-template-columns: 1fr; }
+}
+
 /* Lakhs/Crores hint shown below price inputs. Compact, brand-orange so it
    reads as a helpful derived value, not a label. */
 .amount-hint {

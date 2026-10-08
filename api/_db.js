@@ -229,6 +229,17 @@ const INIT_SQL = `
   -- for it — that is the only behavioural difference. Defaulted to 'normal' so
   -- every pre-existing booking keeps its current meaning.
   ALTER TABLE booking_details ADD COLUMN IF NOT EXISTS token_type TEXT DEFAULT 'normal';
+
+  -- booking_date: the day the buyer booked (ISO YYYY-MM-DD, TEXT like ats_timeline).
+  -- payment_screenshot_url: Cloudinary URL of the token-payment proof. Both are
+  -- mandatory before a booking is mailed (or, for a conditional token, saved from
+  -- page 2); NULL on rows captured before they existed.
+  ALTER TABLE booking_details ADD COLUMN IF NOT EXISTS booking_date           TEXT;
+  ALTER TABLE booking_details ADD COLUMN IF NOT EXISTS payment_screenshot_url TEXT;
+  -- The CRM's cancel archives bookings by copying only the columns the archive
+  -- already has, so a column missing there is silently dropped on cancel.
+  ALTER TABLE IF EXISTS booking_details_archive ADD COLUMN IF NOT EXISTS booking_date           TEXT;
+  ALTER TABLE IF EXISTS booking_details_archive ADD COLUMN IF NOT EXISTS payment_screenshot_url TEXT;
   CREATE INDEX IF NOT EXISTS idx_booking_selling_cp_code  ON booking_details(selling_cp_code);
   CREATE INDEX IF NOT EXISTS idx_booking_selling_cp_phone ON booking_details(selling_cp_phone);
 

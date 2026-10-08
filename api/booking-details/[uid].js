@@ -53,6 +53,7 @@ const BOOKING_COLS = [
   'selling_cp_name', 'selling_cp_company', 'selling_cp_email',
   // 'normal' | 'conditional' — a conditional token sends no mails.
   'token_type',
+  'booking_date', 'payment_screenshot_url',
 ];
 const TOKEN_TYPES = ['normal', 'conditional'];
 const JSON_COLS = new Set(['recipients', 'broker_emails']);
@@ -103,6 +104,21 @@ function validate(body) {
   }
   if (clean.buyer_salutation && !SALUTATIONS.includes(clean.buyer_salutation)) {
     errors.push(`buyer_salutation must be one of: ${SALUTATIONS.join(', ')}`);
+  }
+
+  // booking_date: ISO date from the picker. payment_screenshot_url: only a URL our
+  // own upload produced (Cloudinary) — never an arbitrary link typed into the body.
+  {
+    const v = body.booking_date == null ? '' : String(body.booking_date).trim();
+    if (v === '') clean.booking_date = null;
+    else if (!ISO_DATE_RE.test(v) || isNaN(Date.parse(v))) errors.push('booking_date must be a valid date (YYYY-MM-DD)');
+    else clean.booking_date = v;
+  }
+  {
+    const v = body.payment_screenshot_url == null ? '' : String(body.payment_screenshot_url).trim();
+    if (v === '') clean.payment_screenshot_url = null;
+    else if (!/^https:\/\/res\.cloudinary\.com\//.test(v) || v.length > 1000) errors.push('payment_screenshot_url must be an uploaded file');
+    else clean.payment_screenshot_url = v;
   }
 
   // ats_timeline: ISO date string (YYYY-MM-DD) from the date picker.
@@ -306,6 +322,49 @@ function validate(body) {
   return { clean, errors };
 }
 
+// action: upload_payment_screenshot — uploads the token-payment proof to
+// Cloudinary and returns its URL; the client keeps it in the form and it is
+// written with the next save/send. Same unsigned preset and limits as the floor
+// plan upload. Lives here rather than in its own function so it shares this
+// route's auth and test-unit gate.
+const SHOT_MAX_BYTES = 3 * 1024 * 1024;   // Vercel's ~4.5 MB body cap, after base64
+const SHOT_TYPES = ['image/png', 'image/jpeg', 'image/webp', 'image/heic', 'image/heif', 'application/pdf'];
+async function uploadPaymentScreenshot(req, res) {
+  const cloud = process.env.CLOUDINARY_CLOUD_NAME;
+  const preset = process.env.CLOUDINARY_UPLOAD_PRESET;
+  if (!cloud || !preset) {
+    return res.status(503).json({ success: false, error: 'Upload is not configured (CLOUDINARY_CLOUD_NAME / CLOUDINARY_UPLOAD_PRESET).' });
+  }
+  const dataUrl = String((req.body && req.body.dataUrl) || '');
+  const m = /^data:([^;,]+);base64,(.+)$/.exec(dataUrl);
+  if (!m) return res.status(400).json({ success: false, error: 'A file is required' });
+  if (!SHOT_TYPES.includes(m[1].toLowerCase())) {
+    return res.status(400).json({ success: false, error: 'Upload an image (PNG, JPEG, WebP, HEIC) or a PDF.' });
+  }
+  const padding = m[2].endsWith('==') ? 2 : m[2].endsWith('=') ? 1 : 0;
+  const bytes = Math.floor(m[2].length * 3 / 4) - padding;
+  if (bytes > SHOT_MAX_BYTES) {
+    return res.status(400).json({ success: false, error: `That file is ${(bytes / 1024 / 1024).toFixed(1)} MB. Max 3 MB — please compress it.` });
+  }
+  const form = new URLSearchParams();
+  form.set('file', dataUrl);
+  form.set('upload_preset', preset);
+  form.set('folder', process.env.CLOUDINARY_FOLDER
+    ? `${process.env.CLOUDINARY_FOLDER}/booking-payments` : 'booking-payments');
+  const r = await fetch(`https://api.cloudinary.com/v1_1/${encodeURIComponent(cloud)}/auto/upload`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: form.toString(),
+  });
+  const data = await r.json().catch(() => ({}));
+  if (!r.ok || !data.secure_url) {
+    const msg = (data.error && data.error.message) || `Cloudinary responded ${r.status}`;
+    console.error('[/api/booking-details upload_payment_screenshot]', msg);
+    return res.status(502).json({ success: false, error: 'Upload failed: ' + msg });
+  }
+  return res.status(200).json({ success: true, url: data.secure_url });
+}
+
 // Effective mailing list = curated CP-RM `recipients` + buyer_email + co_buyer_email.
 // Deduped case-insensitively, preserving first occurrence order. Used for both
 // the preview "To:" line and the actual SMTP send.
@@ -444,8 +503,19 @@ const handleBookingRequest = async (req, res) => {
   }
 
   const { action } = req.body || {};
+  if (action === 'upload_payment_screenshot') return uploadPaymentScreenshot(req, res);
   if (!['preview', 'send', 'save', 'preview_cp', 'send_cp'].includes(action)) {
-    return res.status(400).json({ success: false, error: `action must be one of: preview, send, save, preview_cp, send_cp` });
+    return res.status(400).json({ success: false, error: `action must be one of: preview, send, save, preview_cp, send_cp, upload_payment_screenshot` });
+  }
+
+  // Booking Date and the payment screenshot are mandatory on every booking that
+  // goes out. Drafts (save) may still lack them while the form is being filled.
+  if (action === 'send' || action === 'send_cp') {
+    const b = req.body || {};
+    const miss = [];
+    if (!b.booking_date) miss.push('Booking Date');
+    if (!b.payment_screenshot_url) miss.push('Payment Screenshot');
+    if (miss.length) return res.status(400).json({ success: false, error: `${miss.join(' and ')} required` });
   }
 
   const { clean, errors } = validate(req.body);

@@ -285,7 +285,11 @@
 
         <div class="booking-section-divider"></div>
 
-        <div class="form-grid booking-form-grid">
+        <div class="form-grid booking-names-row">
+          <div class="fg">
+            <label>Booking Date <span class="req">*</span></label>
+            <input type="date" class="booking-input" data-bf="booking_date" required>
+          </div>
           <div class="fg">
             <label>Buyer Name <span class="req">*</span></label>
             <input type="text" class="booking-input" data-bf="buyer_name" required>
@@ -432,8 +436,10 @@
             </div>
           </div>
 
-          <div data-source-show="CP" style="margin-top:10px;">
-            <div class="fg" style="max-width:340px;">
+          <!-- Brokerage Payable is CP-only; the payment screenshot sits beside it and
+               is shown for Direct too, since every booking takes a token payment. -->
+          <div class="booking-payable-row">
+            <div class="fg" data-source-show="CP">
               <label>Brokerage Payable</label>
               <select class="booking-input" data-bf="brokerage_timing">
                 <option value="">Select…</option>
@@ -441,6 +447,19 @@
                 <option value="ATS &amp; Registry">At the time of ATS &amp; Registry</option>
               </select>
             </div>
+            <div class="fg">
+              <label>Upload Payment Screenshot <span class="req">*</span></label>
+              <input type="hidden" data-bf="payment_screenshot_url">
+              <div class="pay-shot">
+                <button type="button" class="btn btn-ghost" id="payShotPick">📎 Choose file</button>
+                <input type="file" id="payShotFile" accept="image/png,image/jpeg,image/webp,image/heic,application/pdf" hidden>
+                <a id="payShotLink" class="pay-shot-link" target="_blank" rel="noopener" hidden>View uploaded</a>
+              </div>
+              <div id="payShotStatus" class="pay-shot-status"></div>
+            </div>
+          </div>
+
+          <div data-source-show="CP">
             <div class="form-grid" data-brokerage-split
                  style="display:none;grid-template-columns:1fr 1fr;gap:12px;margin-top:10px;">
               <div class="fg">

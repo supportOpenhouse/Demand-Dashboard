@@ -2078,7 +2078,64 @@ function clearBookingDetailFields() {
   applyPayStructure('');
   applyBrokerageTiming();
   refreshAllAmountHints();
+  renderPayShot();
 }
+
+// ── Payment screenshot ──────────────────────────────────────────────────────
+// Mandatory proof of the token payment. The file goes to Cloudinary through the
+// booking endpoint (auth-gated, same unsigned preset as the floor plan) and only
+// its URL is kept, in the hidden payment_screenshot_url field, so it saves with
+// the draft like any other field.
+function renderPayShot(msg, isErr) {
+  const url = document.querySelector('#bookingModal [data-bf="payment_screenshot_url"]')?.value || '';
+  const link = $('#payShotLink');
+  if (link) { link.hidden = !url; if (url) link.href = url; }
+  const pick = $('#payShotPick');
+  if (pick) pick.textContent = url ? '📎 Replace' : '📎 Choose file';
+  const st = $('#payShotStatus');
+  if (st) {
+    st.textContent = msg || (url ? '✓ Uploaded' : '');
+    st.classList.toggle('err', !!isErr);
+  }
+  const f = $('#payShotFile');
+  if (f) f.value = '';
+}
+
+async function uploadPayShot(file) {
+  if (!file || !bookingState.uid) return;
+  if (file.size > 3 * 1024 * 1024) {
+    renderPayShot(`That file is ${(file.size / 1024 / 1024).toFixed(1)} MB. Max 3 MB — please compress it.`, true);
+    return;
+  }
+  renderPayShot('Uploading…');
+  try {
+    const dataUrl = await new Promise((resolve, reject) => {
+      const fr = new FileReader();
+      fr.onload = () => resolve(fr.result);
+      fr.onerror = () => reject(new Error('Could not read that file'));
+      fr.readAsDataURL(file);
+    });
+    const r = await fetch('/api/booking-details/' + encodeURIComponent(bookingState.uid), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'include',
+      body: JSON.stringify({ action: 'upload_payment_screenshot', dataUrl }),
+    });
+    const data = await r.json().catch(() => ({}));
+    if (!r.ok || !data.success) { renderPayShot(data.error || 'Upload failed', true); return; }
+    setBF('payment_screenshot_url', data.url);
+    renderPayShot();
+    scheduleBookingDraft();
+  } catch (e) {
+    renderPayShot(e.message, true);
+  }
+}
+document.addEventListener('click', (e) => {
+  if (e.target && e.target.id === 'payShotPick') $('#payShotFile')?.click();
+});
+document.addEventListener('change', (e) => {
+  if (e.target && e.target.id === 'payShotFile') uploadPayShot(e.target.files && e.target.files[0]);
+});
 
 // ── Draft autosave ──────────────────────────────────────────────────────────
 // The booking used to reach the database only when the mail was sent, so a
@@ -2491,6 +2548,8 @@ async function openBookingModal(uid, opts = {}) {
     // Source is stored on the row, so reopening restores whether this booking
     // involved a CP at all.
     if (l.source) { setBF('source', l.source); applySource(l.source); }
+    setBF('booking_date', l.booking_date);
+    setBF('payment_screenshot_url', l.payment_screenshot_url);
     setBF('buyer_name', l.buyer_name);
     setBF('buyer_email', l.buyer_email);
     setBF('co_buyer_name', l.co_buyer_name);
@@ -2551,6 +2610,7 @@ async function openBookingModal(uid, opts = {}) {
 
   renderBookingRecipients();
   renderBookingBrokers();
+  renderPayShot();
   $('#bookingNextBtn').disabled = false;
 }
 
@@ -2886,10 +2946,10 @@ function collectBookingForm() {
 // Validate the booking form before allowing preview/send.
 // buyer_email is collected on Page 1; the rest live on Page 2.
 function validateBookingForm(form) {
-  const required = ['buyer_email', 'buyer_name', 'consideration_amount',
+  const required = ['booking_date', 'buyer_email', 'buyer_name', 'consideration_amount',
                     'booking_amount_received', 'booking_amount_method',
                     'booking_amount_forfeitable', 'ats_timeline',
-                    'registry_timeline', 'amount_on_ats_pct'];
+                    'registry_timeline', 'amount_on_ats_pct', 'payment_screenshot_url'];
   if (bookingState.payMode === 'split') {
     required.push('booking_amount_method_2', 'booking_amount_split_1');
   }
@@ -2904,6 +2964,8 @@ function validateBookingForm(form) {
 function validateCpForm(form) {
   const missing = [];
   const has = k => form[k] || form[k] === 0;
+  if (!form.booking_date) missing.push('Booking Date');
+  if (!form.payment_screenshot_url) missing.push('Payment Screenshot');
   if (!has('brokerage_amount')) missing.push('Brokerage amount');
   if (!form.payment_structure) missing.push('Payment Structure');
   if (form.payment_structure === 'Flexible') {
@@ -3029,6 +3091,15 @@ function flushPendingBookingInputs() {
     }
     // Next
     if (e.target.id === 'bookingSaveBtn') {
+      // A conditional token sends no mail, so Save is its submit — the two
+      // mandatory fields are enforced here. (Autosave still keeps partial drafts.)
+      if (isConditionalToken() && bookingState.step === 2) {
+        const f = collectBookingForm();
+        const miss = [];
+        if (!f.booking_date) miss.push('Booking Date');
+        if (!f.payment_screenshot_url) miss.push('Payment Screenshot');
+        if (miss.length) { showToast('Missing required fields: ' + miss.join(', '), 'error'); return; }
+      }
       const btn = e.target;
       btn.disabled = true;
       const label = btn.textContent;
