@@ -25,9 +25,10 @@ const state = {
     source: '',
     poc: '',
     affordable: '',
-    availability: '',
-    // Normal vs conditional booking. Only sent while availability is 'Booked' —
-    // it has no meaning for an Available or Sold unit.
+    // Multi-select: array of availability values. Empty = no restriction.
+    availability: [],
+    // Normal vs conditional booking. Only sent while 'Booked' is among the
+    // selected availabilities — it has no meaning for an Available unit.
     tokenType: '',
     occupancy: '',
     dateField: 'ama_date',
@@ -312,7 +313,8 @@ function renderUserMenu() {
   if (isAdmin()) $('#ohLoanFormBtn').style.display = 'inline-flex';
   // Strip any admin-only options from filter dropdowns for non-admins so they
   // can't select filters that would return zero rows for them (Dead units are
-  // hidden server-side).
+  // hidden server-side). The availability filter handles its own admin-only
+  // option in availabilityOptions(); this covers any remaining <option>s.
   if (!isAdmin()) {
     $$('option[data-admin-only]').forEach(opt => opt.remove());
   }
@@ -348,14 +350,7 @@ function bindUI() {
   $('#filterSource').addEventListener('change', (e) => { state.filters.source = e.target.value; loadData(); });
   $('#filterPoc').addEventListener('change', (e) => { state.filters.poc = e.target.value; loadData(); });
   $('#filterAffordable').addEventListener('change', (e) => { state.filters.affordable = e.target.value; loadData(); });
-  $('#filterAvailability').addEventListener('change', (e) => {
-    state.filters.availability = e.target.value;
-    // Leaving Booked strands the booking-type pick, so clear it rather than
-    // keeping a hidden filter silently narrowing the board.
-    if (state.filters.availability !== 'Booked') state.filters.tokenType = '';
-    syncTokenTypeFilter();
-    loadData();
-  });
+  bindAvailabilityFilter();
   $('#filterTokenType').addEventListener('change', (e) => { state.filters.tokenType = e.target.value; loadData(); });
   $('#filterOccupancy').addEventListener('change', (e) => { state.filters.occupancy = e.target.value; loadData(); });
   $('#filterDateField').addEventListener('change', (e) => { state.filters.dateField = e.target.value; loadData(); });
@@ -370,7 +365,7 @@ function bindUI() {
 
   $('#clearAllBtn').addEventListener('click', () => {
     state.filters = { search: '', city: '', micromarket: [], source: '', poc: '', affordable: '',
-                      availability: '', tokenType: '', occupancy: '',
+                      availability: [], tokenType: '', occupancy: '',
                       dateField: 'ama_date', from: '', to: '' };
     $('#searchInput').value = '';
     $('#filterCity').value = '';
@@ -378,7 +373,7 @@ function bindUI() {
     $('#filterSource').value = '';
     $('#filterPoc').value = '';
     $('#filterAffordable').value = '';
-    $('#filterAvailability').value = '';
+    renderAvailabilityOptions();
     $('#filterTokenType').value = '';
     syncTokenTypeFilter();
     $('#filterOccupancy').value = '';
@@ -496,9 +491,11 @@ async function loadData() {
   if (f.source) q.set('source', f.source);
   if (f.poc) q.set('poc', f.poc);
   if (f.affordable) q.set('affordable', f.affordable);
-  if (f.availability) q.set('availability', f.availability);
-  // Guarded on Booked so a stale pick can never narrow a non-Booked view.
-  if (f.availability === 'Booked' && f.tokenType) q.set('tokenType', f.tokenType);
+  // Repeated param, one per selected availability.
+  f.availability.forEach(v => q.append('availability', v));
+  // Guarded on Booked being selected so a stale pick can never narrow a view
+  // where the booking-type dropdown isn't even visible.
+  if (f.availability.includes('Booked') && f.tokenType) q.set('tokenType', f.tokenType);
   if (f.occupancy) q.set('occupancy', f.occupancy);
   if (f.dateField) q.set('dateField', f.dateField);
   if (f.from) q.set('from', f.from);
@@ -642,18 +639,113 @@ function updateMicromarketLabel() {
   $('#filterMicromarketWrap').classList.toggle('active', picked.length > 0);
 }
 
+// ── Availability multi-select ──────────────────────────────────────────
+// Same checkbox-popover component as the micromarket filter, but over a fixed
+// four-value list, so there's no search box and the options are static.
+// 'Dead' is admin-only: it is simply absent from the list for everyone else,
+// which matches the server-side gate that hides Dead units from them anyway.
+// Distinct from AVAILABILITY_OPTIONS above, which is the per-row status dropdown
+// (Available / Booked only) — this is the full set the board can be filtered by.
+const AVAILABILITY_FILTER_OPTIONS = [
+  { value: 'Available', adminOnly: false },
+  { value: 'Booked',    adminOnly: false },
+  { value: 'Sold',      adminOnly: false },
+  { value: 'Dead',      adminOnly: true  },
+];
+
+function availabilityOptions() {
+  return AVAILABILITY_FILTER_OPTIONS
+    .filter(o => !o.adminOnly || isAdmin())
+    .map(o => o.value);
+}
+
+function bindAvailabilityFilter() {
+  const wrap = $('#filterAvailabilityWrap');
+
+  $('#filterAvailabilityBtn').addEventListener('click', (e) => {
+    e.stopPropagation();
+    const opening = !wrap.classList.contains('open');
+    wrap.classList.toggle('open', opening);
+    $('#filterAvailabilityBtn').setAttribute('aria-expanded', String(opening));
+  });
+
+  $('#filterAvailabilityPanel').addEventListener('click', (e) => e.stopPropagation());
+  document.addEventListener('click', () => closeAvailabilityPanel());
+  document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeAvailabilityPanel(); });
+
+  $('#filterAvailabilityOptions').addEventListener('change', (e) => {
+    const cb = e.target.closest('input[type="checkbox"]');
+    if (!cb) return;
+    const picked = new Set(state.filters.availability);
+    cb.checked ? picked.add(cb.value) : picked.delete(cb.value);
+    setAvailability([...picked]);
+  });
+
+  wrap.querySelectorAll('[data-av-action]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      setAvailability(btn.dataset.avAction === 'all' ? availabilityOptions() : []);
+      renderAvailabilityOptions();
+    });
+  });
+
+  renderAvailabilityOptions();
+}
+
+// Single place that writes the selection, so the dependent booking-type filter
+// can never be left stranded: dropping 'Booked' clears it.
+let avApplyTimer = null;
+function setAvailability(values) {
+  state.filters.availability = values;
+  if (!values.includes('Booked')) state.filters.tokenType = '';
+  updateAvailabilityLabel();
+  syncTokenTypeFilter();
+  // Ticks coalesce into one load, as with the micromarket filter — otherwise
+  // picking three statuses fires three full queries.
+  clearTimeout(avApplyTimer);
+  avApplyTimer = setTimeout(loadData, 300);
+}
+
+function closeAvailabilityPanel() {
+  const wrap = $('#filterAvailabilityWrap');
+  if (!wrap || !wrap.classList.contains('open')) return;
+  wrap.classList.remove('open');
+  $('#filterAvailabilityBtn').setAttribute('aria-expanded', 'false');
+}
+
+function renderAvailabilityOptions() {
+  const box = $('#filterAvailabilityOptions');
+  if (!box) return;
+  const picked = new Set(state.filters.availability);
+  box.innerHTML = availabilityOptions().map(v => `
+    <label class="multiselect-option">
+      <input type="checkbox" value="${esc(v)}"${picked.has(v) ? ' checked' : ''}>
+      <span>${esc(v)}</span>
+    </label>`).join('');
+  updateAvailabilityLabel();
+}
+
+function updateAvailabilityLabel() {
+  const picked = state.filters.availability;
+  $('#filterAvailabilityLabel').textContent =
+    picked.length === 0 ? 'All Availability'
+    : picked.length === 1 ? picked[0]
+    : `${picked.length} Statuses`;
+  $('#filterAvailabilityWrap').classList.toggle('active', picked.length > 0);
+}
+
 // Booking type only exists for a Booked unit, so its dropdown appears only while
 // Booked is selected. Called on every availability change and after each load, so
 // a filter restored from state (not just one clicked just now) shows correctly.
 function syncTokenTypeFilter() {
   const sel = $('#filterTokenType');
   if (!sel) return;
-  const show = state.filters.availability === 'Booked';
+  const show = state.filters.availability.includes('Booked');
   sel.style.display = show ? '' : 'none';
   sel.value = show ? (state.filters.tokenType || '') : '';
 }
 
 function populateFilterDropdowns() {
+  renderAvailabilityOptions();
   syncTokenTypeFilter();
   // Pull from state.distinct (full supply-ready pool) — picking one filter
   // never strips options from the others. Micromarket is the one exception:

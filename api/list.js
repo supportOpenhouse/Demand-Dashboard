@@ -375,7 +375,7 @@ module.exports = async (req, res) => {
     const hasAffordable = await masterSocietiesHasAffordable();
     const hasMicroMarket = await masterSocietiesHasMicroMarket();
 
-    const { search, city, source, poc, affordable, availability, tokenType, occupancy,
+    const { search, city, source, poc, affordable, tokenType, occupancy,
             dateField, from, to, page, limit: rawLimit } = req.query;
 
     // Micromarket is multi-select, sent as a repeated param
@@ -442,9 +442,21 @@ module.exports = async (req, res) => {
     // treated as 'Available' downstream via COALESCE, so we match the same way.
     // For non-admins, filtering on 'Dead' would return zero rows anyway thanks
     // to the visibility gate; the dropdown option is stripped in the UI too.
-    if (availability && VALID_AVAIL.includes(availability)) {
-      outerParams.push(availability);
-      outerConditions.push(`COALESCE(dd.availability_status, 'Available') = $${baseParams.length + outerParams.length}`);
+    // Multi-select, sent as a repeated param (?availability=Booked&availability=Sold).
+    // A comma-delimited single value is also accepted so a hand-written URL still
+    // works. Unknown values are dropped rather than erroring — an empty result
+    // means "no restriction", same as sending nothing.
+    const availabilityFilter = [...new Set(
+      [].concat(req.query.availability || [])
+        .flatMap(v => String(v).split(','))
+        .map(v => v.trim())
+        .filter(v => VALID_AVAIL.includes(v))
+    )];
+    if (availabilityFilter.length) {
+      outerParams.push(availabilityFilter);
+      outerConditions.push(
+        `COALESCE(dd.availability_status, 'Available') = ANY($${baseParams.length + outerParams.length}::text[])`
+      );
     }
     // Normal vs conditional booking — resolved from the newest booking_details
     // row through the btJoin LATERAL below. COALESCE to 'normal' mirrors what the

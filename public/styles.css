@@ -106,6 +106,8 @@ body {
   width: 260px; padding: 8px;
 }
 .multiselect.open .multiselect-panel { display: block; }
+/* Fixed short option lists (availability) don't need the 260px search-box width. */
+.multiselect-panel-narrow { width: 180px; }
 .multiselect-search {
   width: 100%; box-sizing: border-box;
   padding: 5px 8px; border: 1px solid #e4e7ec; border-radius: 6px;

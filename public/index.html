@@ -71,14 +71,23 @@
       <option value="yes">Affordable: Yes</option>
       <option value="no">Affordable: No</option>
     </select>
-    <select class="filter-select" id="filterAvailability">
-      <option value="">All Availability</option>
-      <option value="Available">Available</option>
-      <option value="Booked">Booked</option>
-      <option value="Sold">Sold</option>
-      <!-- Dead is admin-only; removed from the DOM for non-admins in renderUserMenu. -->
-      <option value="Dead" data-admin-only>Dead</option>
-    </select>
+    <!-- Availability is multi-select (checkbox popover, same component as the
+         micromarket filter). Only four fixed options, so no search box.
+         Dead is admin-only; its option is removed for non-admins in renderUserMenu. -->
+    <div class="multiselect" id="filterAvailabilityWrap">
+      <button type="button" class="filter-select multiselect-toggle" id="filterAvailabilityBtn"
+              aria-haspopup="true" aria-expanded="false">
+        <span id="filterAvailabilityLabel">All Availability</span>
+        <span class="multiselect-caret">▾</span>
+      </button>
+      <div class="multiselect-panel multiselect-panel-narrow" id="filterAvailabilityPanel">
+        <div class="multiselect-actions">
+          <button type="button" data-av-action="all">Select all</button>
+          <button type="button" data-av-action="none">Clear</button>
+        </div>
+        <div class="multiselect-options" id="filterAvailabilityOptions"></div>
+      </div>
+    </div>
     <!-- Booking type — only applies to Booked units, so it is shown only while
          Booked is the selected availability (toggled in syncTokenTypeFilter). -->
     <select class="filter-select" id="filterTokenType" style="display:none">
