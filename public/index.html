@@ -79,6 +79,13 @@
       <!-- Dead is admin-only; removed from the DOM for non-admins in renderUserMenu. -->
       <option value="Dead" data-admin-only>Dead</option>
     </select>
+    <!-- Booking type — only applies to Booked units, so it is shown only while
+         Booked is the selected availability (toggled in syncTokenTypeFilter). -->
+    <select class="filter-select" id="filterTokenType" style="display:none">
+      <option value="">All Bookings</option>
+      <option value="normal">Normal booking</option>
+      <option value="conditional">Conditional booking</option>
+    </select>
     <select class="filter-select" id="filterOccupancy">
       <option value="">All Occupancy</option>
       <option value="Vacant">Vacant</option>

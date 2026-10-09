@@ -26,6 +26,9 @@ const state = {
     poc: '',
     affordable: '',
     availability: '',
+    // Normal vs conditional booking. Only sent while availability is 'Booked' —
+    // it has no meaning for an Available or Sold unit.
+    tokenType: '',
     occupancy: '',
     dateField: 'ama_date',
     from: '',
@@ -345,7 +348,15 @@ function bindUI() {
   $('#filterSource').addEventListener('change', (e) => { state.filters.source = e.target.value; loadData(); });
   $('#filterPoc').addEventListener('change', (e) => { state.filters.poc = e.target.value; loadData(); });
   $('#filterAffordable').addEventListener('change', (e) => { state.filters.affordable = e.target.value; loadData(); });
-  $('#filterAvailability').addEventListener('change', (e) => { state.filters.availability = e.target.value; loadData(); });
+  $('#filterAvailability').addEventListener('change', (e) => {
+    state.filters.availability = e.target.value;
+    // Leaving Booked strands the booking-type pick, so clear it rather than
+    // keeping a hidden filter silently narrowing the board.
+    if (state.filters.availability !== 'Booked') state.filters.tokenType = '';
+    syncTokenTypeFilter();
+    loadData();
+  });
+  $('#filterTokenType').addEventListener('change', (e) => { state.filters.tokenType = e.target.value; loadData(); });
   $('#filterOccupancy').addEventListener('change', (e) => { state.filters.occupancy = e.target.value; loadData(); });
   $('#filterDateField').addEventListener('change', (e) => { state.filters.dateField = e.target.value; loadData(); });
   $('#filterFrom').addEventListener('change', (e) => { state.filters.from = e.target.value; loadData(); });
@@ -359,7 +370,7 @@ function bindUI() {
 
   $('#clearAllBtn').addEventListener('click', () => {
     state.filters = { search: '', city: '', micromarket: [], source: '', poc: '', affordable: '',
-                      availability: '', occupancy: '',
+                      availability: '', tokenType: '', occupancy: '',
                       dateField: 'ama_date', from: '', to: '' };
     $('#searchInput').value = '';
     $('#filterCity').value = '';
@@ -368,6 +379,8 @@ function bindUI() {
     $('#filterPoc').value = '';
     $('#filterAffordable').value = '';
     $('#filterAvailability').value = '';
+    $('#filterTokenType').value = '';
+    syncTokenTypeFilter();
     $('#filterOccupancy').value = '';
     $('#filterDateField').value = 'ama_date';
     $('#filterFrom').value = '';
@@ -484,6 +497,8 @@ async function loadData() {
   if (f.poc) q.set('poc', f.poc);
   if (f.affordable) q.set('affordable', f.affordable);
   if (f.availability) q.set('availability', f.availability);
+  // Guarded on Booked so a stale pick can never narrow a non-Booked view.
+  if (f.availability === 'Booked' && f.tokenType) q.set('tokenType', f.tokenType);
   if (f.occupancy) q.set('occupancy', f.occupancy);
   if (f.dateField) q.set('dateField', f.dateField);
   if (f.from) q.set('from', f.from);
@@ -627,7 +642,19 @@ function updateMicromarketLabel() {
   $('#filterMicromarketWrap').classList.toggle('active', picked.length > 0);
 }
 
+// Booking type only exists for a Booked unit, so its dropdown appears only while
+// Booked is selected. Called on every availability change and after each load, so
+// a filter restored from state (not just one clicked just now) shows correctly.
+function syncTokenTypeFilter() {
+  const sel = $('#filterTokenType');
+  if (!sel) return;
+  const show = state.filters.availability === 'Booked';
+  sel.style.display = show ? '' : 'none';
+  sel.value = show ? (state.filters.tokenType || '') : '';
+}
+
 function populateFilterDropdowns() {
+  syncTokenTypeFilter();
   // Pull from state.distinct (full supply-ready pool) — picking one filter
   // never strips options from the others. Micromarket is the one exception:
   // it's a strict sub-division of city, so it narrows to the selected city.

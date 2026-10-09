@@ -375,7 +375,7 @@ module.exports = async (req, res) => {
     const hasAffordable = await masterSocietiesHasAffordable();
     const hasMicroMarket = await masterSocietiesHasMicroMarket();
 
-    const { search, city, source, poc, affordable, availability, occupancy,
+    const { search, city, source, poc, affordable, availability, tokenType, occupancy,
             dateField, from, to, page, limit: rawLimit } = req.query;
 
     // Micromarket is multi-select, sent as a repeated param
@@ -394,6 +394,9 @@ module.exports = async (req, res) => {
     // managers by the visibility gate below (`hideDead`) so only admins can
     // actually see Dead rows or filter by them.
     const VALID_AVAIL = ['Available', 'Booked', 'Sold', 'Dead'];
+    // Token type of the booking that put the unit in Booked. Only meaningful
+    // alongside availability=Booked, which is the only state the UI offers it in.
+    const VALID_TOKEN_TYPES = ['normal', 'conditional'];
     const VALID_OCC   = ['Vacant', 'Tenant', 'Owner Staying'];
     const hideDead    = user.role !== 'admin';
     const notDeadSql  = `COALESCE(dd.availability_status, 'Available') <> 'Dead'`;
@@ -442,6 +445,21 @@ module.exports = async (req, res) => {
     if (availability && VALID_AVAIL.includes(availability)) {
       outerParams.push(availability);
       outerConditions.push(`COALESCE(dd.availability_status, 'Available') = $${baseParams.length + outerParams.length}`);
+    }
+    // Normal vs conditional booking — resolved from the newest booking_details
+    // row through the btJoin LATERAL below. COALESCE to 'normal' mirrors what the
+    // board renders: token_type only arrived with the conditional flow, so rows
+    // predating it are NULL and read as a normal token under the Booked pill.
+    // bt.id IS NOT NULL keeps units with no booking at all out of 'normal' — they
+    // would otherwise match on the COALESCE default.
+    const tokenTypeFilter = VALID_TOKEN_TYPES.includes(String(tokenType || '').toLowerCase())
+      ? String(tokenType).toLowerCase()
+      : '';
+    if (tokenTypeFilter) {
+      outerParams.push(tokenTypeFilter);
+      outerConditions.push(
+        `(bt.id IS NOT NULL AND LOWER(COALESCE(bt.token_type, 'normal')) = $${baseParams.length + outerParams.length})`
+      );
     }
     // Visibility gate: non-admins never see Dead units in any query below.
     if (hideDead) outerConditions.push(notDeadSql);
@@ -504,6 +522,18 @@ module.exports = async (req, res) => {
     const msSelect =
       (hasAffordable  ? 'ms.affordable AS affordable,'      : 'NULL::boolean AS affordable,') +
       (hasMicroMarket ? ' ms.micro_market AS micro_market,' : ' NULL::text AS micro_market,');
+    // Newest booking for the unit, used only by the token-type filter. Built
+    // conditionally so an unfiltered list load doesn't pay for the lookup — the
+    // rows SELECT already resolves token_type for display via its own subquery.
+    const btJoin = tokenTypeFilter
+      ? `LEFT JOIN LATERAL (
+             SELECT bd.id, bd.token_type FROM booking_details bd
+             WHERE bd.uid = u.uid
+             ORDER BY bd.created_at DESC NULLS LAST, bd.id DESC
+             LIMIT 1
+           ) bt ON TRUE`
+      : '';
+
     const msJoin = msCols.length
       ? `LEFT JOIN LATERAL (
              SELECT ${msCols.join(', ')} FROM master_societies ms
@@ -562,6 +592,7 @@ module.exports = async (req, res) => {
       SELECT COUNT(*) FROM unified u
       LEFT JOIN demand_details dd ON dd.uid = u.uid
       ${msJoin}
+      ${btJoin}
       ${outerWhere}`;
     const countResult = await pool.query(countSql, [...baseParams, ...outerParams]);
     const totalCount = parseInt(countResult.rows[0].count);
@@ -692,6 +723,7 @@ module.exports = async (req, res) => {
       FROM unified u
       LEFT JOIN demand_details dd ON dd.uid = u.uid
       ${msJoin}
+      ${btJoin}
       ${outerWhere}
       ORDER BY COALESCE(u.ama_date, u.key_handover_date) DESC NULLS LAST
       LIMIT $${limitParamIdx} OFFSET $${offsetParamIdx}`;
