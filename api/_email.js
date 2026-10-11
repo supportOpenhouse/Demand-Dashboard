@@ -127,6 +127,20 @@ function inrWords(n) {
   return words ? `Rupees ${words} only` : '';
 }
 
+// Subject for both booking mails:
+//   "<OH ID> - <Title> | <Tower> <Unit> - <Society> | <Name>"
+//   e.g. "OHGD1304 - Booking Confirmation | I 1504 - Umang Winter Hills | Shruti Bhartia"
+// A blank part is left out with its separator, so a missing tower, society or name
+// never leaves a dangling "-" or "|". The CRM builds the buyer subject the same
+// way (backend/app/booking.py subject_for) — keep the two in step.
+function bookingSubject(p, title, name) {
+  const clean = v => (v == null ? '' : String(v).trim());
+  const towerUnit = [clean(p.tower_no), clean(p.unit_no)].filter(Boolean).join(' ');
+  const place = [towerUnit, clean(p.society_name)].filter(Boolean).join(' - ');
+  const head = [clean(p.uid), title].filter(Boolean).join(' - ');
+  return [head, place, clean(name)].filter(Boolean).join(' | ');
+}
+
 // Builds the email subject + HTML body for a booking submission. The body is
 // a buyer-facing narrative letter; the same email is sent to the buyer, CP RMs,
 // brokers, and the internal fixed list (the caller concatenates the To line).
@@ -144,10 +158,7 @@ function buildBookingEmail({ property, booking, submittedBy, submittedByName }) 
   // (nullable) tower is absent. Used in both the subject and the letter body.
   const towerUnit = [p.tower_no, p.unit_no].filter(v => v != null && v !== '').join('-');
 
-  // Subject — buyer-facing tone, since the buyer is on the To line.
-  const unitLabel = towerUnit ? `Unit ${towerUnit}` : 'Unit';
-  const societyLabel = p.society_name || 'Property';
-  const subject = `Booking Confirmation — ${unitLabel}, ${societyLabel}`;
+  const subject = bookingSubject(p, 'Booking Confirmation', b.buyer_name);
 
   // ── Letter body. Variables ───────────────────────────────────────────────
   // Full buyer name in the greeting (e.g. "Dear Saurav Kumar,").
@@ -310,9 +321,8 @@ function buildBrokerEmail({ property, booking, submittedByName, submittedBy }) {
 
   const towerUnit = [p.tower_no, p.unit_no].filter(v => v != null && v !== '').join('-');
   const propertyAddress = [towerUnit, p.society_name, p.locality, p.city].filter(Boolean).join(', ');
-  const unitLabel = towerUnit ? `Unit ${towerUnit}` : 'Unit';
-  const societyLabel = p.society_name || 'Property';
-  const subject = `Brokerage Details — ${unitLabel}, ${societyLabel}`;
+  // The broker is the selling CP; their firm stands in when no name was captured.
+  const subject = bookingSubject(p, 'Brokerage Details', b.selling_cp_name || b.selling_cp_company);
 
   const buyerLine = b.buyer_name ? ` for buyer <strong>${esc(b.buyer_name)}</strong>` : '';
   const signerName = submittedByName || submittedBy || 'Team Openhouse';
