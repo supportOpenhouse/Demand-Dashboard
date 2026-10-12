@@ -2575,6 +2575,12 @@ async function openBookingModal(uid, opts = {}) {
   bookingState.payMode = 'single';
   bookingState.previewMode = 'buyer';
   applyPayMode('single');
+  // The reset above blanks the hidden payment_structure value, but the
+  // Flexible / Non-Flexible tabs and the range row are not [data-bf] fields, so
+  // they kept whatever the PREVIOUS booking showed. On a fresh or "Book Again"
+  // booking that left a tab looking selected with nothing stored behind it, and
+  // the CP mail then failed with "missing: Payment Structure".
+  applyPayStructure('');
   setBF('source', 'CP');
   applySource('CP');
   setBF('token_type', 'normal');
