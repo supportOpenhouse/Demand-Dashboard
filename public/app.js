@@ -3716,6 +3716,7 @@ async function openUpdateHomeModal(uid) {
     populateUhChecks();
     prefillUhFromHome(home);
     applyUhDefaults(row, home);
+    applyUhFixedRules(row);
     fillUhNewLayoutForm(row);
 
     const code = extractListingStatus(home);
@@ -4259,6 +4260,34 @@ function applyUhDefaults(row, home) {
       .map(name => ({ name, count: 1 }));
     renderUhFurnishing();
   }
+}
+
+// Rules that hold for EVERY home, whatever its listing status — unlike the
+// Archive-only defaults above. Kept in step with the CRM's port of this modal
+// (Transaction-Management-Dashboard backend/app/updatehome.py, fixed_rules).
+//   * Property type is always Flat/Apartment, and the dropdown is locked.
+//   * Commission comes from the city.
+const UH_COMMISSION_BY_CITY = {
+  gurgaon:   '1.5% Commission Payable on Registry',
+  gurugram:  '1.5% Commission Payable on Registry',
+  noida:     '2% Commission Payable on Registry',
+  ghaziabad: '2% Commission Payable on Registry',
+};
+function uhCommissionForCity(city) {
+  return UH_COMMISSION_BY_CITY[String(city || '').trim().toLowerCase()] || null;
+}
+function applyUhFixedRules(row) {
+  const ptSel = document.querySelector('#updateHomeModal [data-uf="propertyTypeId"]');
+  const ptId = uhIdByFuzzy('propertyTypes', ['name'], 'Flat/Apartment')
+            || uhIdByFuzzy('propertyTypes', ['name'], 'Apartment');
+  if (ptSel) {
+    if (ptId != null) setUf('propertyTypeId', ptId);
+    // Locked only when the option exists — otherwise the operator must still pick.
+    ptSel.disabled = ptId != null;
+    ptSel.title = ptId != null ? 'Property type is always Flat/Apartment' : '';
+  }
+  const commission = uhCommissionForCity(row && row.city);
+  if (commission) setUf('commission', commission);
 }
 
 // Prefill the form from get-home-details. That payload speaks LABELS and NAMES
