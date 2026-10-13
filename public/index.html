@@ -396,10 +396,19 @@
               <span id="atsPctRupeeHint" class="ats-pct-hint" style="font-size:13px;color:#4f46e5;font-weight:600;white-space:nowrap;">= ₹—</span>
             </div>
           </div>
+          <!-- Work Committed: a Yes/No first (default No), the text box only on Yes.
+               Frontend-only — No simply leaves work_committed empty, which both
+               mails already skip, so "NA" never reaches a buyer or CP. -->
           <div class="fg booking-fullwidth-field">
-            <label>Work Committed</label>
-            <textarea class="booking-input" data-bf="work_committed" rows="3"
-                      placeholder="Any work committed to the buyer…"></textarea>
+            <label>Work Committed?</label>
+            <div class="pay-mode-tabs" role="tablist" id="workCommittedTabs" style="width:max-content;">
+              <button type="button" class="pay-mode-tab active" data-work-committed="No"
+                      role="tab" aria-selected="true">No</button>
+              <button type="button" class="pay-mode-tab" data-work-committed="Yes"
+                      role="tab" aria-selected="false">Yes</button>
+            </div>
+            <textarea class="booking-input" data-bf="work_committed" rows="3" id="workCommittedText"
+                      placeholder="What work is committed to the buyer…" style="display:none;margin-top:8px;"></textarea>
           </div>
           <div class="fg booking-fullwidth-field">
             <label>Other Conditions</label>

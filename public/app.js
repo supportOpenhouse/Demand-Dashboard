@@ -2195,6 +2195,7 @@ function clearBookingDetailFields() {
   bookingState.payMode = 'single';
   applyPayMode('single');
   applyPayStructure('');
+  applyWorkCommitted(false);
   applyBrokerageTiming();
   refreshAllAmountHints();
   renderPayShot();
@@ -2581,6 +2582,7 @@ async function openBookingModal(uid, opts = {}) {
   // booking that left a tab looking selected with nothing stored behind it, and
   // the CP mail then failed with "missing: Payment Structure".
   applyPayStructure('');
+  applyWorkCommitted(false);
   setBF('source', 'CP');
   applySource('CP');
   setBF('token_type', 'normal');
@@ -2728,6 +2730,9 @@ async function openBookingModal(uid, opts = {}) {
     setBF('booking_amount_forfeitable', l.booking_amount_forfeitable === true ? 'Yes' : l.booking_amount_forfeitable === false ? 'No' : '');
     setBF('amount_on_ats_pct', l.amount_on_ats_pct);
     setBF('work_committed', l.work_committed);
+    // A saved booking with text reopens on Yes; one without stays on No.
+    applyWorkCommitted(!!String(l.work_committed || '').trim());
+    if (l.work_committed) setBF('work_committed', l.work_committed);
     setBF('other_conditions', l.other_conditions);
     if (Array.isArray(l.recipients) && l.recipients.length) {
       bookingState.recipients = l.recipients;
@@ -2860,6 +2865,23 @@ function refreshAllAmountHints() {
 // Flexible means the payable share is a negotiated band rather than a fixed
 // figure, so it reveals a Min/Max pair. Switching to Non-Flexible clears that
 // pair — a stale range must not travel with a booking that no longer has one.
+// Work Committed? Yes/No — frontend only, no column. No hides the box and empties
+// it, so nothing (not even a stray "NA") reaches the mails, which already skip an
+// empty work_committed. Yes shows the box, and then it must be filled.
+function applyWorkCommitted(yes) {
+  bookingState.workCommitted = !!yes;
+  document.querySelectorAll('#bookingModal .pay-mode-tab[data-work-committed]').forEach(t => {
+    const active = (t.dataset.workCommitted === 'Yes') === !!yes;
+    t.classList.toggle('active', active);
+    t.setAttribute('aria-selected', active ? 'true' : 'false');
+  });
+  const box = document.getElementById('workCommittedText');
+  if (box) {
+    box.style.display = yes ? '' : 'none';
+    if (!yes) box.value = '';
+  }
+}
+
 function applyPayStructure(value) {
   const hidden = document.querySelector('#bookingModal [data-bf="payment_structure"]');
   if (hidden) hidden.value = value || '';
@@ -3105,6 +3127,9 @@ function validateBookingForm(form) {
   }
   const missing = required.filter(k => !form[k] && form[k] !== 0);
   if (bookingDateIsFuture(form.booking_date)) missing.push('booking_date (cannot be a future date)');
+  if (bookingState.workCommitted && !String(form.work_committed || '').trim()) {
+    missing.push('Work Committed (Yes is selected — describe it, or choose No)');
+  }
   // The two legs may use the same instrument (e.g. two separate UPI transfers),
   // so identical methods are allowed — only the split amounts are constrained.
   return missing;
@@ -3118,6 +3143,9 @@ function validateCpForm(form) {
   if (!form.booking_date) missing.push('Booking Date');
   else if (bookingDateIsFuture(form.booking_date)) missing.push('Booking Date cannot be a future date');
   if (!form.payment_screenshot_url) missing.push('Payment Screenshot');
+  if (bookingState.workCommitted && !String(form.work_committed || '').trim()) {
+    missing.push('Work Committed (Yes is selected — describe it, or choose No)');
+  }
   if (!has('brokerage_amount')) missing.push('Brokerage amount');
   if (!form.payment_structure) missing.push('Payment Structure');
   if (form.payment_structure === 'Flexible') {
@@ -3231,6 +3259,14 @@ function flushPendingBookingInputs() {
       renderBookingBrokers();
     }
     // Payment Mode tabs
+    const wcTab = e.target.closest('#bookingModal .pay-mode-tab[data-work-committed]');
+    if (wcTab) {
+      const yes = wcTab.dataset.workCommitted === 'Yes';
+      applyWorkCommitted(yes);
+      if (yes) document.getElementById('workCommittedText')?.focus();
+      scheduleBookingDraft();
+      return;
+    }
     const structTab = e.target.closest('#bookingModal .pay-mode-tab[data-pay-structure]');
     if (structTab) {
       applyPayStructure(structTab.dataset.payStructure);
