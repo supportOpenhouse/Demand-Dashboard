@@ -3612,6 +3612,7 @@ function uhMastersArr(name) {
     propertyTypes: ['propertyTypes', 'property_types'],
     overlooking: ['overlooking'],
     whyChooseThisHome: ['whyChooseThisHome', 'why_choose_this_home'],
+    whyBuyFromUs: ['whyBuyFromUs', 'why_buy_from_us'],
     documentationAndLoan: ['documentationAndLoan', 'documentation_and_loan'],
   })[name] || [name];
   for (const k of variants) if (Array.isArray(m[k])) return m[k];
@@ -3687,7 +3688,7 @@ async function openUpdateHomeModal(uid) {
   document.querySelectorAll('#updateHomeModal [data-uf]').forEach(el => { el.value = ''; });
   const laySelReset = document.querySelector('#updateHomeModal [data-uf="layoutId"]');
   if (laySelReset) laySelReset.innerHTML = '<option value="">Select…</option>';
-  ['uhOverlooking', 'uhWhyChoose', 'uhDocs'].forEach(id => { const el = document.getElementById(id); if (el) el.innerHTML = ''; });
+  ['uhOverlooking', 'uhWhyChoose', 'uhWhyBuy', 'uhDocs'].forEach(id => { const el = document.getElementById(id); if (el) el.innerHTML = ''; });
   renderUhFurnishing();
   renderUhFloorPlan();
   const fpFile = $('#uhFloorPlanFile'); if (fpFile) fpFile.value = '';
@@ -3785,6 +3786,7 @@ function populateUhSelects() {
 function populateUhChecks() {
   renderUhChecks('uhOverlooking', uhMastersArr('overlooking'), 'name');
   renderUhChecks('uhWhyChoose', uhMastersArr('whyChooseThisHome'), 'reason');
+  renderUhChecks('uhWhyBuy', uhMastersArr('whyBuyFromUs'), 'reason');
   renderUhChecks('uhDocs', uhMastersArr('documentationAndLoan'), 'reason');
 }
 
@@ -4303,6 +4305,9 @@ function applyUhDefaults(row, home) {
 // (Transaction-Management-Dashboard backend/app/updatehome.py, fixed_rules).
 //   * Property type is always Flat/Apartment, and the dropdown is locked.
 //   * Commission comes from the city.
+//   * Why buy from us: "Legally Verified" and "100% transparent and genuine" are
+//     always ticked, and locked; the rest stay optional.
+const UH_FIXED_WHY_BUY = ['Legally Verified', '100% transparent and genuine'];
 const UH_COMMISSION_BY_CITY = {
   gurgaon:   '1.5% Commission Payable on Registry',
   gurugram:  '1.5% Commission Payable on Registry',
@@ -4324,6 +4329,14 @@ function applyUhFixedRules(row) {
   }
   const commission = uhCommissionForCity(row && row.city);
   if (commission) setUf('commission', commission);
+
+  const fixedWhyBuy = new Set(uhFuzzyIds('whyBuyFromUs', ['reason', 'name'], UH_FIXED_WHY_BUY).map(String));
+  document.querySelectorAll('#uhWhyBuy input[type=checkbox]').forEach(c => {
+    const fixed = fixedWhyBuy.has(String(c.value));
+    if (fixed) c.checked = true;
+    c.disabled = fixed;
+    c.title = fixed ? 'Always included' : '';
+  });
 }
 
 // Prefill the form from get-home-details. That payload speaks LABELS and NAMES
@@ -4384,6 +4397,7 @@ function prefillUhFromHome(home) {
 
   checkUhBoxes('uhOverlooking', uhResolveIds('overlooking', ['name'], g('overlooking', 'overlookingIds', 'overlooking_ids')));
   checkUhBoxes('uhWhyChoose', uhResolveIds('whyChooseThisHome', ['reason', 'name'], g('whyChooseThisHome', 'whyChooseThisHomeIds', 'why_choose_this_home')));
+  checkUhBoxes('uhWhyBuy', uhResolveIds('whyBuyFromUs', ['reason', 'name'], g('whyBuyFromUs', 'whyBuyFromUsIds', 'why_buy_from_us')));
   checkUhBoxes('uhDocs', uhResolveIds('documentationAndLoan', ['reason', 'name'], g('documentationAndLoan', 'documentationAndLoanIds', 'documentation_and_loan')));
 
   // Furnishing items — GET now returns [{name, count}], the same shape update
@@ -4461,6 +4475,7 @@ function collectUhForm() {
   };
   checks('uhOverlooking', 'overlookingIds');
   checks('uhWhyChoose', 'whyChooseThisHomeIds');
+  checks('uhWhyBuy', 'whyBuyFromUsIds');
   checks('uhDocs', 'documentationAndLoanIds');
 
   if (updateHomeState.floorPlanUrl) body.floorPlanUrl = updateHomeState.floorPlanUrl;
@@ -4511,6 +4526,7 @@ function buildUhPreview(body) {
   if (body.parkingData) push('Parking', esc(`Covered ${body.parkingData.covered} · Open ${body.parkingData.open}`));
   if (body.overlookingIds) push('Overlooking', esc(uhIdsLabels('overlooking', 'name', body.overlookingIds)));
   if (body.whyChooseThisHomeIds) push('Why choose', esc(uhIdsLabels('whyChooseThisHome', 'reason', body.whyChooseThisHomeIds)));
+  if (body.whyBuyFromUsIds) push('Why buy from us', esc(uhIdsLabels('whyBuyFromUs', 'reason', body.whyBuyFromUsIds)));
   if (body.documentationAndLoanIds) push('Documentation & loan', esc(uhIdsLabels('documentationAndLoan', 'reason', body.documentationAndLoanIds)));
   if (body.furnishingData) push('Furnishing items', esc(body.furnishingData.map(f => `${f.name} ×${f.count}`).join(', ')));
 
