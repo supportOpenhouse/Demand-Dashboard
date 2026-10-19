@@ -115,6 +115,10 @@ const INIT_SQL = `
   -- (which lives in ap_details.status). Drives the colored pill in the main
   -- row's "Status" column. Valid values: 'Available' / 'Booked' / 'Sold'.
   ALTER TABLE demand_details ADD COLUMN IF NOT EXISTS availability_status TEXT DEFAULT 'Available';
+  -- project_status: written by Projects-Epicenter (services/project_status.py), never
+  -- here — Phase 1 pending / Phase 1 / Phase 2 / Photoshoot, NULL with no work plan.
+  -- Declared so the list query never fails on a database Epicenter has not touched.
+  ALTER TABLE demand_details ADD COLUMN IF NOT EXISTS project_status TEXT;
 
   -- booking_details: captures the per-property booking submission (the "Submit
   -- Details" modal) and remembers who the email was sent to. Owned by the

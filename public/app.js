@@ -774,7 +774,10 @@ function renderTable() {
 
   if (state.sortKey) {
     rows.sort((a, b) => {
-      const av = a[state.sortKey], bv = b[state.sortKey];
+      // Project status sorts by progress (blank → pending → P1 → P2 → photoshoot), not A–Z.
+      const key = v => state.sortKey === 'project_status'
+        ? (['Phase 1 pending', 'Phase 1', 'Phase 2', 'Photoshoot'].indexOf(v) + 1) : v;
+      const av = key(a[state.sortKey]), bv = key(b[state.sortKey]);
       const an = av == null ? '' : av, bn = bv == null ? '' : bv;
       if (an < bn) return state.sortDir === 'asc' ? -1 : 1;
       if (an > bn) return state.sortDir === 'asc' ? 1 : -1;
@@ -877,6 +880,7 @@ function renderRow(r) {
       <td>${listingPriceCell}</td>
       <td class="col-ama-date">${esc(fmtDate(r.ama_date)) || '—'}</td>
       <td class="col-key-handover">${esc(fmtDate(r.key_handover_date)) || '—'}${keyHandoverTentative(r) ? `<span class="kh-tentative" title="${esc(KH_TENTATIVE_TIP)}">Tentative</span>` : ''}</td>
+      <td class="col-project">${renderProjectStatus(r.project_status)}</td>
       <td>${esc(r.owner_name || '—')}<div class="prop-unit col-contact">${esc(r.contact_no || '')}</div></td>
       <td class="col-status">
         ${renderAvailabilityPill(r.availability_status, r.token_type)}
@@ -889,10 +893,34 @@ function renderRow(r) {
 
   const expandRow = `
     <tr class="expand-row ${isOpen ? 'open' : ''} ${deadCls}" data-uid-expand="${esc(r.uid)}">
-      <td colspan="11">${isOpen ? renderExpand(r) : ''}</td>
+      <td colspan="12">${isOpen ? renderExpand(r) : ''}</td>
     </tr>`;
 
   return dataRow + expandRow;
+}
+
+// Projects-Epicenter's progress on the unit (demand_details.project_status, written by
+// Epicenter's services/project_status.py). Each value is the LAST thing completed;
+// the hover lists what that phase covers — Epicenter's PHASE_1_KEYS / PHASE_2_KEYS.
+// Photography 1 counts towards neither phase; Photography 2 is "Photoshoot".
+const PROJECT_PHASE_1 = ['Pre-audit & Ordering', 'Smart Lock', 'Paint', 'Lights', 'Electrician',
+                         'Carpenter 1', 'Plumbing', 'Deep Cleaning 1'];
+const PROJECT_PHASE_2 = ['Furniture', 'Decor Delivery', 'Deep Cleaning 2',
+                         'Carpenter 2 (pre-staging)', 'Staging'];
+const PROJECT_STATUS = {
+  'Phase 1 pending': { cls: 'ps-pending', label: 'Phase 1 pending',
+    tip: 'Phase 1 not finished yet. Phase 1 covers: ' + PROJECT_PHASE_1.join(', ') },
+  'Phase 1': { cls: 'ps-p1', label: 'Phase 1 done',
+    tip: 'Phase 1 completed: ' + PROJECT_PHASE_1.join(', ') },
+  'Phase 2': { cls: 'ps-p2', label: 'Phase 2 done',
+    tip: 'Phase 1 and Phase 2 completed. Phase 2: ' + PROJECT_PHASE_2.join(', ') },
+  'Photoshoot': { cls: 'ps-shoot', label: 'Photoshoot done',
+    tip: 'Phase 1, Phase 2 and the final photoshoot (Photography 2) completed' },
+};
+function renderProjectStatus(v) {
+  const s = PROJECT_STATUS[String(v || '').trim()];
+  if (!s) return '<span class="muted">—</span>';
+  return `<span class="ps-pill ${s.cls}" title="${esc(s.tip)}">${esc(s.label)}</span>`;
 }
 
 function toggleRow(uid) {

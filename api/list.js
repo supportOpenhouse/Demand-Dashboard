@@ -647,6 +647,7 @@ module.exports = async (req, res) => {
              COALESCE(dd.listing_price_is_auto, FALSE) AS listing_price_is_auto,
              COALESCE(dd.demand_status, 'Buyer Visit') AS demand_status,
              COALESCE(dd.availability_status, 'Available') AS availability_status,
+             dd.project_status,
              dd.buyer_visit_date,
              dd.buyer_interested_date,
              dd.buyer_revisit_date,
