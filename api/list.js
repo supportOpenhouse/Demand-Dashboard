@@ -43,7 +43,13 @@ const UNIFIED_COLS = [
   ['possession_status',         'possession_status',         'possession_status',         'TEXT'],
   ['occupancy_status',          'occupancy_status',          'occupancy_status',          'TEXT'],
   ['current_occupancy_pct',     'current_occupancy_pct',     'current_occupancy_pct',     'REAL'],
+  // The effective handover date, projected as COALESCE(khd_projteam, <supply>)
+  // in buildPropertiesProjection — see the handover source order below.
   ['key_handover_date',         'key_handover_date',         'key_handover_date',         'DATE'],
+  // The actual handover recorded by the projects team, carried through on its own
+  // so the UI can tell an actual date from a tentative supply one. Real-side only;
+  // legacy_properties has no such column.
+  ['khd_projteam',              null,                        'khd_projteam',              'DATE'],
   ['tentative_handover_date',   'tentative_handover_date',   'tentative_handover_date',   'DATE'],
 
   ['maintenance_charges',       'maintenance_charges',       'maintenance_charges',       'REAL'],
@@ -95,6 +101,15 @@ const UNIFIED_COLS = [
   ['video_link',                'video_link',                'video_link',                'TEXT'],
   ['core_home_id',              null,                        'core_home_id',              'INTEGER'],
 ];
+
+// Where the handover date on this dashboard comes from, in order:
+//   1. properties.khd_projteam    — the ACTUAL handover, recorded by the projects
+//                                   team in the Projects Dashboard.
+//   2. properties.key_handover_date — supply's own date (Form 3 tentative, or the
+//                                   date Form 9 acknowledged), after the repair
+//                                   layers below.
+// Matches the fallback order the Transaction/Projects dashboard applies in every
+// consumer, so the same unit never shows two different handover dates across apps.
 
 // Key handover confirmation (see key_handover_confirmed in rowsSql). From this
 // date on a handover needs the acknowledgement mail to the seller; earlier ones
@@ -178,7 +193,18 @@ function keyHandoverDateSql(entries) {
 function buildPropertiesProjection(allCols, khDates) {
   const cols = UNIFIED_COLS.map(([propsCol, _legacyCol, alias, type]) => {
     if (propsCol && hasCol(allCols, propsCol)) {
-      if (alias === 'key_handover_date') return `(${keyHandoverDateSql(khDates)})::${type} AS "${alias}"`;
+      // Effective handover date: the projects team's ACTUAL date first, then
+      // supply's own (itself already repaired by keyHandoverDateSql). Same
+      // fallback order every other consumer of these two columns uses — see
+      // the source order noted above. khd_projteam is guarded because
+      // `properties` is owned externally and may not carry the column.
+      if (alias === 'key_handover_date') {
+        const supplyDate = `(${keyHandoverDateSql(khDates)})`;
+        const effective = hasCol(allCols, 'khd_projteam')
+          ? `COALESCE(p."khd_projteam", ${supplyDate})`
+          : supplyDate;
+        return `${effective}::${type} AS "${alias}"`;
+      }
       return `p."${propsCol}"::${type} AS "${alias}"`;
     }
     return `NULL::${type} AS "${alias}"`;
@@ -717,6 +743,11 @@ module.exports = async (req, res) => {
                 ORDER BY bd2.created_at DESC NULLS LAST, bd2.id DESC
                 LIMIT 1
              ) AS token_type,
+             -- NOT a general "is the handover done" flag: it means specifically
+             -- that the acknowledgement mail is on record. A unit the projects
+             -- team has recorded an actual handover for (khd_projteam) reads Done
+             -- in the UI without this ever turning true — see keyHandoverDone().
+             --
              -- Whether the handover is confirmed. It is when the Key Handover
              -- Acknowledgement mail went to the seller: Form 9 makes the Forms app
              -- send it and log 'email_key_handover' (an empty gmail_id there is a

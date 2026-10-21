@@ -34,13 +34,23 @@ module.exports = async (req, res) => {
     // Match /api/list: a replicated row has been superseded by a copy and must
     // not be reachable here either, or a hidden unit stays openable by URL.
     // legacy_properties has no such column, so only the real side is gated.
-    const notReplicated = hasCol(await getPropertiesColumns(), 'replicated')
+    const propCols = await getPropertiesColumns();
+    const notReplicated = hasCol(propCols, 'replicated')
       ? 'AND p.replicated IS NOT TRUE' : '';
+    // Effective handover date: the projects team's ACTUAL date first, then
+    // supply's. Same order as /api/list, so the two endpoints can't report
+    // different dates for a unit. Selected after p.* deliberately — the later
+    // column of the same name is the one the driver keeps. Guarded because
+    // `properties` is owned externally and may not carry the column.
+    const khdSelect = hasCol(propCols, 'khd_projteam')
+      ? 'COALESCE(p.khd_projteam, p.key_handover_date) AS key_handover_date,'
+      : '';
 
     // Real properties path. SELECT p.* gives us every column for the detail view.
     // Supply-ready gate uses ap_details.status (replaces the deleted v_property_status view).
     const realRes = await pool.query(`
       SELECT p.*,
+             ${khdSelect}
              apd.status AS supply_status,
              apd.parking_number,
              apd.property_tax_status,

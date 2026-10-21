@@ -1045,13 +1045,21 @@ function renderExpand(r) {
         return field('Key Handover Status', done ? 'Done' : 'Pending',
                      done ? 'green' : 'amber', tip);
       })()}
-      ${isViewer()
-        ? ''
-        : editableDate('Key Handover Date', 'key_handover_date', r.key_handover_date, {
-            uid: r.uid,
-            adminOnly: true,
-            readOnlyTooltip: 'Set by Form 9 (Key Handover Acknowledgement) in the supply forms. Admin-only correction.',
-          })}
+      ${isViewer() ? '' : (() => {
+        // While the projects team holds an actual date it wins the COALESCE, so
+        // an edit here would write to supply's column and appear to do nothing.
+        // Show it read-only instead of offering a silently ineffective input.
+        if (keyHandoverIsActual(r)) {
+          return field('Key Handover Date', fmtDate(r.key_handover_date), 'tooltipped',
+            'Actual handover recorded by the projects team in the Projects Dashboard. '
+            + 'Corrections are made there, not here.');
+        }
+        return editableDate('Key Handover Date', 'key_handover_date', r.key_handover_date, {
+          uid: r.uid,
+          adminOnly: true,
+          readOnlyTooltip: 'Set by Form 9 (Key Handover Acknowledgement) in the supply forms. Admin-only correction.',
+        });
+      })()}
       <span data-occupancy-for="${esc(r.uid)}">${field('Current Occupancy', r.possession_status || r.occupancy_status)}</span>
       ${field('Furnishing Status', r.furnishing)}
       ${field('Furnishing Items', formatList(r.furnishing_details))}
@@ -1253,23 +1261,32 @@ function field(label, value, cls, tooltip) {
     </div>`;
 }
 
-// Key Handover "Done" requires a witnessed handover, not an inferred one: a
-// confirmed handover (key_handover_confirmed, see api/list.js — the
-// acknowledgement mail sent to the seller, or a Form 9 on record for handovers
-// dated before that rule began) AND a handover date on record.
+// Key Handover "Done" requires a witnessed handover, not an inferred one. Two
+// things count as witnessing it:
 //
-// The supply pipeline's computed 'Key Handover Done' status is deliberately NOT
-// accepted. That status is derived on read from seven gates (deal transfer, docs
-// reviewed, draft AMA, seller approval, AMA date, handover date) and can flip to
-// Done on its own when a future-dated handover date simply arrives — nothing
-// actually happened. A date alone may also be the tentative value from Form 3 or
-// a manual correction.
+//   1. khd_projteam — the ACTUAL handover date recorded by the projects team in
+//      the Projects Dashboard. Someone was there and wrote down the day the keys
+//      changed hands, so the unit is handed over whether or not the
+//      acknowledgement mail has gone out yet. The mail is a separate deliverable
+//      and no longer holds the status Pending on its own.
+//   2. key_handover_confirmed (see api/list.js) — the acknowledgement mail sent
+//      to the seller, or a Form 9 on record for handovers dated before that rule
+//      began. The path for units the projects team has not recorded.
+//
+// The supply pipeline's computed 'Key Handover Done' status is still deliberately
+// NOT accepted. That status is derived on read from seven gates (deal transfer,
+// docs reviewed, draft AMA, seller approval, AMA date, handover date) and can flip
+// to Done on its own when a future-dated handover date simply arrives — nothing
+// actually happened. A bare date may also be the tentative value from Form 3 or a
+// manual correction.
 //
 // Legacy rows never pass through the supply forms at all, so the date is the only
 // signal that exists for them.
 // Diverges from syncKeyHandoverVacancy() in api/list.js, which still flips
 // occupancy on final_submitted_at alone.
 function keyHandoverDone(r) {
+  // An actual handover on record settles it, ahead of every other signal.
+  if (r.khd_projteam) return true;
   if (r.origin === 'legacy') return !!r.key_handover_date;
   // A payload without the flag (an older API) keeps the previous Form 9 rule
   // rather than tagging every dated row Tentative.
@@ -1277,10 +1294,17 @@ function keyHandoverDone(r) {
   return !!r.key_handover_date && !!r.key_handover_confirmed;
 }
 
-// A real row with a date but no acknowledgement mail: the date is only expected.
-// Defined off keyHandoverDone() so the list tag and the Status field never disagree.
+// A real row with a date but nothing witnessing the handover: the date is only
+// expected. Defined purely off keyHandoverDone() so the list tag and the Status
+// field can never disagree — an actual date makes the row Done above, which is
+// what stops it being tagged Tentative.
 function keyHandoverTentative(r) {
   return r.origin !== 'legacy' && !!r.key_handover_date && !keyHandoverDone(r);
+}
+
+// True when the date on screen came from the projects team rather than supply.
+function keyHandoverIsActual(r) {
+  return !!r.khd_projteam;
 }
 
 function extractBedrooms(config) {
