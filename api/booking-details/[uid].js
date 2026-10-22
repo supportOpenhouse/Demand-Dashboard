@@ -32,6 +32,7 @@ const { buildBookingEmail, buildBrokerEmail, sendMail } = require('../_email');
 const PAYMENT_METHODS = ['UPI', 'NEFT', 'IMPS', 'RTGS', 'Cheque', 'Cash', 'Other'];
 const SOURCES = ['CP', 'Direct'];
 const BROKERAGE_TIMINGS = ['Registry Only', 'ATS & Registry'];
+const GIFT_TIMINGS = ['ATS', 'Registry'];
 const PAYMENT_STRUCTURES = ['Flexible', 'Non-Flexible'];
 const SALUTATIONS = ['Mr.', 'Mrs.', 'Ms.', 'Dr.'];
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -46,7 +47,9 @@ const BOOKING_COLS = [
   'booking_amount_split_1', 'booking_amount_split_2',
   'ats_timeline', 'registry_timeline', 'booking_amount_forfeitable',
   'amount_on_ats_pct', 'work_committed', 'other_conditions', 'recipients', 'broker_emails',
+  'gift_details', 'gift_timing',
   'payment_structure', 'payment_range_min_pct', 'payment_range_max_pct',
+  'payment_range_min_lakhs', 'payment_range_max_lakhs',
   'source', 'brokerage_amount', 'brokerage_timing',
   'brokerage_ats_amount', 'brokerage_registry_amount',
   'selling_cp_id', 'selling_cp_code', 'selling_cp_phone',
@@ -178,6 +181,23 @@ function validate(body) {
     errors.push('booking_amount_forfeitable must be Yes/No');
   }
 
+  // Gift. No boolean is stored — a description present IS "gift applicable",
+  // same shape as work_committed. With no description the timing is dropped too,
+  // so a cleared gift can't leave "to be given on Registry" behind it.
+  const giftDetails = String(body.gift_details == null ? '' : body.gift_details).trim();
+  if (!giftDetails) {
+    clean.gift_details = null;
+    clean.gift_timing = null;
+  } else if (giftDetails.length > 2000) {
+    errors.push('gift_details is too long');
+  } else {
+    clean.gift_details = giftDetails;
+    const giftTiming = String(body.gift_timing || '').trim();
+    if (!giftTiming) clean.gift_timing = null;
+    else if (GIFT_TIMINGS.includes(giftTiming)) clean.gift_timing = giftTiming;
+    else errors.push(`gift_timing must be one of: ${GIFT_TIMINGS.join(', ')}`);
+  }
+
   // Payment structure. 'Flexible' carries a negotiated min/max band; anything
   // else must not keep one, so the pair is nulled server-side too — the client
   // clears it on switch, but a stale range must never reach the row regardless
@@ -187,22 +207,39 @@ function validate(body) {
     clean.payment_structure = null;
     clean.payment_range_min_pct = null;
     clean.payment_range_max_pct = null;
+    clean.payment_range_min_lakhs = null;
+    clean.payment_range_max_lakhs = null;
   } else if (PAYMENT_STRUCTURES.includes(structure)) {
     clean.payment_structure = structure;
     if (structure === 'Flexible') {
-      for (const f of ['payment_range_min_pct', 'payment_range_max_pct']) {
+      // The band is an amount in lakhs. No upper bound beyond sanity — a range
+      // above the consideration is a data-entry mistake the UI flags, not
+      // something to reject outright, since consideration can be edited after.
+      for (const f of ['payment_range_min_lakhs', 'payment_range_max_lakhs']) {
         if (body[f] === undefined || body[f] === null || body[f] === '') { clean[f] = null; continue; }
         const n = parseFloat(body[f]);
-        if (isNaN(n) || n < 0 || n > 100) errors.push(`${f} must be between 0 and 100`);
+        if (isNaN(n) || n < 0) errors.push(`${f} must be a non-negative amount in lakhs`);
         else clean[f] = n;
       }
-      if (clean.payment_range_min_pct != null && clean.payment_range_max_pct != null
-          && clean.payment_range_min_pct > clean.payment_range_max_pct) {
-        errors.push('payment_range_min_pct must not exceed payment_range_max_pct');
+      if (clean.payment_range_min_lakhs != null && clean.payment_range_max_lakhs != null
+          && clean.payment_range_min_lakhs > clean.payment_range_max_lakhs) {
+        errors.push('payment_range_min_lakhs must not exceed payment_range_max_lakhs');
       }
+      // Derive the percentages from the amounts so the older columns stay in
+      // step. Needs the consideration from this same payload; without it (or
+      // with a zero) there is nothing to take a percentage of, so they go NULL
+      // rather than carrying a stale figure.
+      const consideration = parseFloat(body.consideration_amount);
+      const toPct = (lakhs) => (lakhs == null || !(consideration > 0))
+        ? null
+        : Math.round(((lakhs * 100000) / consideration) * 10000) / 100;
+      clean.payment_range_min_pct = toPct(clean.payment_range_min_lakhs);
+      clean.payment_range_max_pct = toPct(clean.payment_range_max_lakhs);
     } else {
       clean.payment_range_min_pct = null;
       clean.payment_range_max_pct = null;
+      clean.payment_range_min_lakhs = null;
+      clean.payment_range_max_lakhs = null;
     }
   } else {
     errors.push(`payment_structure must be one of: ${PAYMENT_STRUCTURES.join(', ')}`);
@@ -512,6 +549,15 @@ const handleBookingRequest = async (req, res) => {
 
   // Booking Date and the payment screenshot are mandatory on every booking that
   // goes out. Drafts (save) may still lack them while the form is being filled.
+  // Gift: the description is the flag, so "applicable" with nothing described
+  // would save as no gift at all. Enforced on both sends, not just in the browser.
+  if ((action === 'send' || action === 'send_cp') && clean.gift_details && !clean.gift_timing) {
+    return res.status(400).json({
+      success: false,
+      error: 'Gift — "To be given on" (ATS or Registry) is required when a gift is applicable.',
+    });
+  }
+
   if (action === 'send' || action === 'send_cp') {
     const b = req.body || {};
     const miss = [];
@@ -595,6 +641,17 @@ const handleBookingRequest = async (req, res) => {
     // sent before the buyer mail. A latest row whose CP mail already went out
     // belongs to a completed booking — a repeat send is a rebooking, so it gets
     // its own row rather than overwriting that history.
+    // The gift as the LAST CP mail stated it. The audit entry below is raised
+    // against this, not against the draft, so edits made and abandoned in the
+    // form leave no trace — only what a partner was actually told.
+    const priorGiftRow = await pool.query(
+      `SELECT gift_details, gift_timing FROM booking_details
+        WHERE uid = $1 AND cp_mail_sent_at IS NOT NULL
+        ORDER BY cp_mail_sent_at DESC, id DESC LIMIT 1`,
+      [uid]
+    );
+    const priorGift = priorGiftRow.rows[0] || { gift_details: null, gift_timing: null };
+
     let cpRowId;
     const latest = await pool.query(
       `SELECT id FROM booking_details
@@ -608,11 +665,13 @@ const handleBookingRequest = async (req, res) => {
         `UPDATE booking_details
            SET source = $2, brokerage_amount = $3, brokerage_timing = $4,
                brokerage_ats_amount = $5, brokerage_registry_amount = $6,
-               broker_emails = $7, recipients = $8, updated_at = NOW()
+               broker_emails = $7, recipients = $8,
+               gift_details = $9, gift_timing = $10, updated_at = NOW()
          WHERE id = $1`,
         [cpRowId, clean.source, clean.brokerage_amount, clean.brokerage_timing,
          clean.brokerage_ats_amount, clean.brokerage_registry_amount,
-         JSON.stringify(clean.broker_emails || []), JSON.stringify(clean.recipients || [])]
+         JSON.stringify(clean.broker_emails || []), JSON.stringify(clean.recipients || []),
+         clean.gift_details, clean.gift_timing]
       );
     } else {
       // Generated from BOOKING_COLS like the other write paths. This used to
@@ -660,7 +719,24 @@ const handleBookingRequest = async (req, res) => {
       booking_id: cpRowId,
       // >0 means a CP mail had already gone out for this unit — a rebooking.
       prior_cp_mails: priorCpCount,
+      gift_details: clean.gift_details,
+      gift_timing: clean.gift_timing,
     });
+
+    // Gift changes get their own entry so they are findable without reading every
+    // CP-mail log. Raised only here, on a successful send: a gift edited in the
+    // form and never mailed is not something anyone was promised.
+    const giftChanged = (priorGift.gift_details || null) !== (clean.gift_details || null)
+      || (priorGift.gift_timing || null) !== (clean.gift_timing || null);
+    if (giftChanged) {
+      logActivity(uid, 'booking_gift_changed', 'booking', user, {
+        booking_id: cpRowId,
+        from: { details: priorGift.gift_details, timing: priorGift.gift_timing },
+        to:   { details: clean.gift_details,     timing: clean.gift_timing },
+        // false on the very first CP mail that carries a gift.
+        had_prior_cp_mail: priorCpCount > 0,
+      });
+    }
     return res.status(200).json({ success: true, id: cpRowId, sent: true });
   }
 

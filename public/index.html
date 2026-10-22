@@ -239,12 +239,14 @@
             </select>
           </div>
           <div class="cp-lookup-title" id="cpLookupTitle">Selling channel partner</div>
+          <!-- Phone first: it is what the operator usually has to hand, and it is
+               the field they reach for by default. -->
           <div class="cp-lookup-keys">
-            <input type="text" class="booking-input" id="cpLookupCode"
-                   data-bf="selling_cp_code" placeholder="CP code — CP01234" autocomplete="off">
-            <span class="cp-lookup-or">or</span>
             <input type="tel" class="booking-input" id="cpLookupPhone" inputmode="numeric"
                    data-bf="selling_cp_phone" placeholder="Registered phone (10 digits)" autocomplete="off">
+            <span class="cp-lookup-or">or</span>
+            <input type="text" class="booking-input" id="cpLookupCode"
+                   data-bf="selling_cp_code" placeholder="CP code — CP01234" autocomplete="off">
           </div>
           <div id="cpLookupStatus" class="cp-lookup-status"></div>
           <div id="cpLookupMatches" class="cp-lookup-matches" hidden></div>
@@ -309,11 +311,13 @@
           </div>
           <div class="fg">
             <label>Buyer Name <span class="req">*</span></label>
-            <input type="text" class="booking-input" data-bf="buyer_name" required>
+            <input type="text" class="booking-input" data-bf="buyer_name"
+                   data-titlecase autocapitalize="words" required>
           </div>
           <div class="fg">
             <label>Co-buyer Name</label>
-            <input type="text" class="booking-input" data-bf="co_buyer_name">
+            <input type="text" class="booking-input" data-bf="co_buyer_name"
+                   data-titlecase autocapitalize="words">
           </div>
         </div>
 
@@ -426,20 +430,25 @@
             </div>
             <input type="hidden" data-bf="payment_structure">
           </div>
+          <!-- Entered as an amount in lakhs; the share of the Consideration Amount
+               is derived and shown in brackets beside each box (updatePaymentRangeHints). -->
           <div class="fg" data-pay-structure-range style="display:none;">
-            <label>Payment Range <span class="req">*</span></label>
+            <label>Payment Range (₹) <span class="req">*</span></label>
             <div class="pay-range-row">
+              <!-- "Lakhs" sits inside each box so the pair reads "10 Lakhs to
+                   20 Lakhs"; the derived share is one hint after both cells. -->
               <div class="pay-range-cell">
-                <input type="number" min="0" max="100" step="0.01" class="booking-input booking-pct-input"
-                       data-bf="payment_range_min_pct" placeholder="Min">
-                <span class="pay-range-pct">%</span>
+                <input type="number" min="0" step="0.01" class="booking-input booking-lakh-input"
+                       data-bf="payment_range_min_lakhs" placeholder="Min">
+                <span class="pay-range-unit">Lakhs</span>
               </div>
               <span class="pay-range-sep">to</span>
               <div class="pay-range-cell">
-                <input type="number" min="0" max="100" step="0.01" class="booking-input booking-pct-input"
-                       data-bf="payment_range_max_pct" placeholder="Max">
-                <span class="pay-range-pct">%</span>
+                <input type="number" min="0" step="0.01" class="booking-input booking-lakh-input"
+                       data-bf="payment_range_max_lakhs" placeholder="Max">
+                <span class="pay-range-unit">Lakhs</span>
               </div>
+              <span class="pay-range-derived" id="payRangePct"></span>
             </div>
           </div>
         </div>
@@ -450,7 +459,10 @@
              Registry split) that feeds the separate broker mail; Direct only
              asks the amount to be collected and sends no broker mail. -->
         <div class="booking-source-block" style="margin-bottom:14px;">
-          <div class="form-grid" style="display:grid;grid-template-columns:1fr;gap:12px;align-items:start;">
+          <!-- Amount and its timing read as one statement ("₹1,36,200 payable at
+               ATS & Registry"), so they share a line. Brokerage Payable is CP-only;
+               with Direct the amount keeps the row to itself. -->
+          <div class="booking-brokerage-row">
             <div class="fg">
               <label>
                 <span data-source-label="CP">Brokerage to be paid (₹)</span>
@@ -460,11 +472,6 @@
                      data-bf="brokerage_amount" data-amount-hint="brokerage_amount">
               <div class="amount-hint" data-amount-hint-for="brokerage_amount"></div>
             </div>
-          </div>
-
-          <!-- Brokerage Payable is CP-only; the payment screenshot sits beside it and
-               is shown for Direct too, since every booking takes a token payment. -->
-          <div class="booking-payable-row">
             <div class="fg" data-source-show="CP">
               <label>Brokerage Payable</label>
               <select class="booking-input" data-bf="brokerage_timing">
@@ -473,34 +480,67 @@
                 <option value="ATS &amp; Registry">At the time of ATS &amp; Registry</option>
               </select>
             </div>
-            <div class="fg">
-              <label>Upload Payment Screenshot <span class="req">*</span></label>
-              <input type="hidden" data-bf="payment_screenshot_url">
-              <div class="pay-shot">
-                <button type="button" class="btn btn-ghost" id="payShotPick">📎 Choose file</button>
-                <input type="file" id="payShotFile" accept="image/png,image/jpeg,image/webp,image/heic,application/pdf" hidden>
-                <a id="payShotLink" class="pay-shot-link" target="_blank" rel="noopener" hidden>View uploaded</a>
-              </div>
-              <div id="payShotStatus" class="pay-shot-status"></div>
+            <!-- Columns 3 and 4 of the same row. Only filled when the brokerage is
+                 split across ATS and Registry; otherwise that half of the row is
+                 simply left empty (the grid template holds the columns open).
+                 Visibility is owned by applyBrokerageTiming(), which also checks
+                 Source, so these carry no data-source-show of their own. -->
+            <div class="fg" data-brokerage-split style="display:none;">
+              <label>Brokerage at ATS (₹)</label>
+              <input type="number" min="0" step="1" class="booking-input booking-amount-input"
+                     data-bf="brokerage_ats_amount" data-amount-hint="brokerage_ats_amount">
+              <div class="amount-hint" data-amount-hint-for="brokerage_ats_amount"></div>
+            </div>
+            <div class="fg" data-brokerage-split style="display:none;">
+              <label>Brokerage at Registry (₹)</label>
+              <input type="number" min="0" step="1" class="booking-input booking-amount-input"
+                     data-bf="brokerage_registry_amount" data-amount-hint="brokerage_registry_amount">
+              <div class="amount-hint" data-amount-hint-for="brokerage_registry_amount"></div>
             </div>
           </div>
 
-          <div data-source-show="CP">
-            <div class="form-grid" data-brokerage-split
-                 style="display:none;grid-template-columns:1fr 1fr;gap:12px;margin-top:10px;">
-              <div class="fg">
-                <label>Brokerage at ATS (₹)</label>
-                <input type="number" min="0" step="1" class="booking-input booking-amount-input"
-                       data-bf="brokerage_ats_amount" data-amount-hint="brokerage_ats_amount">
-                <div class="amount-hint" data-amount-hint-for="brokerage_ats_amount"></div>
-              </div>
-              <div class="fg">
-                <label>Brokerage at Registry (₹)</label>
-                <input type="number" min="0" step="1" class="booking-input booking-amount-input"
-                       data-bf="brokerage_registry_amount" data-amount-hint="brokerage_registry_amount">
-                <div class="amount-hint" data-amount-hint-for="brokerage_registry_amount"></div>
+          <!-- Gift promised alongside the booking. Yes/No first (default No), the
+               details and timing appear on the same line only on Yes — same
+               pattern as Work Committed above. -->
+          <div class="booking-gift-row">
+            <div class="fg">
+              <label>Gift Applicable?</label>
+              <div class="pay-mode-tabs" role="tablist" id="giftApplicableTabs" style="width:max-content;">
+                <button type="button" class="pay-mode-tab active" data-gift-applicable="No"
+                        role="tab" aria-selected="true">No</button>
+                <button type="button" class="pay-mode-tab" data-gift-applicable="Yes"
+                        role="tab" aria-selected="false">Yes</button>
               </div>
             </div>
+            <div class="fg" data-gift-field style="display:none;">
+              <label>Gift Details</label>
+              <input type="text" class="booking-input" data-bf="gift_details" id="giftDetailsText"
+                     placeholder="What is being gifted…">
+            </div>
+            <div class="fg" data-gift-field style="display:none;">
+              <label>To be given on</label>
+              <div class="pay-mode-tabs" role="tablist" id="giftTimingTabs" style="width:max-content;">
+                <button type="button" class="pay-mode-tab" data-gift-timing="ATS"
+                        role="tab" aria-selected="false">ATS</button>
+                <button type="button" class="pay-mode-tab" data-gift-timing="Registry"
+                        role="tab" aria-selected="false">Registry</button>
+              </div>
+              <input type="hidden" data-bf="gift_timing">
+            </div>
+          </div>
+
+          <!-- Own line, last: the screenshot is evidence for the whole block, not
+               a field beside any one figure. Shown for Direct too, since every
+               booking takes a token payment. -->
+          <div class="fg pay-shot-block">
+            <label>Upload Payment Screenshot <span class="req">*</span></label>
+            <input type="hidden" data-bf="payment_screenshot_url">
+            <div class="pay-shot">
+              <button type="button" class="btn btn-ghost" id="payShotPick">📎 Choose file</button>
+              <input type="file" id="payShotFile" accept="image/png,image/jpeg,image/webp,image/heic,application/pdf" hidden>
+              <span id="payShotStatus" class="pay-shot-status"></span>
+            </div>
+            <a id="payShotPreview" class="pay-shot-preview" target="_blank" rel="noopener" hidden></a>
           </div>
         </div>
 

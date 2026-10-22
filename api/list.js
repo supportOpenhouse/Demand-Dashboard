@@ -743,6 +743,21 @@ module.exports = async (req, res) => {
                 ORDER BY bd2.created_at DESC NULLS LAST, bd2.id DESC
                 LIMIT 1
              ) AS token_type,
+             -- Gift promised on the newest booking, surfaced so what was committed
+             -- to the buyer is visible on the board without reopening the booking
+             -- modal. Mailed to the CP, so it is not confidential to the form.
+             (
+               SELECT bd4.gift_details FROM booking_details bd4
+                WHERE bd4.uid = u.uid AND NULLIF(btrim(bd4.gift_details), '') IS NOT NULL
+                ORDER BY bd4.created_at DESC NULLS LAST, bd4.id DESC
+                LIMIT 1
+             ) AS gift_details,
+             (
+               SELECT bd5.gift_timing FROM booking_details bd5
+                WHERE bd5.uid = u.uid AND NULLIF(btrim(bd5.gift_details), '') IS NOT NULL
+                ORDER BY bd5.created_at DESC NULLS LAST, bd5.id DESC
+                LIMIT 1
+             ) AS gift_timing,
              -- NOT a general "is the handover done" flag: it means specifically
              -- that the acknowledgement mail is on record. A unit the projects
              -- team has recorded an actual handover for (khd_projteam) reads Done

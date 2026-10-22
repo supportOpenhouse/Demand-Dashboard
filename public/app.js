@@ -1002,6 +1002,7 @@ function renderExpand(r) {
       ${field('Origin', r.origin === 'legacy' ? 'Legacy import (CSV)' : 'Supply pipeline', r.origin === 'legacy' ? 'amber' : '')}
       ${editableSelect('Source', 'source', r.source, { uid: r.uid, options: CANONICAL_SOURCES, labelFn: fmtSource })}
       ${editableSelect('POC', 'assigned_by', r.poc, { uid: r.uid, options: CANONICAL_POCS })}
+      ${r.gift_details ? field('Gift Committed', formatGift(r)) : ''}
     </div>`;
 
   // ── Section: Society & Charges
@@ -1305,6 +1306,16 @@ function keyHandoverTentative(r) {
 // True when the date on screen came from the projects team rather than supply.
 function keyHandoverIsActual(r) {
   return !!r.khd_projteam;
+}
+
+// "Modular wardrobe · at Registry". The timing is dropped when absent rather
+// than printing a dangling separator. Empty string when no gift was promised,
+// which keeps the field out of the panel entirely.
+function formatGift(r) {
+  const details = String(r.gift_details || '').trim();
+  if (!details) return '';
+  const when = String(r.gift_timing || '').trim();
+  return when ? `${details} · at ${when}` : details;
 }
 
 function extractBedrooms(config) {
@@ -1972,6 +1983,7 @@ function exportCsv() {
     ['Video Link', 'video_link'],
     ['Supply Status', 'supply_status'],
     ['Availability', r => r.availability_status || 'Available'],
+    ['Gift Committed', r => formatGift(r)],
     ['Origin', r => r.origin === 'legacy' ? 'Legacy (CSV)' : 'Supply pipeline'],
   ];
 
@@ -2248,6 +2260,7 @@ function clearBookingDetailFields() {
   applyPayMode('single');
   applyPayStructure('');
   applyWorkCommitted(false);
+  applyGiftApplicable(false);
   applyBrokerageTiming();
   refreshAllAmountHints();
   renderPayShot();
@@ -2284,8 +2297,6 @@ document.addEventListener('change', (e) => {
 // the draft like any other field.
 function renderPayShot(msg, isErr) {
   const url = document.querySelector('#bookingModal [data-bf="payment_screenshot_url"]')?.value || '';
-  const link = $('#payShotLink');
-  if (link) { link.hidden = !url; if (url) link.href = url; }
   const pick = $('#payShotPick');
   if (pick) pick.textContent = url ? '📎 Replace' : '📎 Choose file';
   const st = $('#payShotStatus');
@@ -2293,9 +2304,55 @@ function renderPayShot(msg, isErr) {
     st.textContent = msg || (url ? '✓ Uploaded' : '');
     st.classList.toggle('err', !!isErr);
   }
+  renderPayShotPreview(url);
   const f = $('#payShotFile');
   if (f) f.value = '';
 }
+
+// Thumbnail of the uploaded receipt, shown inline so the booking figures can be
+// checked against it without leaving the modal. A PDF has nothing to show inline,
+// so it gets a labelled tile; either way the click opens the real file.
+function renderPayShotPreview(url) {
+  const box = $('#payShotPreview');
+  if (!box) return;
+  if (!url) { box.hidden = true; box.innerHTML = ''; box.removeAttribute('href'); return; }
+  box.href = url;
+  box.hidden = false;
+  // Decided on the URL alone: these are Cloudinary links whose extension is the
+  // only type information available here.
+  const isPdf = /\.pdf(\?|#|$)/i.test(url);
+  box.innerHTML = isPdf
+    ? '<span class="pay-shot-file">📄 PDF uploaded — open</span>'
+    : `<img src="${esc(url)}" alt="Payment screenshot"
+             onerror="this.parentElement.innerHTML='&lt;span class=&quot;pay-shot-file&quot;&gt;📎 Uploaded — open&lt;/span&gt;'">`;
+}
+
+// Capitalise the first letter of each word in a name. Applied on blur rather
+// than per keystroke, so the caret is never moved while someone is mid-word.
+//
+// A word typed in ALL CAPS is a shouted name, not a deliberate spelling, so it is
+// brought down to Title case ("ASHISH" → "Ashish"). A word that contains its own
+// lowercase is left exactly as typed, which preserves the names that really are
+// cased that way — "McLeod", "D'Souza", "deSouza". This runs on a legal name that
+// goes out on a buyer's booking mail, so the bias is towards not touching
+// anything the operator may have spelled deliberately.
+function titleCaseName(v) {
+  return String(v).replace(/\p{L}+/gu, (w) => {
+    const shouted = w === w.toUpperCase() && w !== w.toLowerCase();
+    const base = shouted ? w.toLowerCase() : w;
+    return base.charAt(0).toUpperCase() + base.slice(1);
+  });
+}
+
+document.addEventListener('focusout', (e) => {
+  const el = e.target;
+  if (!el?.matches?.('#bookingModal [data-titlecase]')) return;
+  const next = titleCaseName(el.value);
+  if (next === el.value) return;
+  el.value = next;
+  // Dispatch so the draft autosave and anything else watching [data-bf] sees it.
+  el.dispatchEvent(new Event('input', { bubbles: true }));
+});
 
 async function uploadPayShot(file) {
   if (!file || !bookingState.uid) return;
@@ -2635,6 +2692,7 @@ async function openBookingModal(uid, opts = {}) {
   // the CP mail then failed with "missing: Payment Structure".
   applyPayStructure('');
   applyWorkCommitted(false);
+  applyGiftApplicable(false);
   setBF('source', 'CP');
   applySource('CP');
   setBF('token_type', 'normal');
@@ -2770,8 +2828,19 @@ async function openBookingModal(uid, opts = {}) {
     setBF('brokerage_timing', l.brokerage_timing);
     if (l.payment_structure) {
       applyPayStructure(l.payment_structure);
-      setBF('payment_range_min_pct', l.payment_range_min_pct);
-      setBF('payment_range_max_pct', l.payment_range_max_pct);
+      // Rows saved before the band became an amount carry only the percentages;
+      // convert those back using the booking's own consideration so an old draft
+      // reopens with the figures it was saved with.
+      const toLakhs = (pct) => {
+        const c = parseFloat(l.consideration_amount);
+        if (pct == null || !(c > 0)) return null;
+        return Math.round(((c * pct) / 100 / 100000) * 100) / 100;
+      };
+      setBF('payment_range_min_lakhs',
+            l.payment_range_min_lakhs != null ? l.payment_range_min_lakhs : toLakhs(l.payment_range_min_pct));
+      setBF('payment_range_max_lakhs',
+            l.payment_range_max_lakhs != null ? l.payment_range_max_lakhs : toLakhs(l.payment_range_max_pct));
+      updatePaymentRangeHints();
     }
     setBF('brokerage_ats_amount', l.brokerage_ats_amount);
     setBF('brokerage_registry_amount', l.brokerage_registry_amount);
@@ -2784,6 +2853,12 @@ async function openBookingModal(uid, opts = {}) {
     setBF('work_committed', l.work_committed);
     // A saved booking with text reopens on Yes; one without stays on No.
     applyWorkCommitted(!!String(l.work_committed || '').trim());
+    const hasGift = !!String(l.gift_details || '').trim();
+    applyGiftApplicable(hasGift);
+    if (hasGift) {
+      setBF('gift_details', l.gift_details);
+      applyGiftTiming(l.gift_timing || '');
+    }
     if (l.work_committed) setBF('work_committed', l.work_committed);
     setBF('other_conditions', l.other_conditions);
     if (Array.isArray(l.recipients) && l.recipients.length) {
@@ -2934,6 +3009,37 @@ function applyWorkCommitted(yes) {
   }
 }
 
+// Gift Applicable? — Yes/No, default No. Mirrors applyWorkCommitted: there is no
+// boolean column, the description IS the flag, so No clears both fields rather
+// than leaving an orphan gift behind a toggle nobody can see.
+function applyGiftApplicable(yes) {
+  bookingState.giftApplicable = !!yes;
+  document.querySelectorAll('#bookingModal .pay-mode-tab[data-gift-applicable]').forEach(t => {
+    const active = (t.dataset.giftApplicable === 'Yes') === !!yes;
+    t.classList.toggle('active', active);
+    t.setAttribute('aria-selected', active ? 'true' : 'false');
+  });
+  document.querySelectorAll('#bookingModal [data-gift-field]').forEach(el => {
+    el.style.display = yes ? '' : 'none';
+  });
+  if (!yes) {
+    clearBF('gift_details');
+    applyGiftTiming('');
+  }
+}
+
+// Which milestone the gift is handed over on — 'ATS' | 'Registry'. Stored in a
+// hidden [data-bf] input so it travels with the form like any other field.
+function applyGiftTiming(value) {
+  const hidden = document.querySelector('#bookingModal [data-bf="gift_timing"]');
+  if (hidden) hidden.value = value || '';
+  document.querySelectorAll('#bookingModal .pay-mode-tab[data-gift-timing]').forEach(t => {
+    const active = !!value && t.dataset.giftTiming === value;
+    t.classList.toggle('active', active);
+    t.setAttribute('aria-selected', active ? 'true' : 'false');
+  });
+}
+
 function applyPayStructure(value) {
   const hidden = document.querySelector('#bookingModal [data-bf="payment_structure"]');
   if (hidden) hidden.value = value || '';
@@ -2946,9 +3052,46 @@ function applyPayStructure(value) {
   const flexible = value === 'Flexible';
   if (range) range.style.display = flexible ? '' : 'none';
   if (!flexible) {
-    clearBF('payment_range_min_pct');
-    clearBF('payment_range_max_pct');
+    clearBF('payment_range_min_lakhs');
+    clearBF('payment_range_max_lakhs');
   }
+  updatePaymentRangeHints();
+}
+
+// The Payment Range band is entered in lakhs; its share of the Consideration
+// Amount is derived and shown as one hint after both boxes, so the pair itself
+// reads "10 Lakhs to 20 Lakhs" uninterrupted. Blank (and the element collapses)
+// until an amount and a consideration both exist — a percentage of nothing would
+// read "(0%)" and look like a real figure.
+function updatePaymentRangeHints() {
+  const out = $('#payRangePct');
+  if (!out) return;
+  const num = (sel) => parseFloat(document.querySelector(`#bookingModal ${sel}`)?.value);
+  const consideration = num('[data-bf="consideration_amount"]');
+  const lo = num('[data-bf="payment_range_min_lakhs"]');
+  const hi = num('[data-bf="payment_range_max_lakhs"]');
+
+  if (!(consideration > 0) || (isNaN(lo) && isNaN(hi))) {
+    out.textContent = '';
+    out.classList.remove('over');
+    return;
+  }
+
+  const pct = (lakhs) => (lakhs * 100000 / consideration) * 100;
+  // Whole numbers lose the decimals — "5%" reads better than "5.00%".
+  const fmt = (v) => (Math.abs(v - Math.round(v)) < 0.005
+    ? String(Math.round(v))
+    : v.toFixed(2).replace(/0+$/, '').replace(/\.$/, '')) + '%';
+
+  // A half-filled band still gets feedback, labelled so it can't be mistaken
+  // for the whole range.
+  out.textContent = !isNaN(lo) && !isNaN(hi) ? `(${fmt(pct(lo))} – ${fmt(pct(hi))})`
+    : !isNaN(lo) ? `(${fmt(pct(lo))} min)`
+    : `(${fmt(pct(hi))} max)`;
+
+  // Over the full consideration is a data-entry slip worth flagging inline.
+  const worst = Math.max(isNaN(lo) ? 0 : pct(lo), isNaN(hi) ? 0 : pct(hi));
+  out.classList.toggle('over', worst > 100);
 }
 
 function applyPayMode(mode) {
@@ -3068,9 +3211,15 @@ function applySource(mode) {
 // clears them otherwise so a stale split isn't submitted.
 function applyBrokerageTiming() {
   const timing = document.querySelector('#bookingModal [data-bf="brokerage_timing"]')?.value || '';
-  const split = document.querySelector('#bookingModal [data-brokerage-split]');
   const show = timing === 'ATS & Registry' && currentSource() === 'CP';
-  if (split) split.style.display = show ? 'grid' : 'none';
+  // The two split fields are columns 3 and 4 of the brokerage row, toggled
+  // individually so the row's grid template — and the 25% each held by the first
+  // two fields — stays put whether they are shown or not. This also owns the
+  // Source check, which is why they carry no data-source-show of their own
+  // (applySource would fight it).
+  document.querySelectorAll('#bookingModal [data-brokerage-split]').forEach(el => {
+    el.style.display = show ? '' : 'none';
+  });
   if (!show) {
     clearBF('brokerage_ats_amount');
     clearBF('brokerage_registry_amount');
@@ -3182,6 +3331,14 @@ function validateBookingForm(form) {
   if (bookingState.workCommitted && !String(form.work_committed || '').trim()) {
     missing.push('Work Committed (Yes is selected — describe it, or choose No)');
   }
+  // A gift toggled on but left blank would save as no gift at all, since the
+  // description is what persists — so it is caught here rather than vanishing.
+  if (bookingState.giftApplicable) {
+    if (!String(form.gift_details || '').trim()) {
+      missing.push('Gift Details (Gift Applicable is Yes — describe it, or choose No)');
+    }
+    if (!String(form.gift_timing || '').trim()) missing.push('Gift — To be given on (ATS or Registry)');
+  }
   // The two legs may use the same instrument (e.g. two separate UPI transfers),
   // so identical methods are allowed — only the split amounts are constrained.
   return missing;
@@ -3198,13 +3355,21 @@ function validateCpForm(form) {
   if (bookingState.workCommitted && !String(form.work_committed || '').trim()) {
     missing.push('Work Committed (Yes is selected — describe it, or choose No)');
   }
+  // A gift toggled on but left blank would save as no gift at all, since the
+  // description is what persists — so it is caught here rather than vanishing.
+  if (bookingState.giftApplicable) {
+    if (!String(form.gift_details || '').trim()) {
+      missing.push('Gift Details (Gift Applicable is Yes — describe it, or choose No)');
+    }
+    if (!String(form.gift_timing || '').trim()) missing.push('Gift — To be given on (ATS or Registry)');
+  }
   if (!has('brokerage_amount')) missing.push('Brokerage amount');
   if (!form.payment_structure) missing.push('Payment Structure');
   if (form.payment_structure === 'Flexible') {
-    const lo = parseFloat(form.payment_range_min_pct);
-    const hi = parseFloat(form.payment_range_max_pct);
-    if (isNaN(lo)) missing.push('Payment Range Min (%)');
-    if (isNaN(hi)) missing.push('Payment Range Max (%)');
+    const lo = parseFloat(form.payment_range_min_lakhs);
+    const hi = parseFloat(form.payment_range_max_lakhs);
+    if (isNaN(lo)) missing.push('Payment Range Min (₹ Lakhs)');
+    if (isNaN(hi)) missing.push('Payment Range Max (₹ Lakhs)');
     if (!isNaN(lo) && !isNaN(hi) && lo > hi) missing.push('Payment Range Min must not exceed Max');
   }
   if (!form.brokerage_timing) missing.push('Brokerage payable (timing)');
@@ -3319,6 +3484,20 @@ function flushPendingBookingInputs() {
       scheduleBookingDraft();
       return;
     }
+    const giftTab = e.target.closest('#bookingModal .pay-mode-tab[data-gift-applicable]');
+    if (giftTab) {
+      const yes = giftTab.dataset.giftApplicable === 'Yes';
+      applyGiftApplicable(yes);
+      if (yes) document.getElementById('giftDetailsText')?.focus();
+      scheduleBookingDraft();
+      return;
+    }
+    const giftWhenTab = e.target.closest('#bookingModal .pay-mode-tab[data-gift-timing]');
+    if (giftWhenTab) {
+      applyGiftTiming(giftWhenTab.dataset.giftTiming);
+      scheduleBookingDraft();
+      return;
+    }
     const structTab = e.target.closest('#bookingModal .pay-mode-tab[data-pay-structure]');
     if (structTab) {
       applyPayStructure(structTab.dataset.payStructure);
@@ -3388,7 +3567,8 @@ function flushPendingBookingInputs() {
         }
         if (!isDirectDeal() && !bookingState.cpId) {
           showToast('Look up the selling CP, or set Source to Direct', 'error');
-          $('#cpLookupCode')?.focus();
+          // Focus the first of the two lookup boxes, which is now the phone.
+          $('#cpLookupPhone')?.focus();
           return;
         }
 
@@ -3484,6 +3664,10 @@ function flushPendingBookingInputs() {
     if (!field) return;
     if (field === 'consideration_amount' || field === 'amount_on_ats_pct') {
       updateAtsPctHint();
+    }
+    if (field === 'consideration_amount'
+        || field === 'payment_range_min_lakhs' || field === 'payment_range_max_lakhs') {
+      updatePaymentRangeHints();
     }
     if (bookingState.payMode === 'split' &&
         (field === 'booking_amount_received' || field === 'booking_amount_split_1')) {

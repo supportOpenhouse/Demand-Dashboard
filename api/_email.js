@@ -351,6 +351,12 @@ function buildBrokerEmail({ property, booking, submittedByName, submittedBy }) {
       <p style="margin:0 0 14px;white-space:pre-wrap;"><strong>Work Committed:</strong> ${esc(b.work_committed)}</p>
     ` : ''}
 
+    ${b.gift_details ? `
+      <p style="margin:0 0 14px;white-space:pre-wrap;"><strong>Gift:</strong> ${esc(b.gift_details)}${
+        b.gift_timing ? `, to be given at the time of ${esc(b.gift_timing)}` : ''
+      }</p>
+    ` : ''}
+
     ${b.other_conditions ? `
       <p style="margin:0 0 14px;white-space:pre-wrap;">${esc(b.other_conditions)}</p>
     ` : ''}

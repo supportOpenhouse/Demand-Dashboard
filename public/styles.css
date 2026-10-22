@@ -785,19 +785,81 @@ tbody tr.expand-row td {
   gap: 12px 16px;
 }
 
-/* Brokerage Payable (CP only) + the mandatory payment screenshot. With Source =
-   Direct the payable field is hidden and the screenshot takes the first column. */
-.booking-payable-row {
-  display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
-  gap: 12px 16px; margin-top: 10px; align-items: start;
+/* One row: amount · when payable · at ATS · at Registry, split 23/31/23/23 —
+   the timing field gets the extra width because it holds a sentence, the other
+   three hold short rupee figures. The last two are filled only when the brokerage
+   is split; the template holds their columns open regardless, so the first two
+   keep their share and the rest of the line is left empty rather than stretching. */
+.booking-brokerage-row {
+  display: grid; grid-template-columns: 23fr 31fr 23fr 23fr;
+  gap: 12px 16px; align-items: start;
 }
-.pay-shot { display: flex; align-items: center; gap: 10px; min-height: 36px; }
-.pay-shot-link { font-size: 12px; font-weight: 600; color: #4f46e5; }
-.pay-shot-status { font-size: 11px; min-height: 14px; line-height: 14px; color: #6b7280; }
+/* A <select> carries native chrome that no amount of height/padding makes match
+   an <input> exactly, so the arrow is replaced with a drawn caret and the two are
+   given identical box metrics. flex:none cancels the `flex:1` on .booking-input,
+   which otherwise lets the column-flex .fg stretch the control. */
+.booking-brokerage-row .booking-input {
+  flex: none; box-sizing: border-box;
+  width: 100%; height: 38px; min-height: 38px;
+  padding: 8px 10px; line-height: 20px;
+}
+.booking-brokerage-row select.booking-input {
+  appearance: none; -webkit-appearance: none;
+  padding-right: 28px;
+  background-image: url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 8'%3E%3Cpath fill='none' stroke='%236b7280' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round' d='M1 1.5 6 6.5 11 1.5'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 10px center;
+  background-size: 10px 7px;
+}
+/* The "1 Lakh" readback hangs under its own field without stretching the row. */
+.booking-brokerage-row .fg { min-width: 0; }
+/* Source = Direct hides the timing field; the amount keeps its own quarter. */
+
+/* Gift Applicable? · Gift Details · To be given on — one line, with the two
+   right-hand fields only present on Yes. The toggles size to their content, so
+   the details box takes the slack between them. align-items:end keeps all three
+   controls on the same baseline despite their labels being different heights. */
+.booking-gift-row {
+  display: grid; grid-template-columns: max-content minmax(0, 1fr) max-content;
+  gap: 12px 16px; align-items: start; margin-top: 14px;
+}
+/* The pill toggles are intrinsically ~43px tall (border + 4px padding + the
+   button's own 8px) while a .booking-input is 38px, so bottom-aligning the cells
+   pushed the shorter one down and left its label off the others' baseline. Give
+   every control on the row the same height and top-align instead: labels line up,
+   and so do the tops and bottoms of the boxes. */
+.booking-gift-row .booking-input,
+.booking-gift-row .pay-mode-tabs { height: 40px; }
+.booking-gift-row .booking-input { width: 100%; }
+.booking-gift-row .pay-mode-tabs { padding: 3px; }
+.booking-gift-row .pay-mode-tab {
+  height: 100%; padding: 0 22px;
+  display: inline-flex; align-items: center; justify-content: center;
+}
+@media (max-width: 640px) {
+  .booking-gift-row { grid-template-columns: 1fr; }
+}
+
+.pay-shot-block { margin-top: 14px; }
+.pay-shot { display: flex; align-items: center; gap: 10px; min-height: 36px; flex-wrap: wrap; }
+.pay-shot-status { font-size: 11px; line-height: 14px; color: #6b7280; }
 .pay-shot-status.err { color: #b91c1c; }
+/* Thumbnail of what was uploaded, so the figures can be checked against the
+   receipt without opening it. PDFs have no inline thumbnail, so they render as
+   a labelled tile instead. Click still opens the full file in a new tab. */
+.pay-shot-preview {
+  display: block; margin-top: 8px; width: max-content; max-width: 100%;
+  border: 1px solid #e4e7ec; border-radius: 8px; overflow: hidden;
+  background: #f9fafb; line-height: 0;
+}
+.pay-shot-preview img { display: block; max-height: 160px; max-width: 100%; object-fit: contain; }
+.pay-shot-preview .pay-shot-file {
+  display: block; padding: 14px 18px; line-height: 1.3;
+  font-size: 12px; font-weight: 600; color: #4f46e5;
+}
 
 @media (max-width: 640px) {
-  .form-grid.booking-names-row, .booking-payable-row { grid-template-columns: 1fr; }
+  .form-grid.booking-names-row, .booking-brokerage-row { grid-template-columns: 1fr; }
 }
 
 /* Lakhs/Crores hint shown below price inputs. Compact, brand-orange so it
@@ -1297,11 +1359,50 @@ body:not(.role-admin) .col-contact { display: none; }
 }
 
 /* Payment Range (shown only for a Flexible payment structure). */
-.pay-range-row { display: flex; align-items: center; gap: 8px; }
-.pay-range-cell { position: relative; flex: 1 1 0; min-width: 0; display: flex; align-items: center; gap: 4px; }
-.pay-range-cell .booking-input { flex: 1; min-width: 0; }
-.pay-range-pct { font-size: 13px; color: #6b7280; }
-.pay-range-sep { font-size: 12px; color: #9ca3af; flex: none; }
+/* Payment Range sits in a 1fr 1fr grid next to Payment Structure. A grid `1fr`
+   is minmax(auto, 1fr), so this row's content can push its column wider than its
+   share — which is what squeezed the Flexible / Non-Flexible tabs into wrapping
+   once a derived "(0.5%)" appeared. Fixed-width boxes that never grow, plus the
+   min-width:0 below, keep the column at its half whatever is typed. */
+.booking-form-grid .fg[data-pay-structure-range] { min-width: 0; }
+.pay-range-row { display: flex; align-items: center; gap: 6px; flex-wrap: nowrap; min-width: 0; }
+/* The unit sits INSIDE the box, pinned right, with the number right-aligned
+   against it — so the field reads "10 Lakhs" rather than a bare number with a
+   label floating after it. */
+.pay-range-cell { flex: 0 0 auto; position: relative; display: inline-flex; align-items: center; }
+/* Width is fixed, not flexed: the box must not resize as digits are typed. */
+.booking-form-grid .pay-range-cell .booking-input {
+  width: 118px; flex: 0 0 118px; min-width: 0;
+  text-align: right; padding-right: 48px;
+}
+/* No steppers. Nudging an amount in 0.01 lakh steps is useless and the arrows
+   cost ~20px inside an already narrow box. */
+.pay-range-cell .booking-input { appearance: textfield; -moz-appearance: textfield; }
+.pay-range-cell .booking-input::-webkit-outer-spin-button,
+.pay-range-cell .booking-input::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+.pay-range-unit {
+  position: absolute; right: 10px; top: 50%; transform: translateY(-50%);
+  font-size: 13px; color: #6b7280; pointer-events: none;
+  transition: opacity .12s ease;
+}
+/* "Lakhs" is a read-back label, not a prompt: it appears once the box holds a
+   value AND the caret has moved on. Empty (:placeholder-shown) or still being
+   typed into (:focus) keeps it hidden, so it never sits next to a half-typed
+   number. Hidden with opacity rather than display, and the input's padding-right
+   is constant, so the digits don't shift when it fades in. */
+.pay-range-cell .booking-input:placeholder-shown + .pay-range-unit,
+.pay-range-cell .booking-input:focus + .pay-range-unit { opacity: 0; }
+/* Derived share of the consideration for the pair, e.g. "(5% – 10%)". Sits
+   outside the boxes, after both, and never wraps. */
+.pay-range-derived {
+  font-size: 12px; color: #6366f1; font-weight: 600;
+  white-space: nowrap; flex: none; margin-left: 4px;
+}
+.pay-range-derived:empty { display: none; }
+/* Band above the full consideration — almost certainly a mistyped amount. */
+.pay-range-derived.over { color: #dc2626; }
+/* "to" sits tight between the two cells rather than being pushed apart. */
+.pay-range-sep { font-size: 12px; color: #9ca3af; flex: none; margin: 0 2px; }
 
 /* Payment Structure reuses the Payment Mode pill, but its labels are far longer
    ("Non-Flexible" vs "Split"), so the shared 90px per-tab minimum blew the

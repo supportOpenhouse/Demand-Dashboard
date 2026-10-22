@@ -243,10 +243,26 @@ const INIT_SQL = `
 
   -- Payment structure for the buyer's schedule: 'Flexible' means the payable
   -- share is a negotiated band rather than a fixed figure, so a min/max pair
-  -- accompanies it. Both percentages stay NULL for 'Non-Flexible'.
-  ALTER TABLE booking_details ADD COLUMN IF NOT EXISTS payment_structure     TEXT;
-  ALTER TABLE booking_details ADD COLUMN IF NOT EXISTS payment_range_min_pct REAL;
-  ALTER TABLE booking_details ADD COLUMN IF NOT EXISTS payment_range_max_pct REAL;
+  -- accompanies it. The pair stays NULL for 'Non-Flexible'.
+  --
+  -- The band is entered as an AMOUNT in lakhs (*_lakhs); the percentages are
+  -- derived from it against consideration_amount and kept in step on every write
+  -- so anything still reading the older columns keeps working. Rows predating the
+  -- amount columns carry only the percentages, and the UI converts back from them
+  -- using the booking's own consideration.
+  ALTER TABLE booking_details ADD COLUMN IF NOT EXISTS payment_structure       TEXT;
+  ALTER TABLE booking_details ADD COLUMN IF NOT EXISTS payment_range_min_pct   REAL;
+  ALTER TABLE booking_details ADD COLUMN IF NOT EXISTS payment_range_max_pct   REAL;
+  ALTER TABLE booking_details ADD COLUMN IF NOT EXISTS payment_range_min_lakhs REAL;
+  ALTER TABLE booking_details ADD COLUMN IF NOT EXISTS payment_range_max_lakhs REAL;
+
+  -- Gift promised to the buyer alongside the booking (a white good, furnishing,
+  -- waived charge...). gift_details carries the description and gift_timing when
+  -- it is handed over — 'ATS' or 'Registry'. Both NULL when no gift applies;
+  -- there is no separate boolean, the description IS the flag, matching how
+  -- work_committed already works.
+  ALTER TABLE booking_details ADD COLUMN IF NOT EXISTS gift_details TEXT;
+  ALTER TABLE booking_details ADD COLUMN IF NOT EXISTS gift_timing  TEXT;
 
   -- listing_price_is_auto: TRUE when the listing price was derived from the
   -- acquisition price rather than typed by a person. Drives the small "A" marker
