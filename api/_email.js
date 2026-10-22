@@ -368,107 +368,33 @@ function buildBrokerEmail({ property, booking, submittedByName, submittedBy }) {
 }
 
 
-// ── OH Loan Form ────────────────────────────────────────────────────────────
-// Notification for a public loan application. Renders every applicant as its
-// own block, because the form collects the same details for each one and a
-// flat list would make it impossible to tell whose salary slip is whose.
-//
-// Document links point at Cloudinary. They are publicly readable (unsigned
-// preset), so this mail should not be forwarded outside the loan team.
-function buildLoanApplicationEmail({ application }) {
-  const a = application || {};
-  const applicants = Array.isArray(a.applicants) ? a.applicants : [];
-  const docs = a.documents || {};
-
-  const row = (label, value) => value
-    ? `<tr>
-         <td style="padding:4px 12px 4px 0;color:#6b7280;white-space:nowrap;vertical-align:top;">${esc(label)}</td>
-         <td style="padding:4px 0;color:#111827;">${esc(value)}</td>
-       </tr>`
-    : '';
-
-  const money = (n) => (n == null || n === '')
-    ? '' : '₹' + Number(n).toLocaleString('en-IN');
-
-  const docLinks = (idx) => {
-    const set = docs[String(idx)] || {};
-    const keys = Object.keys(set).filter(k => set[k]);
-    if (!keys.length) {
-      return '<p style="margin:6px 0 0;color:#b45309;font-size:13px;">No documents uploaded.</p>';
-    }
-    return `<ul style="margin:6px 0 0;padding-left:18px;font-size:13px;">
-      ${keys.map(k => `<li style="margin:2px 0;">
-        <a href="${esc(set[k])}" style="color:#4f46e5;">${esc(DOC_LABELS[k] || k)}</a>
-      </li>`).join('')}
-    </ul>`;
-  };
-
-  const blocks = applicants.map((p, i) => `
-    <div style="margin:0 0 18px;padding:14px 16px;border:1px solid #e5e7eb;border-radius:8px;">
-      <p style="margin:0 0 10px;font-weight:700;color:#111827;">
-        ${i === 0 ? 'Primary applicant' : `Co-applicant ${i}`}${p.name ? ' — ' + esc(p.name) : ''}
-      </p>
-      <table style="border-collapse:collapse;font-size:14px;width:100%;">
-        ${row('Relationship', i === 0 ? '' : p.relationship)}
-        ${row("Mother's name", p.mothers_name)}
-        ${row('Mobile', p.mobile)}
-        ${row('Email', p.email)}
-        ${row('Employment', p.employment_type)}
-        ${row('Highest qualification', p.qualification)}
-        ${row('Career started', p.career_start_year)}
-        ${row('In current organisation since', p.current_org_since)}
-        ${row('Current address matches Aadhaar', p.current_address_same_as_aadhaar === false ? 'No' : (p.current_address_same_as_aadhaar === true ? 'Yes' : ''))}
-        ${row('Additional income', money(p.additional_income_amount))}
-        ${row('Ongoing EMIs', money(p.ongoing_emi_amount))}
-      </table>
-      <p style="margin:12px 0 0;font-size:12px;font-weight:600;color:#374151;">Documents</p>
-      ${docLinks(i)}
-    </div>`).join('');
-
+// ── Openhouse Loans ─────────────────────────────────────────────────────────
+// Notification for a referral raised on the public loan form. The ticket itself
+// is worked in the Transaction CRM's Loans tab; this only tells the desk it is there.
+function buildLoanReferralEmail({ referral }) {
+  const r = referral || {};
+  const name = `${r.first_name || ''} ${r.last_name || ''}`.trim();
+  const inr = (n) => (n == null ? null : '₹' + Number(n).toLocaleString('en-IN'));
+  const emp = { salaried: 'Salaried', self_employed: 'Self-employed' }[r.employment_type] || null;
+  const property = [r.property_address, r.city_name].filter(Boolean).join(' · ')
+    + (r.property_kind === 'openhouse' && r.home_id ? ` (Openhouse home ${r.home_id})` : '');
+  const rows = [
+    ['Client', name], ['Mobile', r.client_mobile], ['PAN', r.client_pan],
+    ['Employment', emp], ['Loan amount', inr(r.loan_amount_requested)],
+    ['Property', property], ['Note', r.note],
+  ].filter(([, v]) => v);
   const bodyHtml = `
-    <p style="margin:0 0 14px;">
-      A new loan application has been submitted through the OH Loan Form.
-    </p>
-
-    <table style="border-collapse:collapse;font-size:14px;margin:0 0 18px;">
-      ${row('Reference', a.reference)}
-      ${row('Applicants', String(applicants.length))}
-      ${row('Property of interest', a.property_interest)}
-      ${row('Loan amount required', money(a.loan_amount))}
+    <p style="margin:0 0 14px;">A new home-loan referral came in through the Openhouse loan form.</p>
+    <table cellpadding="0" cellspacing="0" style="border-collapse:collapse;width:100%;font-size:14px;">
+      ${rows.map(([k, v]) => `<tr><td style="padding:6px 12px 6px 0;color:#6b7280;white-space:nowrap;vertical-align:top;">${esc(k)}</td>
+        <td style="padding:6px 0;">${esc(v)}</td></tr>`).join('')}
     </table>
-
-    ${blocks}
-
-    ${a.notes ? `
-      <p style="margin:0 0 6px;font-weight:600;color:#374151;">Notes from the applicant</p>
-      <p style="margin:0 0 14px;white-space:pre-wrap;">${esc(a.notes)}</p>
-    ` : ''}
-
-    <p style="margin:18px 0 0;font-size:12px;color:#6b7280;">
-      Document links are hosted on Cloudinary and are accessible to anyone with
-      the URL. Please do not forward this email outside the loan team.
-    </p>
-  `;
-
+    <p style="margin:16px 0 0;color:#6b7280;font-size:13px;">Referral #${esc(r.id)} — work it in the Transaction CRM → Loans.</p>`;
   return {
-    subject: 'Openhouse Loan Application',
-    html: wrapEmailShell('Loan Application', bodyHtml),
+    subject: `New loan referral — ${name}${r.city_name ? ' · ' + r.city_name : ''}`,
+    html: wrapEmailShell('Loan Referral', bodyHtml),
   };
 }
-
-// Slug -> human label, shared by the form and this email.
-const DOC_LABELS = {
-  photo: 'Passport-size photograph',
-  pan: 'PAN card',
-  aadhaar: 'Aadhaar card',
-  address_proof: 'Current address proof',
-  rent_agreement: 'Rent agreement',
-  salary_slips: 'Salary slips (last 6 months)',
-  form16: 'Form 16 (last 2 years, Part A & B)',
-  salary_bank_statement: 'Salary account statement (1 year)',
-  savings_bank_statement: 'Savings account statement (1 year)',
-  itr: 'ITR (last 3 years)',
-};
 
 async function sendMail({ to, subject, html }) {
   const transporter = getTransporter();
@@ -482,4 +408,4 @@ async function sendMail({ to, subject, html }) {
   return info;
 }
 
-module.exports = { buildBookingEmail, buildBrokerEmail, buildLoanApplicationEmail, DOC_LABELS, sendMail };
+module.exports = { buildBookingEmail, buildBrokerEmail, buildLoanReferralEmail, sendMail };

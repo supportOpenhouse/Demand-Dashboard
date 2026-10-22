@@ -81,8 +81,8 @@
       "destination": "/login.html"
     },
     {
-      "source": "/api/loan/upload",
-      "destination": "/api/loan/upload"
+      "source": "/api/loan/homes",
+      "destination": "/api/loan/homes"
     },
     {
       "source": "/api/loan/submit",

@@ -83,6 +83,53 @@ function stripAdminOnlyColumns(row, user) {
 
 // Idempotent — runs on every cold start. Owns demand_users and demand_details only.
 // Reads activity_logs (created by the Acquired dashboard) but does not own its schema.
+const LOAN_DDL = `
+-- Openhouse Loans — referral tickets. The Transaction CRM (app/loans.py) is the
+-- source of truth and serves the Partner App's loan APIs; this dashboard's public
+-- loan form writes the same table with no broker (broker_id NULL, source 'other').
+-- Exactly the columns of the loans spec's panel table — keep both copies identical
+-- (CRM: backend/app/loans.py DDL).
+CREATE TABLE IF NOT EXISTS loan_applications (
+  id                    BIGSERIAL PRIMARY KEY,
+  broker_id             INTEGER,
+  first_name            TEXT NOT NULL,
+  last_name             TEXT NOT NULL,
+  client_mobile         TEXT NOT NULL,
+  client_pan            TEXT,
+  employment_type       TEXT,
+  loan_amount_requested BIGINT,
+  property_kind         TEXT NOT NULL,
+  home_id               INTEGER,
+  property_address      TEXT,
+  city_id               INTEGER,
+  city_name             TEXT,
+  note                  TEXT,
+  consent               BOOLEAN NOT NULL,
+  consent_text_version  TEXT,
+  source                TEXT NOT NULL,
+  status                TEXT NOT NULL DEFAULT 'with_loan_desk',
+  closed_reason         TEXT,
+  remarks               TEXT,
+  status_set_at         TIMESTAMPTZ NOT NULL DEFAULT now(),
+  commission_pct        NUMERIC(5,2),
+  created_at            TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_loan_applications_broker  ON loan_applications (broker_id);
+CREATE INDEX IF NOT EXISTS idx_loan_applications_mobile  ON loan_applications (client_mobile);
+CREATE INDEX IF NOT EXISTS idx_loan_applications_created ON loan_applications (created_at DESC);
+
+-- Per-IP rate limiting for the public route. Kept in Postgres, not memory:
+-- serverless instances do not share memory, so an in-process counter resets
+-- on every cold start and limits nothing in practice.
+CREATE TABLE IF NOT EXISTS loan_form_rate_limit (
+  ip              TEXT PRIMARY KEY,
+  window_started  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  hits            INTEGER     NOT NULL DEFAULT 0,
+  last_hit        TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_loan_rl_window ON loan_form_rate_limit(window_started);
+`;
+
 const INIT_SQL = `
   CREATE TABLE IF NOT EXISTS demand_users (
     id           SERIAL PRIMARY KEY,
@@ -371,46 +418,7 @@ const INIT_SQL = `
   CREATE INDEX IF NOT EXISTS idx_logs_uid     ON activity_logs(uid);
   CREATE INDEX IF NOT EXISTS idx_logs_created ON activity_logs(created_at DESC);
 
-  -- ── OH Loan Form ──────────────────────────────────────────────────────────
-  -- Public, unauthenticated intake. Mirrored in docs/loan-form-tables.sql for
-  -- manual creation: INIT_SQL only runs inside requireAuth() on a cold start,
-  -- and the loan route never authenticates, so it cannot rely on this having
-  -- run. See ensureLoanTables() below, which the route calls directly.
-  CREATE TABLE IF NOT EXISTS loan_applications (
-    id                  SERIAL PRIMARY KEY,
-    reference           TEXT UNIQUE NOT NULL,
-    primary_name        TEXT,
-    primary_email       TEXT,
-    primary_mobile      TEXT,
-    property_interest   TEXT,
-    loan_amount         NUMERIC(14, 2),
-    notes               TEXT,
-    -- One JSONB array rather than fixed columns: the form is explicitly "all
-    -- applicants" and the count is not known ahead of time.
-    applicants          JSONB NOT NULL DEFAULT '[]',
-    -- Cloudinary secure_urls, keyed by applicant index then document slug.
-    documents           JSONB NOT NULL DEFAULT '{}',
-    submitted_ip        TEXT,
-    user_agent          TEXT,
-    mail_sent_at        TIMESTAMPTZ,
-    mail_error          TEXT,
-    created_at          TIMESTAMPTZ DEFAULT NOW(),
-    updated_at          TIMESTAMPTZ DEFAULT NOW()
-  );
-  CREATE INDEX IF NOT EXISTS idx_loan_apps_created ON loan_applications(created_at DESC);
-  CREATE INDEX IF NOT EXISTS idx_loan_apps_email   ON loan_applications(LOWER(primary_email));
-  CREATE INDEX IF NOT EXISTS idx_loan_apps_mobile  ON loan_applications(primary_mobile);
-
-  -- Per-IP rate limiting for the public route. Kept in Postgres, not memory:
-  -- serverless instances do not share memory, so an in-process counter resets
-  -- on every cold start and limits nothing in practice.
-  CREATE TABLE IF NOT EXISTS loan_form_rate_limit (
-    ip              TEXT PRIMARY KEY,
-    window_started  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    hits            INTEGER     NOT NULL DEFAULT 0,
-    last_hit        TIMESTAMPTZ NOT NULL DEFAULT NOW()
-  );
-  CREATE INDEX IF NOT EXISTS idx_loan_rl_window ON loan_form_rate_limit(window_started);
+  ${LOAN_DDL}
 `;
 
 async function ensureTable() {
@@ -431,37 +439,7 @@ let _loanTablesReady = false;
 async function ensureLoanTables() {
   if (_loanTablesReady) return true;
   try {
-    await pool.query(`
-      CREATE TABLE IF NOT EXISTS loan_applications (
-        id                  SERIAL PRIMARY KEY,
-        reference           TEXT UNIQUE NOT NULL,
-        primary_name        TEXT,
-        primary_email       TEXT,
-        primary_mobile      TEXT,
-        property_interest   TEXT,
-        loan_amount         NUMERIC(14, 2),
-        notes               TEXT,
-        applicants          JSONB NOT NULL DEFAULT '[]',
-        documents           JSONB NOT NULL DEFAULT '{}',
-        submitted_ip        TEXT,
-        user_agent          TEXT,
-        mail_sent_at        TIMESTAMPTZ,
-        mail_error          TEXT,
-        created_at          TIMESTAMPTZ DEFAULT NOW(),
-        updated_at          TIMESTAMPTZ DEFAULT NOW()
-      );
-      CREATE INDEX IF NOT EXISTS idx_loan_apps_created ON loan_applications(created_at DESC);
-      CREATE INDEX IF NOT EXISTS idx_loan_apps_email   ON loan_applications(LOWER(primary_email));
-      CREATE INDEX IF NOT EXISTS idx_loan_apps_mobile  ON loan_applications(primary_mobile);
-
-      CREATE TABLE IF NOT EXISTS loan_form_rate_limit (
-        ip              TEXT PRIMARY KEY,
-        window_started  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-        hits            INTEGER     NOT NULL DEFAULT 0,
-        last_hit        TIMESTAMPTZ NOT NULL DEFAULT NOW()
-      );
-      CREATE INDEX IF NOT EXISTS idx_loan_rl_window ON loan_form_rate_limit(window_started);
-    `);
+    await pool.query(LOAN_DDL);
     _loanTablesReady = true;
     return true;
   } catch (err) {
