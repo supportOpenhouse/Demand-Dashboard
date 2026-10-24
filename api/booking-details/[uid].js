@@ -549,15 +549,6 @@ const handleBookingRequest = async (req, res) => {
 
   // Booking Date and the payment screenshot are mandatory on every booking that
   // goes out. Drafts (save) may still lack them while the form is being filled.
-  // Gift: the description is the flag, so "applicable" with nothing described
-  // would save as no gift at all. Enforced on both sends, not just in the browser.
-  if ((action === 'send' || action === 'send_cp') && clean.gift_details && !clean.gift_timing) {
-    return res.status(400).json({
-      success: false,
-      error: 'Gift — "To be given on" (ATS or Registry) is required when a gift is applicable.',
-    });
-  }
-
   if (action === 'send' || action === 'send_cp') {
     const b = req.body || {};
     const miss = [];
@@ -573,6 +564,16 @@ const handleBookingRequest = async (req, res) => {
   // applies to preview and send, which is where completeness actually matters.
   if (errors.length && action !== 'save') {
     return res.status(400).json({ success: false, error: errors.join('; ') });
+  }
+
+  // Gift: the description is the flag, so "applicable" with nothing described
+  // would save as no gift at all. Enforced on both sends, not just in the
+  // browser. Must sit after validate() — `clean` does not exist before it.
+  if ((action === 'send' || action === 'send_cp') && clean.gift_details && !clean.gift_timing) {
+    return res.status(400).json({
+      success: false,
+      error: 'Gift — "To be given on" (ATS or Registry) is required when a gift is applicable.',
+    });
   }
 
   // Load property for email body
