@@ -844,9 +844,14 @@ tbody tr.expand-row td {
 .booking-gift-row-second { margin-top: 10px; align-items: start; }
 .booking-gift-row-second .fg:first-child { grid-column: 2; }
 .booking-gift-row-second .fg:last-child { grid-column: 3; }
-/* Two dates with "to" between them, matching the Payment Range pair above. */
+/* Two dates with "to" between them, matching the Payment Range pair above.
+   Sized to dd/mm/yyyy plus the picker icon rather than stretching to fill the
+   column — a date field is a fixed-width thing and the extra space read as a
+   text box waiting for more input. */
 .offer-period-row { display: flex; align-items: center; gap: 6px; min-width: 0; }
-.offer-period-row .booking-input { flex: 1 1 0; min-width: 0; height: 40px; }
+.offer-period-row .booking-input {
+  flex: 0 0 auto; width: 148px; min-width: 0; height: 40px;
+}
 .offer-period-sep { font-size: 12px; color: #9ca3af; flex: none; }
 @media (max-width: 640px) {
   .booking-gift-row { grid-template-columns: 1fr; }
