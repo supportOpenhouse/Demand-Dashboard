@@ -3769,14 +3769,18 @@ async function sendBookingMail(mode) {
     btn.textContent = '✓ Sent';
 
     // Either send marks the unit Booked AND hands it to the external system:
-    // from here the dashboard is read-only for this property.
+    // from here the dashboard is read-only for this property. The server only
+    // turns a unit Booked once the booking names a buyer and a consideration
+    // amount (isRealBooking in api/booking-details), so mirror that here.
     const row = state.rows.find(x => x.uid === bookingState.uid);
-    if (row) {
-      row.availability_status = 'Booked';
-      row.booking_mailed = true;
+    if (row) row.booking_mailed = true;
+    const realBooking = !!(String(form.buyer_name || '').trim()
+      && Number(form.consideration_amount) > 0);
+    if (realBooking) {
+      if (row) row.availability_status = 'Booked';
+      syncAvailabilityUI(bookingState.uid, 'Booked');
+      lockBookedRow(bookingState.uid);
     }
-    syncAvailabilityUI(bookingState.uid, 'Booked');
-    lockBookedRow(bookingState.uid);
   } catch (e) {
     showToast('Network error: ' + e.message, 'error');
     btn.disabled = false;

@@ -73,6 +73,16 @@ function bookingValues(clean) {
 const ISO_DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 
 // Strict-list fields. Reject anything not in the allow-list to keep DB clean.
+// A unit turns Booked only once the booking names a buyer AND a consideration amount.
+// Saving a draft (or a CP mail sent first) used to flip the pill on any row, so a
+// half-filled, mistaken or test booking marked a live unit Booked with nobody behind
+// it — OHND1723 sat Booked on an empty draft until it was released by hand (30 Oct).
+// The row itself is still saved; only the pill waits for the two values.
+function isRealBooking(b) {
+  return !!(b && String(b.buyer_name || '').trim()
+    && Number(b.consideration_amount) > 0);
+}
+
 function validate(body) {
   const errors = [];
   const clean = {};
@@ -715,13 +725,15 @@ const handleBookingRequest = async (req, res) => {
         [uid, ...bookingValues(clean), user.email]
       );
       cpRowId = ins.rows[0].id;
-      await pool.query(
-        `INSERT INTO demand_details (uid, availability_status, updated_by)
-         VALUES ($1, 'Booked', $2)
-         ON CONFLICT (uid) DO UPDATE
-           SET availability_status = 'Booked', updated_by = $2, updated_at = NOW()`,
-        [uid, user.email]
-      );
+      if (isRealBooking(clean)) {
+        await pool.query(
+          `INSERT INTO demand_details (uid, availability_status, updated_by)
+           VALUES ($1, 'Booked', $2)
+           ON CONFLICT (uid) DO UPDATE
+             SET availability_status = 'Booked', updated_by = $2, updated_at = NOW()`,
+          [uid, user.email]
+        );
+      }
     }
 
     const { subject, html } = buildBrokerEmail({
@@ -789,7 +801,9 @@ const handleBookingRequest = async (req, res) => {
     //
     // Idempotent, and never downgrades: this only ever writes 'Booked'. Releasing a
     // unit is the CRM's job (bookingstate), not a side effect of an autosave.
+    // Waits for a buyer name and a consideration amount (isRealBooking).
     const markBooked = async () => {
+      if (!isRealBooking(clean)) return;
       await pool.query(
         `INSERT INTO demand_details (uid, availability_status, updated_by)
          VALUES ($1, 'Booked', $2)
@@ -924,14 +938,17 @@ const handleBookingRequest = async (req, res) => {
     );
     insertedId = rows[0].id;
 
-    // Ensure demand_details has availability_status='Booked' (idempotent).
-    await client.query(
-      `INSERT INTO demand_details (uid, availability_status, updated_by)
-       VALUES ($1, 'Booked', $2)
-       ON CONFLICT (uid) DO UPDATE
-         SET availability_status = 'Booked', updated_by = $2, updated_at = NOW()`,
-      [uid, user.email]
-    );
+    // Ensure demand_details has availability_status='Booked' (idempotent) — only
+    // once the booking names a buyer and a consideration amount (isRealBooking).
+    if (isRealBooking(clean)) {
+      await client.query(
+        `INSERT INTO demand_details (uid, availability_status, updated_by)
+         VALUES ($1, 'Booked', $2)
+         ON CONFLICT (uid) DO UPDATE
+           SET availability_status = 'Booked', updated_by = $2, updated_at = NOW()`,
+        [uid, user.email]
+      );
+    }
 
     await client.query('COMMIT');
   } catch (err) {
