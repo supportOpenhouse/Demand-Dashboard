@@ -3031,6 +3031,34 @@ function applyGiftApplicable(yes) {
   }
 }
 
+// Which milestone the gift is handed over on — 'ATS' | 'Registry'. Stored in a
+// hidden [data-bf] input so it travels with the form like any other field.
+function applyGiftTiming(value) {
+  const hidden = document.querySelector('#bookingModal [data-bf="gift_timing"]');
+  if (hidden) hidden.value = value || '';
+  document.querySelectorAll('#bookingModal .pay-mode-tab[data-gift-timing]').forEach(t => {
+    const active = !!value && t.dataset.giftTiming === value;
+    t.classList.toggle('active', active);
+    t.setAttribute('aria-selected', active ? 'true' : 'false');
+  });
+}
+
+// Will the buyer avail a loan? Tri-state: 'Yes' | 'No' | '' (not answered).
+// Unlike the other toggles this has no default — "not asked yet" is a real and
+// useful state, and defaulting to No would record an answer nobody gave.
+function applyBuyerLoan(value) {
+  const v = value === 'Yes' || value === true ? 'Yes'
+    : value === 'No' || value === false ? 'No'
+    : '';
+  const hidden = document.querySelector('#bookingModal [data-bf="buyer_avails_loan"]');
+  if (hidden) hidden.value = v;
+  document.querySelectorAll('#bookingModal .pay-mode-tab[data-buyer-loan]').forEach(t => {
+    const active = !!v && t.dataset.buyerLoan === v;
+    t.classList.toggle('active', active);
+    t.setAttribute('aria-selected', active ? 'true' : 'false');
+  });
+}
+
 function applyPayStructure(value) {
   const hidden = document.querySelector('#bookingModal [data-bf="payment_structure"]');
   if (hidden) hidden.value = value || '';
