@@ -48,7 +48,7 @@ const BOOKING_COLS = [
   'ats_timeline', 'registry_timeline', 'booking_amount_forfeitable',
   'amount_on_ats_pct', 'work_committed', 'other_conditions', 'recipients', 'broker_emails',
   'gift_details', 'gift_timing', 'buyer_avails_loan',
-  'gift_offer_from', 'gift_offer_to', 'gift_offer_creative_url',
+  'gift_offer_from', 'gift_offer_to',
   'payment_structure', 'payment_range_min_pct', 'payment_range_max_pct',
   'payment_range_min_lakhs', 'payment_range_max_lakhs',
   'source', 'brokerage_amount', 'brokerage_timing',
@@ -191,7 +191,6 @@ function validate(body) {
     clean.gift_timing = null;
     clean.gift_offer_from = null;
     clean.gift_offer_to = null;
-    clean.gift_offer_creative_url = null;
   } else if (giftDetails.length > 2000) {
     errors.push('gift_details is too long');
   } else {
@@ -214,9 +213,6 @@ function validate(body) {
         && clean.gift_offer_from > clean.gift_offer_to) {
       errors.push('gift_offer_from must not be after gift_offer_to');
     }
-
-    const creative = String(body.gift_offer_creative_url == null ? '' : body.gift_offer_creative_url).trim();
-    clean.gift_offer_creative_url = creative || null;
   }
 
   // Buyer's loan intent — tri-state: true / false / NULL for unanswered.
@@ -400,7 +396,7 @@ function validate(body) {
 // route's auth and test-unit gate.
 const SHOT_MAX_BYTES = 3 * 1024 * 1024;   // Vercel's ~4.5 MB body cap, after base64
 const SHOT_TYPES = ['image/png', 'image/jpeg', 'image/webp', 'image/heic', 'image/heif', 'application/pdf'];
-async function uploadPaymentScreenshot(req, res, folder = 'booking-payments') {
+async function uploadPaymentScreenshot(req, res) {
   const cloud = process.env.CLOUDINARY_CLOUD_NAME;
   const preset = process.env.CLOUDINARY_UPLOAD_PRESET;
   if (!cloud || !preset) {
@@ -421,7 +417,7 @@ async function uploadPaymentScreenshot(req, res, folder = 'booking-payments') {
   form.set('file', dataUrl);
   form.set('upload_preset', preset);
   form.set('folder', process.env.CLOUDINARY_FOLDER
-    ? `${process.env.CLOUDINARY_FOLDER}/${folder}` : folder);
+    ? `${process.env.CLOUDINARY_FOLDER}/booking-payments` : 'booking-payments');
   const r = await fetch(`https://api.cloudinary.com/v1_1/${encodeURIComponent(cloud)}/auto/upload`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
@@ -575,11 +571,8 @@ const handleBookingRequest = async (req, res) => {
 
   const { action } = req.body || {};
   if (action === 'upload_payment_screenshot') return uploadPaymentScreenshot(req, res);
-  // Same validation, limits and preset as the payment screenshot — only the
-  // Cloudinary folder differs, so the two kinds of file stay separable.
-  if (action === 'upload_gift_creative') return uploadPaymentScreenshot(req, res, 'booking-gift-creatives');
   if (!['preview', 'send', 'save', 'preview_cp', 'send_cp'].includes(action)) {
-    return res.status(400).json({ success: false, error: `action must be one of: preview, send, save, preview_cp, send_cp, upload_payment_screenshot, upload_gift_creative` });
+    return res.status(400).json({ success: false, error: `action must be one of: preview, send, save, preview_cp, send_cp, upload_payment_screenshot` });
   }
 
   // Booking Date and the payment screenshot are mandatory on every booking that
