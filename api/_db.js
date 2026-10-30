@@ -407,6 +407,10 @@ const INIT_SQL = `
   -- imports leave these NULL; users fill them in from the expand panel.
   ALTER TABLE legacy_properties ADD COLUMN IF NOT EXISTS ama_beta_min_pct REAL;
   ALTER TABLE legacy_properties ADD COLUMN IF NOT EXISTS ama_beta_max_pct REAL;
+  -- The unit's home on core (Django get-home-details ?id=), the legacy twin of
+  -- properties.core_home_id. Legacy units carry no OHID on core, so the CRM's
+  -- listing-status push can only reach their website listing through this.
+  ALTER TABLE legacy_properties ADD COLUMN IF NOT EXISTS core_home_id INTEGER;
 
   CREATE TABLE IF NOT EXISTS demand_details (
     id                       SERIAL PRIMARY KEY,
