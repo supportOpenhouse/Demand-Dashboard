@@ -263,6 +263,14 @@ const INIT_SQL = `
   -- work_committed already works.
   ALTER TABLE booking_details ADD COLUMN IF NOT EXISTS gift_details TEXT;
   ALTER TABLE booking_details ADD COLUMN IF NOT EXISTS gift_timing  TEXT;
+  -- How long the gift offer stands. Free text rather than a date pair: it is
+  -- quoted to the buyer in words ("till 31 Dec", "30 days from ATS") and the
+  -- form has no use for it as a comparable date.
+  ALTER TABLE booking_details ADD COLUMN IF NOT EXISTS gift_offer_period TEXT;
+
+  -- Whether the buyer intends to fund the purchase with a home loan. NULL until
+  -- answered, so "not asked" stays distinguishable from an explicit No.
+  ALTER TABLE booking_details ADD COLUMN IF NOT EXISTS buyer_avails_loan BOOLEAN;
 
   -- listing_price_is_auto: TRUE when the listing price was derived from the
   -- acquisition price rather than typed by a person. Drives the small "A" marker

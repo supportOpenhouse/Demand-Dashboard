@@ -47,7 +47,7 @@ const BOOKING_COLS = [
   'booking_amount_split_1', 'booking_amount_split_2',
   'ats_timeline', 'registry_timeline', 'booking_amount_forfeitable',
   'amount_on_ats_pct', 'work_committed', 'other_conditions', 'recipients', 'broker_emails',
-  'gift_details', 'gift_timing',
+  'gift_details', 'gift_timing', 'gift_offer_period', 'buyer_avails_loan',
   'payment_structure', 'payment_range_min_pct', 'payment_range_max_pct',
   'payment_range_min_lakhs', 'payment_range_max_lakhs',
   'source', 'brokerage_amount', 'brokerage_timing',
@@ -188,6 +188,7 @@ function validate(body) {
   if (!giftDetails) {
     clean.gift_details = null;
     clean.gift_timing = null;
+    clean.gift_offer_period = null;
   } else if (giftDetails.length > 2000) {
     errors.push('gift_details is too long');
   } else {
@@ -196,6 +197,22 @@ function validate(body) {
     if (!giftTiming) clean.gift_timing = null;
     else if (GIFT_TIMINGS.includes(giftTiming)) clean.gift_timing = giftTiming;
     else errors.push(`gift_timing must be one of: ${GIFT_TIMINGS.join(', ')}`);
+
+    const offerPeriod = String(body.gift_offer_period == null ? '' : body.gift_offer_period).trim();
+    if (!offerPeriod) clean.gift_offer_period = null;
+    else if (offerPeriod.length > 200) errors.push('gift_offer_period is too long');
+    else clean.gift_offer_period = offerPeriod;
+  }
+
+  // Buyer's loan intent — tri-state: true / false / NULL for unanswered.
+  if (body.buyer_avails_loan === undefined || body.buyer_avails_loan === null || body.buyer_avails_loan === '') {
+    clean.buyer_avails_loan = null;
+  } else if (body.buyer_avails_loan === true || body.buyer_avails_loan === 'true' || body.buyer_avails_loan === 'Yes') {
+    clean.buyer_avails_loan = true;
+  } else if (body.buyer_avails_loan === false || body.buyer_avails_loan === 'false' || body.buyer_avails_loan === 'No') {
+    clean.buyer_avails_loan = false;
+  } else {
+    errors.push('buyer_avails_loan must be Yes/No');
   }
 
   // Payment structure. 'Flexible' carries a negotiated min/max band; anything

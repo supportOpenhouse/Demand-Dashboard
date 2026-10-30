@@ -334,6 +334,17 @@
             <div class="amount-hint" data-amount-hint-for="booking_amount_received"></div>
           </div>
           <div class="fg">
+            <label>Will Buyer avail loan?</label>
+            <div class="pay-mode-tabs" role="tablist" id="buyerLoanTabs">
+              <button type="button" class="pay-mode-tab" data-buyer-loan="No"
+                      role="tab" aria-selected="false">No</button>
+              <button type="button" class="pay-mode-tab" data-buyer-loan="Yes"
+                      role="tab" aria-selected="false">Yes</button>
+            </div>
+            <input type="hidden" data-bf="buyer_avails_loan">
+            <div class="amount-hint" aria-hidden="true"></div>
+          </div>
+          <div class="fg">
             <label>Payment Mode <span class="req">*</span></label>
             <div class="pay-mode-tabs" role="tablist">
               <button type="button" class="pay-mode-tab active" data-pay-mode="single" role="tab" aria-selected="true">Single</button>
@@ -525,6 +536,15 @@
                         role="tab" aria-selected="false">Registry</button>
               </div>
               <input type="hidden" data-bf="gift_timing">
+            </div>
+          </div>
+          <!-- Second line of the gift block: how long the offer stands. Shares
+               data-gift-field, so it appears and clears with the rest. -->
+          <div class="booking-gift-row booking-gift-row-second" data-gift-field style="display:none;">
+            <div class="fg">
+              <label>Offer Period</label>
+              <input type="text" class="booking-input" data-bf="gift_offer_period"
+                     placeholder="e.g. valid till 31 Dec 2026, or 30 days from ATS">
             </div>
           </div>
 
