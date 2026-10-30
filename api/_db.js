@@ -263,10 +263,13 @@ const INIT_SQL = `
   -- work_committed already works.
   ALTER TABLE booking_details ADD COLUMN IF NOT EXISTS gift_details TEXT;
   ALTER TABLE booking_details ADD COLUMN IF NOT EXISTS gift_timing  TEXT;
-  -- How long the gift offer stands. Free text rather than a date pair: it is
-  -- quoted to the buyer in words ("till 31 Dec", "30 days from ATS") and the
-  -- form has no use for it as a comparable date.
-  ALTER TABLE booking_details ADD COLUMN IF NOT EXISTS gift_offer_period TEXT;
+  -- The window the gift offer stands for, and the creative that advertises it.
+  -- A date pair rather than free text so the offer can be compared against a
+  -- booking date later. gift_offer_period (TEXT) was the earlier shape of this
+  -- field; it is no longer written and can be dropped once no row relies on it.
+  ALTER TABLE booking_details ADD COLUMN IF NOT EXISTS gift_offer_from DATE;
+  ALTER TABLE booking_details ADD COLUMN IF NOT EXISTS gift_offer_to   DATE;
+  ALTER TABLE booking_details ADD COLUMN IF NOT EXISTS gift_offer_creative_url TEXT;
 
   -- Whether the buyer intends to fund the purchase with a home loan. NULL until
   -- answered, so "not asked" stays distinguishable from an explicit No.

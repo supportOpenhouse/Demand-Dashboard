@@ -47,7 +47,8 @@ const BOOKING_COLS = [
   'booking_amount_split_1', 'booking_amount_split_2',
   'ats_timeline', 'registry_timeline', 'booking_amount_forfeitable',
   'amount_on_ats_pct', 'work_committed', 'other_conditions', 'recipients', 'broker_emails',
-  'gift_details', 'gift_timing', 'gift_offer_period', 'buyer_avails_loan',
+  'gift_details', 'gift_timing', 'buyer_avails_loan',
+  'gift_offer_from', 'gift_offer_to', 'gift_offer_creative_url',
   'payment_structure', 'payment_range_min_pct', 'payment_range_max_pct',
   'payment_range_min_lakhs', 'payment_range_max_lakhs',
   'source', 'brokerage_amount', 'brokerage_timing',
@@ -188,7 +189,9 @@ function validate(body) {
   if (!giftDetails) {
     clean.gift_details = null;
     clean.gift_timing = null;
-    clean.gift_offer_period = null;
+    clean.gift_offer_from = null;
+    clean.gift_offer_to = null;
+    clean.gift_offer_creative_url = null;
   } else if (giftDetails.length > 2000) {
     errors.push('gift_details is too long');
   } else {
@@ -198,10 +201,22 @@ function validate(body) {
     else if (GIFT_TIMINGS.includes(giftTiming)) clean.gift_timing = giftTiming;
     else errors.push(`gift_timing must be one of: ${GIFT_TIMINGS.join(', ')}`);
 
-    const offerPeriod = String(body.gift_offer_period == null ? '' : body.gift_offer_period).trim();
-    if (!offerPeriod) clean.gift_offer_period = null;
-    else if (offerPeriod.length > 200) errors.push('gift_offer_period is too long');
-    else clean.gift_offer_period = offerPeriod;
+    // Offer window. Either end may stand alone (an open-ended offer), but a
+    // reversed pair is always an entry slip.
+    for (const f of ['gift_offer_from', 'gift_offer_to']) {
+      const v = String(body[f] == null ? '' : body[f]).trim();
+      if (!v) { clean[f] = null; continue; }
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(v) || isNaN(Date.parse(v))) {
+        errors.push(`${f} must be YYYY-MM-DD`);
+      } else clean[f] = v;
+    }
+    if (clean.gift_offer_from && clean.gift_offer_to
+        && clean.gift_offer_from > clean.gift_offer_to) {
+      errors.push('gift_offer_from must not be after gift_offer_to');
+    }
+
+    const creative = String(body.gift_offer_creative_url == null ? '' : body.gift_offer_creative_url).trim();
+    clean.gift_offer_creative_url = creative || null;
   }
 
   // Buyer's loan intent — tri-state: true / false / NULL for unanswered.
@@ -385,7 +400,7 @@ function validate(body) {
 // route's auth and test-unit gate.
 const SHOT_MAX_BYTES = 3 * 1024 * 1024;   // Vercel's ~4.5 MB body cap, after base64
 const SHOT_TYPES = ['image/png', 'image/jpeg', 'image/webp', 'image/heic', 'image/heif', 'application/pdf'];
-async function uploadPaymentScreenshot(req, res) {
+async function uploadPaymentScreenshot(req, res, folder = 'booking-payments') {
   const cloud = process.env.CLOUDINARY_CLOUD_NAME;
   const preset = process.env.CLOUDINARY_UPLOAD_PRESET;
   if (!cloud || !preset) {
@@ -406,7 +421,7 @@ async function uploadPaymentScreenshot(req, res) {
   form.set('file', dataUrl);
   form.set('upload_preset', preset);
   form.set('folder', process.env.CLOUDINARY_FOLDER
-    ? `${process.env.CLOUDINARY_FOLDER}/booking-payments` : 'booking-payments');
+    ? `${process.env.CLOUDINARY_FOLDER}/${folder}` : folder);
   const r = await fetch(`https://api.cloudinary.com/v1_1/${encodeURIComponent(cloud)}/auto/upload`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
@@ -560,8 +575,11 @@ const handleBookingRequest = async (req, res) => {
 
   const { action } = req.body || {};
   if (action === 'upload_payment_screenshot') return uploadPaymentScreenshot(req, res);
+  // Same validation, limits and preset as the payment screenshot — only the
+  // Cloudinary folder differs, so the two kinds of file stay separable.
+  if (action === 'upload_gift_creative') return uploadPaymentScreenshot(req, res, 'booking-gift-creatives');
   if (!['preview', 'send', 'save', 'preview_cp', 'send_cp'].includes(action)) {
-    return res.status(400).json({ success: false, error: `action must be one of: preview, send, save, preview_cp, send_cp, upload_payment_screenshot` });
+    return res.status(400).json({ success: false, error: `action must be one of: preview, send, save, preview_cp, send_cp, upload_payment_screenshot, upload_gift_creative` });
   }
 
   // Booking Date and the payment screenshot are mandatory on every booking that

@@ -2260,6 +2260,7 @@ function clearBookingDetailFields() {
   applyWorkCommitted(false);
   applyGiftApplicable(false);
   applyBuyerLoan('');
+  renderGiftCreative();
   applyBrokerageTiming();
   refreshAllAmountHints();
   renderPayShot();
@@ -2312,17 +2313,21 @@ function renderPayShot(msg, isErr) {
 // checked against it without leaving the modal. A PDF has nothing to show inline,
 // so it gets a labelled tile; either way the click opens the real file.
 function renderPayShotPreview(url) {
-  const box = $('#payShotPreview');
+  renderPreviewTile($('#payShotPreview'), url, 'Payment screenshot');
+}
+
+// Shared by both uploads. PDF/image is decided on the URL alone — these are
+// Cloudinary links whose extension is the only type information available here —
+// and a broken image falls back to a labelled tile rather than a broken icon.
+function renderPreviewTile(box, url, alt = 'Uploaded file') {
   if (!box) return;
   if (!url) { box.hidden = true; box.innerHTML = ''; box.removeAttribute('href'); return; }
   box.href = url;
   box.hidden = false;
-  // Decided on the URL alone: these are Cloudinary links whose extension is the
-  // only type information available here.
   const isPdf = /\.pdf(\?|#|$)/i.test(url);
   box.innerHTML = isPdf
     ? '<span class="pay-shot-file">📄 PDF uploaded — open</span>'
-    : `<img src="${esc(url)}" alt="Payment screenshot"
+    : `<img src="${esc(url)}" alt="${esc(alt)}"
              onerror="this.parentElement.innerHTML='&lt;span class=&quot;pay-shot-file&quot;&gt;📎 Uploaded — open&lt;/span&gt;'">`;
 }
 
@@ -2384,9 +2389,11 @@ async function uploadPayShot(file) {
 }
 document.addEventListener('click', (e) => {
   if (e.target && e.target.id === 'payShotPick') $('#payShotFile')?.click();
+  if (e.target && e.target.id === 'giftCreativePick') $('#giftCreativeFile')?.click();
 });
 document.addEventListener('change', (e) => {
   if (e.target && e.target.id === 'payShotFile') uploadPayShot(e.target.files && e.target.files[0]);
+  if (e.target && e.target.id === 'giftCreativeFile') uploadGiftCreative(e.target.files && e.target.files[0]);
 });
 
 // ── Draft autosave ──────────────────────────────────────────────────────────
@@ -2693,6 +2700,7 @@ async function openBookingModal(uid, opts = {}) {
   applyWorkCommitted(false);
   applyGiftApplicable(false);
   applyBuyerLoan('');
+  renderGiftCreative();
   setBF('source', 'CP');
   applySource('CP');
   setBF('token_type', 'normal');
@@ -2857,7 +2865,10 @@ async function openBookingModal(uid, opts = {}) {
     applyGiftApplicable(hasGift);
     if (hasGift) {
       setBF('gift_details', l.gift_details);
-      setBF('gift_offer_period', l.gift_offer_period);
+      setBF('gift_offer_from', isoDateOnly(l.gift_offer_from));
+      setBF('gift_offer_to', isoDateOnly(l.gift_offer_to));
+      setBF('gift_offer_creative_url', l.gift_offer_creative_url);
+      renderGiftCreative();
       applyGiftTiming(l.gift_timing || '');
     }
     applyBuyerLoan(l.buyer_avails_loan === true ? 'Yes' : l.buyer_avails_loan === false ? 'No' : '');
@@ -3026,8 +3037,58 @@ function applyGiftApplicable(yes) {
   });
   if (!yes) {
     clearBF('gift_details');
-    clearBF('gift_offer_period');
+    clearBF('gift_offer_from');
+    clearBF('gift_offer_to');
+    clearBF('gift_offer_creative_url');
+    renderGiftCreative();
     applyGiftTiming('');
+  }
+}
+
+// Offer creative: the same upload path as the payment screenshot, pointed at its
+// own action so the two land in separate Cloudinary folders. Kept beside it in
+// the UI too — identical button, status and thumbnail behaviour.
+function renderGiftCreative(msg, isErr) {
+  const url = document.querySelector('#bookingModal [data-bf="gift_offer_creative_url"]')?.value || '';
+  const pick = $('#giftCreativePick');
+  if (pick) pick.textContent = url ? '📎 Replace' : '📎 Choose file';
+  const st = $('#giftCreativeStatus');
+  if (st) {
+    st.textContent = msg || (url ? '✓ Uploaded' : '');
+    st.classList.toggle('err', !!isErr);
+  }
+  renderPreviewTile($('#giftCreativePreview'), url);
+  const f = $('#giftCreativeFile');
+  if (f) f.value = '';
+}
+
+async function uploadGiftCreative(file) {
+  if (!file || !bookingState.uid) return;
+  if (file.size > 3 * 1024 * 1024) {
+    renderGiftCreative(`That file is ${(file.size / 1024 / 1024).toFixed(1)} MB. Max 3 MB — please compress it.`, true);
+    return;
+  }
+  renderGiftCreative('Uploading…');
+  try {
+    const dataUrl = await new Promise((resolve, reject) => {
+      const fr = new FileReader();
+      fr.onload = () => resolve(fr.result);
+      fr.onerror = () => reject(new Error('Could not read that file'));
+      fr.readAsDataURL(file);
+    });
+    const r = await fetch('/api/booking-details/' + encodeURIComponent(bookingState.uid), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'include',
+      body: JSON.stringify({ action: 'upload_gift_creative', dataUrl }),
+    });
+    const data = await r.json().catch(() => ({}));
+    if (!r.ok || !data.success) { renderGiftCreative(data.error || 'Upload failed', true); return; }
+    setBF('gift_offer_creative_url', data.url);
+    renderGiftCreative();
+    scheduleBookingDraft();
+  } catch (e) {
+    renderGiftCreative(e.message, true);
   }
 }
 

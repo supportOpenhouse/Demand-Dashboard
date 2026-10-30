@@ -839,13 +839,19 @@ tbody tr.expand-row td {
   height: 100%; padding: 0 22px;
   display: inline-flex; align-items: center; justify-content: center;
 }
-/* The offer period is a lone field on the gift block's second line, so it sits
-   under Gift Details rather than stretching the full width of the modal. */
-.booking-gift-row-second { margin-top: 10px; }
-.booking-gift-row-second .fg { grid-column: 2; }
+/* Second line of the gift block: the offer window under Gift Details, the
+   creative under "To be given on" — each beneath the field it belongs with. */
+.booking-gift-row-second { margin-top: 10px; align-items: start; }
+.booking-gift-row-second .fg:first-child { grid-column: 2; }
+.booking-gift-row-second .fg:last-child { grid-column: 3; }
+/* Two dates with "to" between them, matching the Payment Range pair above. */
+.offer-period-row { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.offer-period-row .booking-input { flex: 1 1 0; min-width: 0; height: 40px; }
+.offer-period-sep { font-size: 12px; color: #9ca3af; flex: none; }
 @media (max-width: 640px) {
   .booking-gift-row { grid-template-columns: 1fr; }
-  .booking-gift-row-second .fg { grid-column: 1; }
+  .booking-gift-row-second .fg:first-child,
+  .booking-gift-row-second .fg:last-child { grid-column: 1; }
   .form-grid.booking-money-row { grid-template-columns: 1fr; }
 }
 
