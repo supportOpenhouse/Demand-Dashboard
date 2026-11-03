@@ -266,7 +266,7 @@ const CANONICAL_BANKS = [
   'Bank of Baroda', 'Bank of India', 'Bank of Maharashtra', 'Canara Bank',
   'Central Bank of India', 'City Union Bank Ltd.', 'CSB Bank Limited',
   'DCB Bank Ltd.', 'Dhanlaxmi Bank Ltd.', 'Federal Bank Ltd.',
-  'Godrej Housing Finance', 'HDFC Bank Ltd', 'HSBC India', 'ICICI Bank Ltd.',
+  'GAIL India Limited', 'Godrej Housing Finance', 'HDFC Bank Ltd', 'HSBC India', 'ICICI Bank Ltd.',
   'IDBI Bank Limited', 'IDFC FIRST Bank Limited', 'Indian Bank',
   'Indian Overseas Bank', 'IndusInd Bank Ltd', 'Jammu & Kashmir Bank Ltd.',
   'Karnataka Bank Ltd.', 'Karur Vysya Bank Ltd.', 'Kotak Mahindra Bank Ltd',
