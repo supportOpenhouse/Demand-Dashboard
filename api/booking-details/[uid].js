@@ -28,6 +28,7 @@ const { pool, logActivity, isHiddenTestUnit } = require('../_db');
 const { saveChannelPartnerEmail } = require('../_cpdb');
 const { requireAuth, canEdit, setCors } = require('../_auth');
 const { buildBookingEmail, buildBrokerEmail, sendMail } = require('../_email');
+const { bookingAlert } = require('../_whatsapp');
 
 const PAYMENT_METHODS = ['UPI', 'NEFT', 'IMPS', 'RTGS', 'Cheque', 'Cash', 'Other'];
 const SOURCES = ['CP', 'Direct'];
@@ -81,6 +82,13 @@ const ISO_DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 function isRealBooking(b) {
   return !!(b && String(b.buyer_name || '').trim()
     && Number(b.consideration_amount) > 0);
+}
+
+// A conditional token sends no booking mail, so its booking_alert WhatsApp goes when
+// it is first saved complete — what its Save on page 2 requires (app.js).
+function isCompleteConditional(b) {
+  return String((b && b.token_type) || '').toLowerCase() === 'conditional'
+    && isRealBooking(b) && !!b.booking_date && !!b.payment_screenshot_url;
 }
 
 function validate(body) {
@@ -828,6 +836,7 @@ const handleBookingRequest = async (req, res) => {
           logActivity(uid, 'booking_edited_after_send', 'booking', user, { booking_id: rows[0].id });
         }
         await markBooked();
+        if (isCompleteConditional(clean)) await bookingAlert(rows[0].id, property, user);
         return res.status(200).json({
           success: true, id: rows[0].id, sent: !!rows[0].mail_sent_at, draft: true,
           editedAfterSend: !!rows[0].mail_sent_at,
@@ -845,6 +854,7 @@ const handleBookingRequest = async (req, res) => {
     );
     logActivity(uid, 'booking_draft_saved', 'booking', user, { booking_id: rows[0].id });
     await markBooked();
+    if (isCompleteConditional(clean)) await bookingAlert(rows[0].id, property, user);
     return res.status(200).json({ success: true, id: rows[0].id, sent: false, draft: true });
   }
 
@@ -995,6 +1005,8 @@ const handleBookingRequest = async (req, res) => {
     `UPDATE booking_details SET mail_sent_at = NOW(), updated_at = NOW() WHERE id = $1`,
     [insertedId]
   );
+  // The booking mail is out — announce it to the team (booking_alert WhatsApp, once).
+  await bookingAlert(insertedId, property, user);
 
   logActivity(uid, priorSentCount ? 'booking_resent' : 'booking_sent', 'booking', user, {
     booking_id: insertedId,

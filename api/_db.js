@@ -317,6 +317,18 @@ const INIT_SQL = `
   -- already has, so a column missing there is silently dropped on cancel.
   ALTER TABLE IF EXISTS booking_details_archive ADD COLUMN IF NOT EXISTS booking_date           TEXT;
   ALTER TABLE IF EXISTS booking_details_archive ADD COLUMN IF NOT EXISTS payment_screenshot_url TEXT;
+
+  -- booking_alert_sent_at: when the "booking_alert" WhatsApp went out for this booking
+  -- (api/_whatsapp.js) — the once-only guard. Created with every existing booking
+  -- stamped, so turning the alert on never announces old bookings.
+  DO $$ BEGIN
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                    WHERE table_name = 'booking_details' AND column_name = 'booking_alert_sent_at') THEN
+      ALTER TABLE booking_details ADD COLUMN booking_alert_sent_at TIMESTAMPTZ;
+      UPDATE booking_details SET booking_alert_sent_at = COALESCE(mail_sent_at, created_at, NOW());
+    END IF;
+  END $$;
+  ALTER TABLE IF EXISTS booking_details_archive ADD COLUMN IF NOT EXISTS booking_alert_sent_at TIMESTAMPTZ;
   CREATE INDEX IF NOT EXISTS idx_booking_selling_cp_code  ON booking_details(selling_cp_code);
   CREATE INDEX IF NOT EXISTS idx_booking_selling_cp_phone ON booking_details(selling_cp_phone);
 
