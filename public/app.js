@@ -2195,6 +2195,7 @@ const bookingState = {
   previewMode: 'buyer', // 'buyer' | 'cp' — which mail Step 3 is showing/sending
   cpId: null,           // channel_partners.id once a CP is resolved
   draftId: null,        // booking_details row being autosaved into
+  alertSentAt: null,    // booking_alert WhatsApp already sent for that row (conditional)
   loadedCp: null,       // { email, code } the loaded row's details belong to
   form: {},
 };
@@ -2671,6 +2672,7 @@ async function openBookingModal(uid, opts = {}) {
   bookingState.cpId = null;
   bookingState.cpMatches = [];
   bookingState.draftId = null;
+  bookingState.alertSentAt = null;
   bookingState.loadedCp = null;
   const srcEl = document.querySelector('#bookingModal [data-bf="source"]');
   if (srcEl) srcEl.value = '';
@@ -2802,6 +2804,7 @@ async function openBookingModal(uid, opts = {}) {
   if (data.latest && !rebook) {
     const l = data.latest;
     bookingState.draftId = l.id != null ? l.id : null;
+    bookingState.alertSentAt = l.booking_alert_sent_at || null;
     bookingState.loadedCp = (l.selling_cp_email || l.selling_cp_code)
       ? cpIdentity(l.selling_cp_email, l.selling_cp_code) : null;
     // Source is stored on the row, so reopening restores whether this booking
@@ -3265,6 +3268,16 @@ function refreshBookingFooter() {
   const onDetails = step === 2;
   $('#bookingPreviewBtn').style.display = (onDetails && mails) ? '' : 'none';
   $('#bookingPreviewCpBtn').style.display = (onDetails && isCp && mails) ? '' : 'none';
+  // …and in their place the team WhatsApp, sent by hand (a normal token sends it
+  // with the buyer mail). Once per booking: greyed out once it has gone.
+  const alertBtn = $('#bookingAlertBtn');
+  if (alertBtn) {
+    alertBtn.style.display = (onDetails && !mails) ? '' : 'none';
+    alertBtn.disabled = !!bookingState.alertSentAt;
+    alertBtn.textContent = bookingState.alertSentAt ? '✓ Booking Alert Sent' : '📲 Send Booking Alert';
+    alertBtn.title = bookingState.alertSentAt
+      ? 'Sent ' + new Date(bookingState.alertSentAt).toLocaleString('en-IN') : '';
+  }
 
   const onPreview = step === 3;
   $('#bookingSendBtn').style.display = (onPreview && mails && bookingState.previewMode === 'buyer') ? '' : 'none';
@@ -3621,6 +3634,48 @@ function flushPendingBookingInputs() {
         saveBookingDraft({ quiet: true });
         goToBookingStep(bookingState.step - 1);
       }
+    }
+    // Conditional token: WhatsApp the booking alert to the team. Same mandatory
+    // fields as its Save; saves first, since the server reads the stored row.
+    if (e.target.id === 'bookingAlertBtn') {
+      const f = collectBookingForm();
+      const miss = [];
+      if (!String(f.buyer_name || '').trim()) miss.push('Buyer Name');
+      if (!(Number(f.consideration_amount) > 0)) miss.push('Consideration');
+      if (!f.booking_date) miss.push('Booking Date');
+      else if (bookingDateIsFuture(f.booking_date)) miss.push('Booking Date (cannot be a future date)');
+      if (!f.payment_screenshot_url) miss.push('Payment Screenshot');
+      if (miss.length) { showToast('Missing required fields: ' + miss.join(', '), 'error'); return; }
+      if (!confirm('Send the Booking Alert WhatsApp to the team? It goes once per booking.')) return;
+      const btn = e.target;
+      btn.disabled = true;
+      btn.textContent = 'Sending…';
+      (async () => {
+        try {
+          await saveBookingDraft({ quiet: true });
+          if (!bookingState.draftId) throw new Error('The booking could not be saved');
+          const r = await fetch('/api/booking-details/' + encodeURIComponent(bookingState.uid), {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            credentials: 'include',
+            body: JSON.stringify({ action: 'send_alert', booking_id: bookingState.draftId }),
+          });
+          const data = await r.json().catch(() => ({}));
+          if (data.sentAt) bookingState.alertSentAt = data.sentAt;
+          if (r.ok && data.success) {
+            const skip = (data.skipped || []).length ? ` · no phone: ${data.skipped.join(', ')}` : '';
+            const fail = (data.failed || []).length ? ` · failed: ${data.failed.map(x => x.name).join(', ')}` : '';
+            showToast(`Booking alert sent to ${data.sent} of ${data.total}${skip}${fail}`, 'success');
+          } else {
+            showToast(data.error || 'Could not send the booking alert', 'error');
+          }
+        } catch (err) {
+          showToast('Could not send the booking alert: ' + err.message, 'error');
+        } finally {
+          refreshBookingFooter();
+        }
+      })();
+      return;
     }
     // Buyer Mail Preview (page 2 → server preview → page 3)
     if (e.target.id === 'bookingPreviewBtn') {

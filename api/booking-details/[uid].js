@@ -84,8 +84,9 @@ function isRealBooking(b) {
     && Number(b.consideration_amount) > 0);
 }
 
-// A conditional token sends no booking mail, so its booking_alert WhatsApp goes when
-// it is first saved complete — what its Save on page 2 requires (app.js).
+// A conditional token sends no booking mail, so its booking_alert WhatsApp is sent by
+// hand ("Send Booking Alert", action send_alert) once the booking is saved complete —
+// what its Save on page 2 requires (app.js).
 function isCompleteConditional(b) {
   return String((b && b.token_type) || '').toLowerCase() === 'conditional'
     && isRealBooking(b) && !!b.booking_date && !!b.payment_screenshot_url;
@@ -414,6 +415,47 @@ function validate(body) {
 // route's auth and test-unit gate.
 const SHOT_MAX_BYTES = 3 * 1024 * 1024;   // Vercel's ~4.5 MB body cap, after base64
 const SHOT_TYPES = ['image/png', 'image/jpeg', 'image/webp', 'image/heic', 'image/heif', 'application/pdf'];
+// action: send_alert — the booking_alert WhatsApp for a CONDITIONAL booking (a normal
+// one sends it with its buyer mail). Reads the saved row, so the client saves first.
+const ALERT_REFUSED = {
+  not_configured: [503, 'WhatsApp is not configured on this server (INTERAKT_API_KEY)'],
+  no_recipients: [422, 'No recipient has a phone number on file'],
+  send_failed: [502, 'Interakt did not accept the message'],
+  not_found: [404, 'Booking not found'],
+  error: [500, 'Could not send the booking alert'],
+};
+async function sendBookingAlert(req, res, uid, user) {
+  const id = Number((req.body || {}).booking_id) || null;
+  if (!id) return res.status(400).json({ success: false, error: 'Save the booking first' });
+  const row = (await pool.query(
+    `SELECT * FROM booking_details WHERE id = $1 AND uid = $2`, [id, uid])).rows[0];
+  if (!row) return res.status(404).json({ success: false, error: 'Booking not found' });
+  if (String(row.token_type || '').toLowerCase() !== 'conditional') {
+    return res.status(400).json({ success: false,
+      error: 'A normal booking sends its alert with the buyer mail' });
+  }
+  if (!isCompleteConditional(row)) {
+    return res.status(400).json({ success: false,
+      error: 'Fill buyer name, consideration, booking date and payment screenshot, then save' });
+  }
+  if (row.booking_alert_sent_at) {
+    return res.status(409).json({ success: false, error: 'The booking alert was already sent',
+      sentAt: row.booking_alert_sent_at });
+  }
+  const property = await loadProperty(uid);
+  if (!property) return res.status(404).json({ success: false, error: 'Property not found' });
+  const r = await bookingAlert(id, property, user);
+  if (r.ok) {
+    return res.status(200).json({ success: true, sent: r.sent, total: r.total,
+      skipped: r.skipped, failed: r.failed, sentAt: r.at });
+  }
+  if (r.reason === 'already_sent') {
+    return res.status(409).json({ success: false, error: 'The booking alert was already sent', sentAt: r.at });
+  }
+  const [code, msg] = ALERT_REFUSED[r.reason] || ALERT_REFUSED.error;
+  return res.status(code).json({ success: false, error: msg, skipped: r.skipped, failed: r.failed });
+}
+
 async function uploadPaymentScreenshot(req, res) {
   const cloud = process.env.CLOUDINARY_CLOUD_NAME;
   const preset = process.env.CLOUDINARY_UPLOAD_PRESET;
@@ -589,8 +631,9 @@ const handleBookingRequest = async (req, res) => {
 
   const { action } = req.body || {};
   if (action === 'upload_payment_screenshot') return uploadPaymentScreenshot(req, res);
+  if (action === 'send_alert') return sendBookingAlert(req, res, uid, user);
   if (!['preview', 'send', 'save', 'preview_cp', 'send_cp'].includes(action)) {
-    return res.status(400).json({ success: false, error: `action must be one of: preview, send, save, preview_cp, send_cp, upload_payment_screenshot` });
+    return res.status(400).json({ success: false, error: `action must be one of: preview, send, save, preview_cp, send_cp, send_alert, upload_payment_screenshot` });
   }
 
   // Booking Date and the payment screenshot are mandatory on every booking that
@@ -836,7 +879,6 @@ const handleBookingRequest = async (req, res) => {
           logActivity(uid, 'booking_edited_after_send', 'booking', user, { booking_id: rows[0].id });
         }
         await markBooked();
-        if (isCompleteConditional(clean)) await bookingAlert(rows[0].id, property, user);
         return res.status(200).json({
           success: true, id: rows[0].id, sent: !!rows[0].mail_sent_at, draft: true,
           editedAfterSend: !!rows[0].mail_sent_at,
@@ -854,7 +896,6 @@ const handleBookingRequest = async (req, res) => {
     );
     logActivity(uid, 'booking_draft_saved', 'booking', user, { booking_id: rows[0].id });
     await markBooked();
-    if (isCompleteConditional(clean)) await bookingAlert(rows[0].id, property, user);
     return res.status(200).json({ success: true, id: rows[0].id, sent: false, draft: true });
   }
 

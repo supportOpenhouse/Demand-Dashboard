@@ -319,13 +319,15 @@ const INIT_SQL = `
   ALTER TABLE IF EXISTS booking_details_archive ADD COLUMN IF NOT EXISTS payment_screenshot_url TEXT;
 
   -- booking_alert_sent_at: when the "booking_alert" WhatsApp went out for this booking
-  -- (api/_whatsapp.js) — the once-only guard. Created with every existing booking
-  -- stamped, so turning the alert on never announces old bookings.
+  -- (api/_whatsapp.js) — the once-only guard. Created with every booking whose buyer
+  -- mail already went stamped, so turning the alert on never announces old bookings.
+  -- Unmailed drafts stay NULL (their mail, when sent, announces them), and so do
+  -- conditional bookings, whose alert is sent only by hand (Send Booking Alert).
   DO $$ BEGIN
     IF NOT EXISTS (SELECT 1 FROM information_schema.columns
                     WHERE table_name = 'booking_details' AND column_name = 'booking_alert_sent_at') THEN
       ALTER TABLE booking_details ADD COLUMN booking_alert_sent_at TIMESTAMPTZ;
-      UPDATE booking_details SET booking_alert_sent_at = COALESCE(mail_sent_at, created_at, NOW());
+      UPDATE booking_details SET booking_alert_sent_at = mail_sent_at WHERE mail_sent_at IS NOT NULL;
     END IF;
   END $$;
   ALTER TABLE IF EXISTS booking_details_archive ADD COLUMN IF NOT EXISTS booking_alert_sent_at TIMESTAMPTZ;

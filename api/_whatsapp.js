@@ -7,22 +7,31 @@
 //   🛏️ Config - {{4}}          2BHK, 1082.0 sqft
 //   🏙️ MM - {{5}}              New Gurgaon 88-92
 //
-// Fired once per booking row (booking_details.booking_alert_sent_at is the guard):
-// a normal booking when its buyer booking mail is sent, a conditional booking —
-// which sends no mail — when it is first saved complete (buyer, amount, booking
-// date and payment screenshot: what its Save on page 2 requires).
+// Sent once per booking row (booking_details.booking_alert_sent_at is the guard):
+//   normal token       automatically, when its buyer booking mail is sent (Send
+//                      Buyer Mail, after the preview);
+//   conditional token  no mail goes out, so the team sends it with the "Send
+//                      Booking Alert" button once the booking is saved complete
+//                      (buyer, amount, booking date, payment screenshot).
+//
+// To: Manish Pal, Ankit, Saurabh, Ashish (TEAM), the unit's demand POC and that
+// POC's manager from the Demand CRM (_demandcrm.js), plus anyone in the optional
+// BOOKING_ALERT_TO env (comma-separated emails or 10-digit phones). Phones come from
+// this dashboard's users table, else the Demand CRM's. Test units (TEST_SOCIETIES)
+// go only to TESTERS.
 //
 // Same Interakt call and the same micro-market rule as the CRM's WhatsApp alerts
-// (Transaction-Management-Dashboard backend/app/whatsapp.py).
-//
-// Env: INTERAKT_API_KEY (same key as the CRM); BOOKING_ALERT_TO, comma-separated
-// emails (phone looked up in users) or 10-digit phones. Test units (TEST_SOCIETIES)
-// go only to TEST_UNIT_VIEWERS. Best-effort: never throws into the booking request.
+// (Transaction-Management-Dashboard backend/app/whatsapp.py). Env: INTERAKT_API_KEY
+// (same key as the CRM). Best-effort: never throws into the booking request.
 const { pool, logActivity, TEST_SOCIETIES } = require('./_db');
+const demandcrm = require('./_demandcrm');
 
 const INTERAKT_URL = 'https://api.interakt.ai/v1/public/message/';
 const TEMPLATE = 'booking_alert';
-const TESTERS = ['saransh.khera@openhouse.in', 'sahaj.durej@openhouse.in'];
+const TESTERS = ['saransh.khera@openhouse.in', 'sahaj.dureja@openhouse.in'];
+const TEAM = ['manish.pal@openhouse.in', 'ankit@openhouse.in', 'saurabh@openhouse.in', 'ashish@openhouse.in'];
+// Numbers for team members no users table has a phone for (used only as a fallback).
+const TEAM_PHONES = { 'manish.pal@openhouse.in': '9810967731' };
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
 function configured() { return !!(process.env.INTERAKT_API_KEY || '').trim(); }
@@ -80,25 +89,51 @@ function bodyValues(p, booking, mm) {
   return [fmtDate(booking.booking_date), type, home || '—', cfg || '—', mm || '—'];
 }
 
-// [{name, phone}] — testers for a test unit, else BOOKING_ALERT_TO.
-async function recipients(p) {
+// Everyone the alert is for: [{name, email, role, phone}] — phone '' when none is on
+// file anywhere (reported back as skipped). Testers only for a test unit.
+async function recipients(p, bookingDate) {
   const isTest = TEST_SOCIETIES.map(s => s.toLowerCase())
     .includes(String(p.society_name || '').trim().toLowerCase());
-  const wanted = isTest ? TESTERS
-    : String(process.env.BOOKING_ALERT_TO || '').split(',').map(s => s.trim()).filter(Boolean);
-  const emails = wanted.filter(w => w.includes('@')).map(w => w.toLowerCase());
-  const byEmail = {};
+  const want = [];
+  const add = (who, role) => {
+    const w = String(who || '').trim();
+    if (w) want.push({ key: w.includes('@') ? w.toLowerCase() : w, role });
+  };
+  if (isTest) {
+    TESTERS.forEach(e => add(e, 'tester'));
+  } else {
+    TEAM.forEach(e => add(e, 'team'));
+    const crm = await demandcrm.pocAndManager(p.uid, p.core_home_id, bookingDate);
+    if (crm && crm.poc) want.push({ key: crm.poc.email, role: 'demand POC', crm: crm.poc });
+    if (crm && crm.manager) want.push({ key: crm.manager.email, role: 'POC manager', crm: crm.manager });
+    String(process.env.BOOKING_ALERT_TO || '').split(',').forEach(e => add(e, 'extra'));
+  }
+
+  const emails = [...new Set(want.map(w => w.key).filter(k => k && k.includes('@')))];
+  const local = {};
   if (emails.length) {
     const { rows } = await pool.query(
       `SELECT LOWER(TRIM(email)) AS email, name, phone FROM users WHERE LOWER(TRIM(email)) = ANY($1::text[])`,
       [emails]);
-    rows.forEach(r => { byEmail[r.email] = r; });
+    rows.forEach(r => { local[r.email] = r; });
   }
+  const missing = emails.filter(e => !cleanPhone((local[e] || {}).phone));
+  const crmUsers = await demandcrm.usersByEmail(missing);
+
   const seen = new Set(), out = [];
-  for (const w of wanted) {
-    const u = w.includes('@') ? byEmail[w.toLowerCase()] : null;
-    const phone = cleanPhone(u ? u.phone : w);
-    if (phone && !seen.has(phone)) { seen.add(phone); out.push({ name: u ? u.name : w, phone }); }
+  for (const w of want) {
+    const isEmail = w.key && w.key.includes('@');
+    const u = isEmail ? local[w.key] : null;
+    const cu = isEmail ? crmUsers[w.key] : null;
+    const name = (w.crm && w.crm.name) || (u && u.name) || (cu && cu.name) || w.key;
+    const phone = isEmail
+      ? cleanPhone(u && u.phone) || cleanPhone(cu && cu.phone) || cleanPhone(w.crm && w.crm.phone)
+        || cleanPhone(TEAM_PHONES[w.key])
+      : cleanPhone(w.key);
+    const id = phone || w.key;
+    if (seen.has(id)) continue;
+    seen.add(id);
+    out.push({ name, email: isEmail ? w.key : null, role: w.role, phone });
   }
   return out;
 }
@@ -117,29 +152,47 @@ async function sendTemplate(phone, values) {
   } catch (e) { return { ok: false, error: e.message }; }
 }
 
-// Announce booking row `bookingId` of `property`, once. Returns a summary or null.
+// Announce booking row `bookingId` of `property`, once.
+// → { ok: true, sent, total, skipped: [names without a phone], failed: [...] }
+//   { ok: false, reason: 'not_configured' | 'already_sent' | 'not_found' | 'no_recipients' | 'error', ... }
 async function bookingAlert(bookingId, property, user) {
   try {
-    if (!configured()) { console.warn('[booking_alert] INTERAKT_API_KEY not set — not sent'); return null; }
-    const to = await recipients(property);
-    if (!to.length) { console.warn('[booking_alert] no recipients (BOOKING_ALERT_TO) — not sent'); return null; }
+    if (!configured()) {
+      console.warn('[booking_alert] INTERAKT_API_KEY not set — not sent');
+      return { ok: false, reason: 'not_configured' };
+    }
+    const cur = (await pool.query(
+      `SELECT booking_date, token_type, booking_alert_sent_at FROM booking_details WHERE id = $1`,
+      [bookingId])).rows[0];
+    if (!cur) return { ok: false, reason: 'not_found' };
+    if (cur.booking_alert_sent_at) return { ok: false, reason: 'already_sent', at: cur.booking_alert_sent_at };
+    const people = await recipients(property, cur.booking_date);
+    const to = people.filter(r => r.phone);
+    const skipped = people.filter(r => !r.phone).map(r => r.name);
+    if (!to.length) return { ok: false, reason: 'no_recipients', skipped };
     // Claim first, so two requests can never both announce the same booking.
     const { rows } = await pool.query(
       `UPDATE booking_details SET booking_alert_sent_at = NOW()
         WHERE id = $1 AND booking_alert_sent_at IS NULL
-        RETURNING booking_date, token_type`, [bookingId]);
-    if (!rows.length) return null;
+        RETURNING booking_date, token_type, booking_alert_sent_at`, [bookingId]);
+    if (!rows.length) return { ok: false, reason: 'already_sent' };
     const values = bodyValues(property, rows[0], await microMarket(property));
     const results = await Promise.all(to.map(async r => ({ ...r, ...(await sendTemplate(r.phone, values)) })));
     const sent = results.filter(r => r.ok).length;
+    const failed = results.filter(r => !r.ok).map(r => ({ name: r.name, error: r.error }));
+    // Nothing went out: release the claim so the button can be pressed again.
+    if (!sent) {
+      await pool.query(`UPDATE booking_details SET booking_alert_sent_at = NULL WHERE id = $1`, [bookingId]);
+    }
     logActivity(property.uid, 'booking_alert_whatsapp', 'booking', user, {
       booking_id: bookingId, template: TEMPLATE, values, sent, total: results.length,
-      failed: results.filter(r => !r.ok).map(r => ({ name: r.name, error: r.error })),
+      to: results.map(r => `${r.name} (${r.role})`), skipped, failed,
     });
-    return { sent, total: results.length };
+    return { ok: sent > 0, sent, total: results.length, skipped, failed,
+             at: sent ? rows[0].booking_alert_sent_at : null, reason: sent ? undefined : 'send_failed' };
   } catch (e) {
     console.error('[booking_alert]', e.message);
-    return null;
+    return { ok: false, reason: 'error', error: e.message };
   }
 }
 
