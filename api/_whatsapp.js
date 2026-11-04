@@ -6,6 +6,7 @@
 //   🏠  {{3}}                  H - 31, M3M Soulitude
 //   🛏️ Config - {{4}}          2BHK, 1082.0 sqft
 //   🏙️ MM - {{5}}              New Gurgaon 88-92
+//   🧑🏼‍💻 POC - {{6}}             the unit's demand POC (Demand CRM), '—' when none
 //
 // Sent once per booking row (booking_details.booking_alert_sent_at is the guard):
 //   normal token       automatically, when its buyer booking mail is sent (Send
@@ -80,18 +81,21 @@ async function microMarket(p) {
   return '—';
 }
 
-function bodyValues(p, booking, mm) {
+function bodyValues(p, booking, mm, poc) {
   const unit = [p.tower_no, p.unit_no].map(x => String(x || '').trim()).filter(Boolean).join(' - ');
   const home = [unit, String(p.society_name || '').trim()].filter(Boolean).join(', ');
   const area = p.area_sqft != null && String(p.area_sqft).trim() !== '' ? `${p.area_sqft} sqft` : '';
-  const cfg = [String(p.configuration || '').trim(), area].filter(Boolean).join(', ');
+  // Some units store '2.0BHK'; the alert reads '2BHK'.
+  const conf = String(p.configuration || '').trim().replace(/(\d+)\.0+(?=\s*BHK)/i, '$1');
+  const cfg = [conf, area].filter(Boolean).join(', ');
   const type = String(booking.token_type || 'normal').toLowerCase() === 'conditional' ? 'Conditional' : 'Normal';
-  return [fmtDate(booking.booking_date), type, home || '—', cfg || '—', mm || '—'];
+  return [fmtDate(booking.booking_date), type, home || '—', cfg || '—', mm || '—',
+          String(poc || '').trim() || '—'];
 }
 
 // Everyone the alert is for: [{name, email, role, phone}] — phone '' when none is on
 // file anywhere (reported back as skipped). Testers only for a test unit.
-async function recipients(p, bookingDate) {
+async function recipients(p, crm) {
   const isTest = TEST_SOCIETIES.map(s => s.toLowerCase())
     .includes(String(p.society_name || '').trim().toLowerCase());
   const want = [];
@@ -103,7 +107,6 @@ async function recipients(p, bookingDate) {
     TESTERS.forEach(e => add(e, 'tester'));
   } else {
     TEAM.forEach(e => add(e, 'team'));
-    const crm = await demandcrm.pocAndManager(p.uid, p.core_home_id, bookingDate);
     if (crm && crm.poc) want.push({ key: crm.poc.email, role: 'demand POC', crm: crm.poc });
     if (crm && crm.manager) want.push({ key: crm.manager.email, role: 'POC manager', crm: crm.manager });
     String(process.env.BOOKING_ALERT_TO || '').split(',').forEach(e => add(e, 'extra'));
@@ -166,7 +169,9 @@ async function bookingAlert(bookingId, property, user) {
       [bookingId])).rows[0];
     if (!cur) return { ok: false, reason: 'not_found' };
     if (cur.booking_alert_sent_at) return { ok: false, reason: 'already_sent', at: cur.booking_alert_sent_at };
-    const people = await recipients(property, cur.booking_date);
+    // One Demand CRM lookup: the POC is both a recipient and variable {{6}}.
+    const crm = await demandcrm.pocAndManager(property.uid, property.core_home_id, cur.booking_date);
+    const people = await recipients(property, crm);
     const to = people.filter(r => r.phone);
     const skipped = people.filter(r => !r.phone).map(r => r.name);
     if (!to.length) return { ok: false, reason: 'no_recipients', skipped };
@@ -176,7 +181,7 @@ async function bookingAlert(bookingId, property, user) {
         WHERE id = $1 AND booking_alert_sent_at IS NULL
         RETURNING booking_date, token_type, booking_alert_sent_at`, [bookingId]);
     if (!rows.length) return { ok: false, reason: 'already_sent' };
-    const values = bodyValues(property, rows[0], await microMarket(property));
+    const values = bodyValues(property, rows[0], await microMarket(property), crm && crm.poc && crm.poc.name);
     const results = await Promise.all(to.map(async r => ({ ...r, ...(await sendTemplate(r.phone, values)) })));
     const sent = results.filter(r => r.ok).length;
     const failed = results.filter(r => !r.ok).map(r => ({ name: r.name, error: r.error }));
