@@ -1,5 +1,5 @@
 const { pool, getPropertiesColumns, hasCol, SUPPLY_READY_STATUSES,
-        stripAdminOnlyColumns, isHiddenTestUnit } = require('../_db');
+        stripAdminOnlyColumns, stripStaffOnlyColumns, isHiddenTestUnit } = require('../_db');
 const { requireAuth, setCors } = require('../_auth');
 
 // Acquisition price (our cost basis) and the owner / co-owner phone numbers are
@@ -78,6 +78,7 @@ module.exports = async (req, res) => {
       row.owner_name = row.owner_broker_name;
       row.poc = row.assigned_by;
       stripAdminOnlyColumns(row, user);
+      stripStaffOnlyColumns(row, user);
       return res.status(200).json({ success: true, data: row });
     }
 
@@ -107,6 +108,7 @@ module.exports = async (req, res) => {
       row.owner_name = row.owner_broker_name;
       row.poc = row.assigned_by;
       stripAdminOnlyColumns(row, user);
+      stripStaffOnlyColumns(row, user);
       return res.status(200).json({ success: true, data: row });
     }
 

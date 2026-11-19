@@ -1,6 +1,7 @@
 const { pool, getPropertiesColumns, hasCol, masterSocietiesHasAffordable,
         masterSocietiesHasMicroMarket, SUPPLY_READY_STATUSES,
-        stripAdminOnlyColumns, canSeeTestUnits, notTestUnitSql } = require('./_db');
+        stripAdminOnlyColumns, stripStaffOnlyColumns,
+        canSeeTestUnits, notTestUnitSql } = require('./_db');
 const { requireAuth, setCors } = require('./_auth');
 
 // Typed projection list shared by both sides of the UNION ALL. Each tuple is:
@@ -51,6 +52,10 @@ const UNIFIED_COLS = [
   // legacy_properties has no such column.
   ['khd_projteam',              null,                        'khd_projteam',              'DATE'],
   ['tentative_handover_date',   'tentative_handover_date',   'tentative_handover_date',   'DATE'],
+  // Token Form 3's "Will the owner vacate?" — only asked when the owner is staying.
+  // 'No' means keys never change hands, so the panel shows Key Handover as NA.
+  // Real-side only; legacy rows were never asked.
+  ['owner_will_vacate',         null,                        'owner_will_vacate',         'TEXT'],
 
   ['maintenance_charges',       'maintenance_charges',       'maintenance_charges',       'REAL'],
   ['society_move_in_charges',   'society_move_in_charges',   'society_move_in_charges',   'REAL'],
@@ -70,6 +75,12 @@ const UNIFIED_COLS = [
   ['guaranteed_sale_price',     'guaranteed_sale_price',     'guaranteed_sale_price',     'REAL'],
   ['listing_asking_price',      'listing_asking_price',      'listing_asking_price',      'REAL'],
   ['demand_price',              'demand_price',              'demand_price',              'REAL'],
+  // Deposit split, as TMD's Deal Terms & Bank shows it: Perf. Guarantee =
+  // total_deposit, Forfeitable = performance_guarantee, Refundable =
+  // refundable_deposit. Staff-only — stripped for viewers (STAFF_ONLY_COLUMNS).
+  ['total_deposit',             null,                        'total_deposit',             'REAL'],
+  ['performance_guarantee',     null,                        'performance_guarantee',     'REAL'],
+  ['refundable_deposit',        null,                        'refundable_deposit',        'REAL'],
 
   ['gas_pipeline',              'gas_pipeline',              'gas_pipeline',              'TEXT'],
   ['club_facility',             'club_facility',             'club_facility',             'TEXT'],
@@ -812,7 +823,7 @@ module.exports = async (req, res) => {
     // row lands in the browser, so they are dropped from the payload for every
     // role but admin. See ADMIN_ONLY_COLUMNS in _db.js.
     // Runs after default_price_lakhs above, which still needs the raw value.
-    for (const r of rows) stripAdminOnlyColumns(r, user);
+    for (const r of rows) { stripAdminOnlyColumns(r, user); stripStaffOnlyColumns(r, user); }
 
     // Distinct values for filter dropdowns — pulled from the full unified pool
     // (no outer filter conditions applied here) so picking one filter never

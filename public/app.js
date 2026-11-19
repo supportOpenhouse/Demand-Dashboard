@@ -40,6 +40,9 @@ const state = {
   // core_home_id → { loading } | { code, home } | { error } — external listing
   // status, fetched lazily when a row is expanded (see fetchHomeStatus).
   homeStatus: {},
+  // uid → { loading } | { documents, deviation, tmd } | { error } — TMD's
+  // Docs Verified documents + deviation, fetched lazily on expand (fetchTmdDocs).
+  tmdDocs: {},
 };
 
 // ── Helpers ────────────────────────────────────────────────────────────
@@ -1033,6 +1036,7 @@ function renderExpand(r) {
     <div class="expand-section">
       <h4>🔑 Possession & Listing</h4>
       ${acqPriceField}
+      ${depositFields(r)}
       ${listingPriceField}
       ${isViewer() ? '' : field('Date of AMA', fmtDate(r.ama_date))}
       ${(() => {
@@ -1040,6 +1044,11 @@ function renderExpand(r) {
         // Pending covers "date present but no acknowledgement mail yet" — the
         // tooltip says so, since a filled-in date otherwise makes Pending look
         // like a bug. Same rows the list tags Tentative.
+        // The owner is staying for good (token Form 3: will not vacate) — no
+        // keys ever change hands, so neither Done nor Pending applies.
+        if (keyHandoverNA(r)) {
+          return field('Key Handover Status', 'NA', 'tooltipped', KH_NA_TIP);
+        }
         const tip = keyHandoverTentative(r) ? KH_TENTATIVE_TIP : '';
         return field('Key Handover Status', done ? 'Done' : 'Pending',
                      done ? 'green' : 'amber', tip);
@@ -1060,6 +1069,8 @@ function renderExpand(r) {
         });
       })()}
       <span data-occupancy-for="${esc(r.uid)}">${field('Current Occupancy', r.possession_status || r.occupancy_status)}</span>
+      ${(r.possession_status || r.occupancy_status) === 'Owner Staying'
+        ? field('Will Owner Vacate', ownerWillVacateLabel(r.owner_will_vacate)) : ''}
       ${field('Furnishing Status', r.furnishing)}
       ${field('Furnishing Items', formatList(r.furnishing_details))}
       ${field('Parking', r.parking)}
@@ -1103,7 +1114,9 @@ function renderExpand(r) {
       ${editableText('Loan Status', 'loan_status', r.loan_status, { uid: r.uid, placeholder: 'No Loan / NA / 60 HDFC / etc.' })}
       ${editableNum('Outstanding Loan', 'outstanding_loan', r.outstanding_loan, { uid: r.uid })}
       ${editableText('Bank', 'bank_name_loan', r.bank_name_loan, { uid: r.uid, datalistId: 'bank-list', placeholder: 'Type to search…' })}
-      ${field('Documents Available', formatList(r.documents_available))}
+      ${r.origin === 'legacy'
+        ? field('Documents Available', formatList(r.documents_available))
+        : `<div data-tmd-docs-for="${esc(r.uid)}">${renderTmdDocs(state.tmdDocs[r.uid])}</div>`}
     </div>`;
 
   // Internal Remarks here are the SUPPLY-side remarks (ap_details.internal_remarks),
@@ -1298,7 +1311,20 @@ function keyHandoverDone(r) {
 // field can never disagree — an actual date makes the row Done above, which is
 // what stops it being tagged Tentative.
 function keyHandoverTentative(r) {
-  return r.origin !== 'legacy' && !!r.key_handover_date && !keyHandoverDone(r);
+  return r.origin !== 'legacy' && !!r.key_handover_date && !keyHandoverDone(r) && !keyHandoverNA(r);
+}
+
+// Token Form 3 asks an owner who is staying whether they will vacate. 'No' means
+// the keys never come to Openhouse, so Key Handover is not applicable — and the
+// date Form 9 records for such a unit is the AMA date, not a handover.
+const KH_NA_TIP = 'Owner is staying and will not vacate (token Form 3), so there is no key handover.';
+function keyHandoverNA(r) {
+  return String(r.owner_will_vacate || '').trim().toLowerCase() === 'no';
+}
+
+function ownerWillVacateLabel(v) {
+  const s = String(v || '').trim().toLowerCase();
+  return s === 'yes' ? 'Yes' : s === 'no' ? 'No' : '';
 }
 
 // True when the date on screen came from the projects team rather than supply.
@@ -1495,6 +1521,68 @@ function extractListingStatus(home) {
       || (home.home && (home.home.listingStatus || home.home.listing_status)) || null;
 }
 
+// ── TMD documents + deviation ─────────────────────────────────────────
+// Perf. Guarantee / Forfeitable / Refundable — TMD's Deal Terms & Bank split.
+// Admin + manager only; /api/list drops the columns for viewers as well.
+function depositFields(r) {
+  if (!canEdit()) return '';
+  return field('Perf. Guarantee', fmtRupees(r.total_deposit))
+    + field('Forfeitable', fmtRupees(r.performance_guarantee))
+    + field('Refundable', fmtRupees(r.refundable_deposit));
+}
+
+function fmtRupees(v) {
+  if (v == null || v === '') return '';
+  const n = Number(v);
+  return Number.isFinite(n) ? '₹' + n.toLocaleString('en-IN', { maximumFractionDigits: 0 }) : String(v);
+}
+
+// Documents from TMD's Docs Verified & AMA Draft stage, then the deviation. The
+// server already removed links for viewers, so a document without `url` renders
+// as a name — the same path an un-uploaded checklist entry takes for staff.
+function renderTmdDocs(st) {
+  const wrap = inner => `<div class="field-row"><div class="field-lbl">Documents</div>${inner}</div>`;
+  if (!st || st.loading) return wrap('<span class="field-val muted">Loading…</span>');
+  if (st.error) return wrap(`<span class="field-val muted" title="${esc(st.error)}">Couldn't load documents</span>`);
+  const docs = st.documents || [];
+  const list = docs.length
+    ? `<div class="tmd-docs">${docs.map(d => d.url
+        ? `<a class="tmd-doc tmd-doc--link" href="${esc(d.url)}" target="_blank" rel="noopener">${esc(d.name)} ↗</a>`
+        : `<span class="tmd-doc">${esc(d.name)}</span>`).join('')}</div>`
+    : '<span class="field-val muted">—</span>';
+  const note = st.tmd ? '' : '<div class="tmd-note">TMD not connected — ownership checklist only</div>';
+  const dev = st.deviation
+    ? `<div class="field-row">
+         <div class="field-lbl">Deviation${st.deviation.resolved_at ? ` <span class="tmd-resolved">resolved ${esc(fmtDate(st.deviation.resolved_at))}</span>` : ''}</div>
+         <div class="supply-remarks-box">${esc(st.deviation.text)}</div>
+       </div>`
+    : '';
+  return wrap(list + note) + dev;
+}
+
+async function fetchTmdDocs(uid, force) {
+  const cur = state.tmdDocs[uid];
+  if (!force && cur && !cur.error) return; // loading or loaded
+  state.tmdDocs[uid] = { loading: true };
+  updateTmdDocs(uid);
+  try {
+    const r = await fetch('/api/tmd-docs/' + encodeURIComponent(uid), { credentials: 'include' });
+    const data = await r.json();
+    state.tmdDocs[uid] = (!r.ok || !data.success)
+      ? { error: data.error || ('HTTP ' + r.status) }
+      : { documents: data.documents, deviation: data.deviation, tmd: data.tmd };
+  } catch (e) {
+    state.tmdDocs[uid] = { error: e.message };
+  }
+  updateTmdDocs(uid);
+}
+
+function updateTmdDocs(uid) {
+  document.querySelectorAll(`[data-tmd-docs-for="${cssEscape(uid)}"]`).forEach(el => {
+    el.innerHTML = renderTmdDocs(state.tmdDocs[uid]);
+  });
+}
+
 async function fetchHomeStatus(coreHomeId, force) {
   if (coreHomeId == null) return;
   const cur = state.homeStatus[coreHomeId];
@@ -1552,6 +1640,7 @@ function attachExpandHandlers(uid) {
   // Lazy-load the external listing status for this row (cached in state).
   const row = state.rows.find(x => x.uid === uid);
   if (row && row.core_home_id != null && canEdit()) fetchHomeStatus(row.core_home_id);
+  if (row && row.origin !== 'legacy') fetchTmdDocs(uid);
 
   // Initialize flatpickr on date inputs so they display DD/MM/YYYY instead
   // of the browser-locale default (US locale renders <input type=date> as
@@ -1940,7 +2029,7 @@ function exportCsv() {
     ['Date of AMA', r => fmtDate(r.ama_date)],
     ['Owner Name', 'owner_name'],
     ['Owner Physical Location', 'seller_location'],
-    ['Key Handover Status', r => keyHandoverDone(r) ? 'Done' : 'Pending'],
+    ['Key Handover Status', r => keyHandoverNA(r) ? 'NA' : (keyHandoverDone(r) ? 'Done' : 'Pending')],
     ['Key Handover Date', r => fmtDate(r.key_handover_date)],
     ['Documents Available', r => formatList(r.documents_available)],
     ['Loan Status', r => r.loan_status || (r.outstanding_loan ? 'Active' : 'No Loan')],

@@ -1476,3 +1476,16 @@ body:not(.role-admin) .col-contact { display: none; }
 .ps-p1      { background: #DBEAFE; color: #1E40AF; border-color: #BFDBFE; }
 .ps-p2      { background: #EDE9FE; color: #5B21B6; border-color: #DDD6FE; }
 .ps-shoot   { background: #DCFCE7; color: #166534; border-color: #BBF7D0; }
+
+/* ── TMD documents (Owner & Loan) ──────────────────────────────────────── */
+.tmd-docs { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 2px; }
+.tmd-doc {
+  display: inline-flex; align-items: center;
+  padding: 4px 9px; border-radius: 6px;
+  font-size: 11px; font-weight: 500; line-height: 1.3;
+  background: #f3f4f6; color: #374151; border: 1px solid #e5e7eb;
+}
+.tmd-doc--link { background: #eef2ff; color: #4338ca; border-color: #c7d2fe; text-decoration: none; }
+.tmd-doc--link:hover { background: #e0e7ff; }
+.tmd-note { font-size: 11px; color: #9ca3af; margin-top: 4px; }
+.tmd-resolved { font-size: 10px; font-weight: 600; color: #16a34a; margin-left: 4px; }

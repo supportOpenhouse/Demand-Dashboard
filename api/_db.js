@@ -81,6 +81,36 @@ function stripAdminOnlyColumns(row, user) {
   return row;
 }
 
+// Staff-only columns — the deposit split TMD shows under Deal Terms & Bank
+// (Perf. Guarantee = total_deposit, Forfeitable = performance_guarantee,
+// Refundable = refundable_deposit). Admins and managers see them; viewers don't,
+// so they are dropped from the payload, not just hidden in the UI.
+const STAFF_ONLY_COLUMNS = ['total_deposit', 'performance_guarantee', 'refundable_deposit'];
+
+function stripStaffOnlyColumns(row, user) {
+  const role = user && user.role;
+  if (!row || role === 'admin' || role === 'manager') return row;
+  for (const col of STAFF_ONLY_COLUMNS) delete row[col];
+  return row;
+}
+
+// TMD's own database (deals, deviations, documents), read-only. Optional: unset
+// means the panel shows the ownership checklist only. Created on first use so a
+// deploy without the variable never opens a connection.
+let _tmdPool = null;
+function tmdPool() {
+  if (!process.env.TMD_DATABASE_URL) return null;
+  if (!_tmdPool) {
+    _tmdPool = new Pool({
+      connectionString: process.env.TMD_DATABASE_URL,
+      ssl: { rejectUnauthorized: false },
+      max: 2,
+    });
+    _tmdPool.on('error', err => console.warn('[tmdPool]', err.message));
+  }
+  return _tmdPool;
+}
+
 // Idempotent — runs on every cold start. Owns demand_users and demand_details only.
 // Reads activity_logs (created by the Acquired dashboard) but does not own its schema.
 const LOAN_DDL = `
@@ -585,4 +615,7 @@ module.exports = {
   KEY_HANDOVER_DONE_STATUS,
   ADMIN_ONLY_COLUMNS,
   stripAdminOnlyColumns,
+  STAFF_ONLY_COLUMNS,
+  stripStaffOnlyColumns,
+  tmdPool,
 };

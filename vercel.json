@@ -45,6 +45,10 @@
       "destination": "/api/detail/[uid]"
     },
     {
+      "source": "/api/tmd-docs/:uid",
+      "destination": "/api/tmd-docs/[uid]"
+    },
+    {
       "source": "/api/demand-details/:uid",
       "destination": "/api/demand-details/[uid]"
     },
