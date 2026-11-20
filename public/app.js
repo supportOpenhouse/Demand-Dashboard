@@ -880,7 +880,7 @@ function renderRow(r) {
       <td>${r.area_sqft ? esc(r.area_sqft) : (r.super_area ? esc(r.super_area) : '—')}</td>
       <td>${listingPriceCell}</td>
       <td class="col-ama-date">${esc(fmtDate(r.ama_date)) || '—'}</td>
-      <td class="col-key-handover">${esc(fmtDate(r.key_handover_date)) || '—'}${keyHandoverTentative(r) ? `<span class="kh-tentative" title="${esc(KH_TENTATIVE_TIP)}">Tentative</span>` : ''}</td>
+      <td class="col-key-handover">${esc(fmtDate(keyHandoverDisplayDate(r))) || '—'}${keyHandoverTentative(r) ? `<span class="kh-tentative" title="${esc(KH_TENTATIVE_TIP)}">Tentative</span>` : ''}</td>
       <td class="col-project">${renderProjectStatus(r.project_status)}</td>
       <td>${esc(r.owner_name || '—')}<div class="prop-unit col-contact">${esc(r.contact_no || '')}</div></td>
       <td class="col-status">
@@ -1054,23 +1054,33 @@ function renderExpand(r) {
                      done ? 'green' : 'amber', tip);
       })()}
       ${isViewer() ? '' : (() => {
+        // Owner not vacating: no keys change hands, so the date is the AMA date.
+        // Read-only — it follows Date of AMA, there is nothing to correct here.
+        if (keyHandoverNA(r)) {
+          return field('Key Handover Date', fmtDate(r.ama_date), 'tooltipped', KH_AMA_TIP);
+        }
+        // Same Tentative tag the list column shows, beside the label.
+        const tag = keyHandoverTentative(r)
+          ? `<span class="kh-tentative inline" title="${esc(KH_TENTATIVE_TIP)}">Tentative</span>` : '';
         // While the projects team holds an actual date it wins the COALESCE, so
         // an edit here would write to supply's column and appear to do nothing.
         // Show it read-only instead of offering a silently ineffective input.
         if (keyHandoverIsActual(r)) {
           return field('Key Handover Date', fmtDate(r.key_handover_date), 'tooltipped',
             'Actual handover recorded by the projects team in the Projects Dashboard. '
-            + 'Corrections are made there, not here.');
+            + 'Corrections are made there, not here.', tag);
         }
         return editableDate('Key Handover Date', 'key_handover_date', r.key_handover_date, {
           uid: r.uid,
           adminOnly: true,
           readOnlyTooltip: 'Set by Form 9 (Key Handover Acknowledgement) in the supply forms. Admin-only correction.',
+          labelExtra: tag,
         });
       })()}
       <span data-occupancy-for="${esc(r.uid)}">${field('Current Occupancy', r.possession_status || r.occupancy_status)}</span>
       ${(r.possession_status || r.occupancy_status) === 'Owner Staying'
-        ? field('Will Owner Vacate', ownerWillVacateLabel(r.owner_will_vacate)) : ''}
+        ? field('Will Owner Vacate', ownerWillVacateLabel(r.owner_will_vacate),
+                keyHandoverNA(r) ? 'wov-no' : '') : ''}
       ${field('Furnishing Status', r.furnishing)}
       ${field('Furnishing Items', formatList(r.furnishing_details))}
       ${field('Parking', r.parking)}
@@ -1201,7 +1211,7 @@ function editableText(label, fieldName, value, opts) {
 }
 
 function editableDate(label, fieldName, value, opts) {
-  const { uid, adminOnly, readOnlyTooltip } = opts;
+  const { uid, adminOnly, readOnlyTooltip, labelExtra = '' } = opts;
   // Normalize value to YYYY-MM-DD for the picker
   let dateVal = '';
   if (value) {
@@ -1212,7 +1222,7 @@ function editableDate(label, fieldName, value, opts) {
   // explaining where the value actually comes from.
   if (!canEdit() || (adminOnly && !isAdmin())) {
     return field(label, value ? fmtDate(value) : '',
-                 readOnlyTooltip ? 'tooltipped' : '', readOnlyTooltip);
+                 readOnlyTooltip ? 'tooltipped' : '', readOnlyTooltip, labelExtra);
   }
   // type="text" so flatpickr can manage display via altInput. The original
   // input is hidden by flatpickr but stays the canonical YYYY-MM-DD source
@@ -1221,7 +1231,7 @@ function editableDate(label, fieldName, value, opts) {
   // attachExpandHandlers.
   return `
     <div class="field-row">
-      <div class="field-lbl">${esc(label)}</div>
+      <div class="field-lbl">${esc(label)}${labelExtra}</div>
       <input type="text" class="inline-input flatpickr-date"
              data-uid="${esc(uid)}" data-field="${esc(fieldName)}" data-endpoint="property-edits"
              value="${esc(dateVal)}"
@@ -1259,7 +1269,9 @@ function editableSelect(label, fieldName, value, opts) {
     </div>`;
 }
 
-function field(label, value, cls, tooltip) {
+// `lblExtra` is raw HTML placed after the label (and its ⓘ) — callers build it
+// with esc() themselves, e.g. the Key Handover Date's Tentative tag.
+function field(label, value, cls, tooltip, lblExtra = '') {
   const v = (value == null || value === '' || value === 'null') ? '—' : value;
   const isEmpty = v === '—';
   const klass = isEmpty ? 'muted' : (cls || '');
@@ -1268,7 +1280,7 @@ function field(label, value, cls, tooltip) {
   const tipHtml = tooltip ? ` <span class="info-tip" title="${esc(tooltip)}">ⓘ</span>` : '';
   return `
     <div class="field-row">
-      <div class="field-lbl">${esc(label)}${tipHtml}</div>
+      <div class="field-lbl">${esc(label)}${tipHtml}${lblExtra}</div>
       <div class="field-val ${klass}">${isEmpty ? '—' : esc(v)}</div>
     </div>`;
 }
@@ -1320,6 +1332,12 @@ function keyHandoverTentative(r) {
 const KH_NA_TIP = 'Owner is staying and will not vacate (token Form 3), so there is no key handover.';
 function keyHandoverNA(r) {
   return String(r.owner_will_vacate || '').trim().toLowerCase() === 'no';
+}
+
+// With no handover, the Key Handover Date is the Date of AMA — shown, not stored.
+const KH_AMA_TIP = 'Owner is staying and will not vacate, so the Key Handover Date is the Date of AMA.';
+function keyHandoverDisplayDate(r) {
+  return keyHandoverNA(r) ? r.ama_date : r.key_handover_date;
 }
 
 function ownerWillVacateLabel(v) {
@@ -2030,7 +2048,7 @@ function exportCsv() {
     ['Owner Name', 'owner_name'],
     ['Owner Physical Location', 'seller_location'],
     ['Key Handover Status', r => keyHandoverNA(r) ? 'NA' : (keyHandoverDone(r) ? 'Done' : 'Pending')],
-    ['Key Handover Date', r => fmtDate(r.key_handover_date)],
+    ['Key Handover Date', r => fmtDate(keyHandoverDisplayDate(r))],
     ['Documents Available', r => formatList(r.documents_available)],
     ['Loan Status', r => r.loan_status || (r.outstanding_loan ? 'Active' : 'No Loan')],
     ['Loan Amount', 'outstanding_loan'],

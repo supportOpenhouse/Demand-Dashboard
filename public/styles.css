@@ -1375,6 +1375,24 @@ body:not(.role-admin) .col-contact { display: none; }
   cursor: help;
   white-space: nowrap;
 }
+/* The same tag beside the Key Handover Date label in the expanded view. */
+.field-lbl .kh-tentative.inline {
+  display: inline-block;
+  margin: 0 0 0 6px;
+  text-transform: none;
+}
+
+/* Owner staying and will not vacate: the "No" that makes Key Handover NA,
+   boxed in yellow so it is not missed. */
+.field-val.wov-no {
+  display: inline-block;
+  padding: 1px 8px;
+  background: #fef08a;
+  border: 1px solid #facc15;
+  border-radius: 4px;
+  color: #713f12;
+  font-weight: 600;
+}
 
 /* Payment Range (shown only for a Flexible payment structure). */
 /* Payment Range sits in a 1fr 1fr grid next to Payment Structure. A grid `1fr`
