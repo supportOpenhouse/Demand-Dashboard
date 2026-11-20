@@ -69,3 +69,4 @@ async function saveChannelPartnerEmail(id, email) {
 }
 
 module.exports = { cpPool, findChannelPartners, saveChannelPartnerEmail, normalisePhone, normaliseCode };
+
